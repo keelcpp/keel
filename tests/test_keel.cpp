@@ -1,0 +1,419 @@
+#include "keel/keel.h"
+
+#if !defined(_HAS_EXCEPTIONS) || _HAS_EXCEPTIONS != 0
+#include "keel/interop_std.h"
+#endif
+
+#include <charconv>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+using namespace keel;
+
+namespace {
+
+int g_tests_passed = 0;
+int g_tests_failed = 0;
+
+#define TEST_CHECK(cond)                                                                                               \
+    do {                                                                                                               \
+        if (!(cond)) {                                                                                                 \
+            std::fprintf(stderr, "FAIL: %s (%s:%d)\n", #cond, __FILE__, __LINE__);                                     \
+            ++g_tests_failed;                                                                                          \
+        } else {                                                                                                       \
+            ++g_tests_passed;                                                                                          \
+        }                                                                                                              \
+    } while (0)
+
+struct TrackedObj {
+    int value = 0;
+    inline static int live_count = 0;
+
+    TrackedObj() noexcept : value(0) { ++live_count; }
+    explicit TrackedObj(int v) noexcept : value(v) { ++live_count; }
+    TrackedObj(const TrackedObj& o) noexcept : value(o.value) { ++live_count; }
+    TrackedObj(TrackedObj&& o) noexcept : value(o.value) {
+        o.value = -1;
+        ++live_count;
+    }
+    TrackedObj& operator=(const TrackedObj& o) noexcept {
+        value = o.value;
+        return *this;
+    }
+    TrackedObj& operator=(TrackedObj&& o) noexcept {
+        value = o.value;
+        o.value = -1;
+        return *this;
+    }
+    ~TrackedObj() noexcept { --live_count; }
+
+    bool operator==(const TrackedObj& o) const noexcept { return value == o.value; }
+};
+
+void test_core_and_bits() {
+    static_assert(sizeof(i8) == 1 && sizeof(u8) == 1);
+    static_assert(sizeof(i16) == 2 && sizeof(u16) == 2);
+    static_assert(sizeof(i32) == 4 && sizeof(u32) == 4);
+    static_assert(sizeof(i64) == 8 && sizeof(u64) == 8);
+    static_assert(sizeof(f32) == 4 && sizeof(f64) == 8);
+    static_assert(IsTriviallyCopyable<i32>);
+    static_assert(IsTriviallyDestructible<i32>);
+    static_assert(!IsTriviallyDestructible<TrackedObj>);
+
+    TEST_CHECK(countl_zero(u32{0}) == 32);
+    TEST_CHECK(countl_zero(u32{1}) == 31);
+    TEST_CHECK(countl_zero(u64{0}) == 64);
+    TEST_CHECK(countl_zero(u64{1} << 63) == 0);
+    TEST_CHECK(countr_zero(u32{8}) == 3);
+    TEST_CHECK(countr_zero(u64{1} << 40) == 40);
+    TEST_CHECK(popcount(u32{0b10110100}) == 4);
+    TEST_CHECK(popcount(u64{0xFFFFFFFFFFFFFFFFULL}) == 64);
+    TEST_CHECK(bit_ceil(u64{1}) == 1);
+    TEST_CHECK(bit_ceil(u64{5}) == 8);
+    TEST_CHECK(bit_floor(u64{7}) == 4);
+    TEST_CHECK(is_power_of_two(u64{64}));
+    TEST_CHECK(!is_power_of_two(u64{0}));
+    TEST_CHECK(!is_power_of_two(u64{65}));
+    TEST_CHECK(byteswap(u32{0x12345678u}) == 0x78563412u);
+
+    const u64 h1 = hash_bytes("hello", 5);
+    const u64 h2 = hash_bytes("hello", 5);
+    const u64 h3 = hash_bytes("world", 5);
+    TEST_CHECK(h1 == h2 && h1 != h3);
+}
+
+void test_arena_and_memory() {
+    Arena arena(4 * 1024 * 1024);
+    TEST_CHECK(arena.used() == 0);
+
+    // Verify in-place extension of the top allocation on the arena
+    void* p1 = arena.alloc(64, 16);
+    TEST_CHECK(p1 != nullptr);
+    void* p1_grown = arena.realloc(p1, 64, 256, 16);
+    TEST_CHECK(p1_grown == p1);
+    TEST_CHECK(arena.used() == 256);
+
+    {
+        ArenaTemp temp = arena.begin_temp();
+        Array<int> temp_arr(temp.allocator());
+        for (int i = 0; i < 1000; ++i) temp_arr.push_back(i);
+        TEST_CHECK(arena.used() > 256);
+    }
+    TEST_CHECK(arena.used() == 256);
+
+    // Scratch arena conflict resolution
+    ArenaTemp s1 = get_scratch();
+    Arena* conflict = &s1.arena();
+    ArenaTemp s2 = get_scratch(&conflict, 1);
+    TEST_CHECK(&s1.arena() != &s2.arena());
+
+    // Generational Pool<T>
+    Pool<TrackedObj> pool;
+    TrackedObj::live_count = 0;
+    Handle<TrackedObj> h_a = pool.emplace(42);
+    Handle<TrackedObj> h_b = pool.emplace(99);
+    TEST_CHECK(pool.size() == 2);
+    TEST_CHECK(TrackedObj::live_count == 2);
+    TEST_CHECK(pool.get(h_a) != nullptr && pool.get(h_a)->value == 42);
+    TEST_CHECK(pool.remove(h_a));
+    TEST_CHECK(!pool.is_valid(h_a));
+    TEST_CHECK(pool.get(h_a) == nullptr);
+    Handle<TrackedObj> h_c = pool.emplace(77);
+    TEST_CHECK(h_c.index == h_a.index && h_c.generation != h_a.generation);
+    TEST_CHECK(!pool.is_valid(h_a));
+    TEST_CHECK(pool.get(h_c)->value == 77);
+    pool.clear();
+    TEST_CHECK(TrackedObj::live_count == 0);
+}
+
+Result<int> helper_try(int x) {
+    if (x < 0) return ErrorCode::InvalidArgument;
+    return x * 2;
+}
+
+Result<int> helper_try_chain(int x) {
+    KEEL_TRY_ASSIGN(int a, helper_try(x));
+    KEEL_TRY_ASSIGN(int b, helper_try(a + 1));
+    return a + b;
+}
+
+void test_vocabulary() {
+    // Optional triviality and sentinel zero-size-overhead guarantees
+    static_assert(IsTriviallyCopyable<Optional<int>>);
+    static_assert(IsTriviallyDestructible<Optional<int>>);
+    static_assert(sizeof(SentinelOptional<i32, -1>) == sizeof(i32));
+
+    Optional<int> opt;
+    TEST_CHECK(!opt.has_value());
+    TEST_CHECK(opt.value_or(10) == 10);
+    opt = 25;
+    TEST_CHECK(opt.has_value() && *opt == 25);
+    opt.reset();
+    TEST_CHECK(!opt.has_value());
+
+    TrackedObj::live_count = 0;
+    {
+        Optional<TrackedObj> tobj(TrackedObj(7));
+        TEST_CHECK(TrackedObj::live_count == 1);
+        TEST_CHECK(tobj->value == 7);
+    }
+    TEST_CHECK(TrackedObj::live_count == 0);
+
+    SentinelOptional<i32, -1> sopt;
+    TEST_CHECK(!sopt.has_value());
+    sopt = 0;
+    TEST_CHECK(sopt.has_value() && *sopt == 0);
+    sopt.reset();
+    TEST_CHECK(!sopt.has_value());
+
+    // Result & KEEL_TRY_ASSIGN
+    auto ok_res = helper_try_chain(5);
+    TEST_CHECK(ok_res.is_ok() && *ok_res == 10 + 22);
+    auto err_res = helper_try_chain(-1);
+    TEST_CHECK(err_res.is_err() && err_res.error().code == ErrorCode::InvalidArgument);
+
+    // StringRef operations
+    StringRef sr = "  hello/world.txt  ";
+    TEST_CHECK(sr.trim() == "hello/world.txt");
+    StringRef clean = sr.trim();
+    TEST_CHECK(clean.starts_with("hello"));
+    TEST_CHECK(clean.ends_with(".txt"));
+    TEST_CHECK(clean.contains("world"));
+    TEST_CHECK(clean.find('/') == 5);
+    TEST_CHECK(clean.rfind('.') == 11);
+    auto sp = clean.split_once('/');
+    TEST_CHECK(sp.found && sp.first == "hello" && sp.second == "world.txt");
+    TEST_CHECK(StringRef("AbCd").equals_ignore_ascii_case("abcd"));
+
+    // FunctionRef & Function<Sig, N>
+    int multiplier = 3;
+    auto lam = [&](int v) { return v * multiplier; };
+    FunctionRef<int(int)> fref(lam);
+    TEST_CHECK(fref(7) == 21);
+
+    Function<int(int), 32> fn([multiplier](int v) noexcept { return v + multiplier; });
+    TEST_CHECK(static_cast<bool>(fn));
+    TEST_CHECK(fn(10) == 13);
+    Function<int(int), 32> fn_moved = keel::move(fn);
+    TEST_CHECK(!static_cast<bool>(fn));
+    TEST_CHECK(fn_moved(10) == 13);
+}
+
+void test_containers() {
+    TrackedObj::live_count = 0;
+    {
+        Array<TrackedObj> arr;
+        for (int i = 0; i < 20; ++i) arr.emplace_back(i);
+        TEST_CHECK(arr.size() == 20);
+        TEST_CHECK(TrackedObj::live_count == 20);
+
+        Array<TrackedObj> cloned = arr.clone();
+        TEST_CHECK(cloned.size() == 20 && cloned[15].value == 15);
+        TEST_CHECK(TrackedObj::live_count == 40);
+
+        Array<TrackedObj> moved = keel::move(arr);
+        TEST_CHECK(arr.empty() && arr.data() == nullptr && arr.capacity() == 0);
+        TEST_CHECK(moved.size() == 20);
+
+        moved.remove_at(0);
+        TEST_CHECK(moved.size() == 19 && moved[0].value == 1);
+        moved.swap_remove(0);
+        TEST_CHECK(moved.size() == 18 && moved[0].value == 19);
+    }
+    TEST_CHECK(TrackedObj::live_count == 0);
+
+    // SmallArray & InplaceArray
+    SmallArray<int, 4> small;
+    for (int i = 0; i < 4; ++i) small.push_back(i * 10);
+    TEST_CHECK(small.is_inline());
+    small.push_back(40);
+    TEST_CHECK(!small.is_inline());
+    TEST_CHECK(small.size() == 5 && small[4] == 40);
+    SmallArray<int, 4> small_copy = small.clone();
+    TEST_CHECK(small_copy.size() == 5 && small_copy[3] == 30);
+
+    // HashMap & HashSet with heterogeneous StringRef lookup
+    HashMap<String, int> map;
+    TEST_CHECK(map.put(String::from("alpha"), 1));
+    TEST_CHECK(map.put(String::from("beta"), 2));
+    TEST_CHECK(!map.put(String::from("alpha"), 10)); // Overwrite existing
+
+    // Lookup using StringRef without allocating a String!
+    int* p_alpha = map.get(StringRef("alpha"));
+    TEST_CHECK(p_alpha != nullptr && *p_alpha == 10);
+    TEST_CHECK(map.contains("beta"));
+    TEST_CHECK(!map.contains("gamma"));
+
+    int& gamma_ref = map.get_or_insert(String::from("gamma"), 30);
+    TEST_CHECK(gamma_ref == 30);
+    gamma_ref = 33;
+    TEST_CHECK(*map.get("gamma") == 33);
+
+    HashMap<String, int> map_clone = map.clone();
+    TEST_CHECK(map_clone.size() == 3 && *map_clone.get("gamma") == 33);
+
+    TEST_CHECK(map.remove("beta"));
+    TEST_CHECK(!map.contains("beta") && map.size() == 2);
+
+    HashSet<int> set;
+    for (int i = 0; i < 100; ++i) TEST_CHECK(set.insert(i));
+    for (int i = 0; i < 100; ++i) TEST_CHECK(!set.insert(i));
+    for (int i = 0; i < 50; ++i) TEST_CHECK(set.remove(i));
+    TEST_CHECK(set.size() == 50);
+    for (int i = 50; i < 100; ++i) TEST_CHECK(set.contains(i));
+}
+
+void test_text_utf8_and_numbers() {
+    String s = String::from("keel");
+    TEST_CHECK(s.size() == 4 && std::strcmp(s.c_str(), "keel") == 0);
+    s.append(" library");
+    TEST_CHECK(s == "keel library");
+    // Self-aliasing append
+    s.append(s.substr(0, 4));
+    TEST_CHECK(s == "keel librarykeel");
+
+    // UTF-8 validation, decoding, encoding
+    const StringRef utf8_sample = "Привет, мир! 🚀";
+    TEST_CHECK(utf8_validate(utf8_sample));
+    TEST_CHECK(utf8_codepoint_count(utf8_sample) == 14);
+
+    // Overlong 2-byte sequence (0xC0 0x80) and UTF-16 surrogate (0xED 0xA0 0x80) must be rejected
+    const char overlong[] = {'\xC0', '\x80', '\0'};
+    const char surrogate[] = {'\xED', '\xA0', '\x80', '\0'};
+    TEST_CHECK(!utf8_validate(StringRef(overlong, 2)));
+    TEST_CHECK(!utf8_validate(StringRef(surrogate, 3)));
+
+    // Integer parsing & formatting
+    auto i_ok = parse_i64("-9223372036854775808");
+    TEST_CHECK(i_ok.is_ok() && *i_ok == INT64_MIN);
+    auto i_ovf = parse_i64("9223372036854775808");
+    TEST_CHECK(i_ovf.is_err() && i_ovf.error().code == ErrorCode::Overflow);
+    auto u_ok = parse_u64("18446744073709551615");
+    TEST_CHECK(u_ok.is_ok() && *u_ok == UINT64_MAX);
+
+    // Floating-point shortest round-trip vs std::to_chars / std::from_chars
+    const f64 test_doubles[] = {
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        0.1,
+        0.2,
+        0.3,
+        0.1 + 0.2,
+        3.14159265358979323846,
+        2.71828182845904523536,
+        1e-4,
+        1e-5,
+        1e15,
+        1e16,
+        1e20,
+        1e-20,
+        1.2345678901234567e-100,
+        9.876543210987654e+150,
+        2.2250738585072014e-308, // DBL_MIN (smallest normal)
+        5e-324,                  // DBL_TRUE_MIN (smallest subnormal)
+        1.7976931348623157e+308, // DBL_MAX
+    };
+
+    for (f64 d : test_doubles) {
+        char buf[64];
+        const isize len = format_f64(buf, sizeof(buf), d);
+        TEST_CHECK(len > 0);
+        auto parsed = parse_f64(StringRef(buf, len));
+        TEST_CHECK(parsed.is_ok());
+        if (parsed.is_ok()) {
+            u64 b1 = 0, b2 = 0;
+            std::memcpy(&b1, &d, 8);
+            f64 pv = *parsed;
+            std::memcpy(&b2, &pv, 8);
+            TEST_CHECK(b1 == b2);
+
+            // Also verify that std::from_chars parses our shortest output back to exact same double!
+            f64 std_parsed = 0.0;
+            auto [ptr, ec] = std::from_chars(buf, buf + len, std_parsed);
+            TEST_CHECK(ec == std::errc{} && ptr == buf + len);
+            u64 b_std = 0;
+            std::memcpy(&b_std, &std_parsed, 8);
+            TEST_CHECK(b1 == b_std);
+        }
+    }
+
+    // Format API (`%S`, `%d`, `%.2f`)
+    String formatted = format("Item %S: count=%d, ratio=%.2f%%", StringRef("Widget"), 42, 98.765);
+    TEST_CHECK(formatted == "Item Widget: count=42, ratio=98.77%");
+}
+
+void test_fs_and_io() {
+    TEST_CHECK(path_dirname("/usr/local/bin/keel") == "/usr/local/bin");
+    TEST_CHECK(path_basename("/usr/local/bin/keel") == "keel");
+    TEST_CHECK(path_extension("archive.tar.gz") == ".gz");
+    TEST_CHECK(path_stem("archive.tar.gz") == "archive.tar");
+    TEST_CHECK(path_extension(".gitignore") == "");
+    TEST_CHECK(path_join("a/b/", "/c/d") == "/c/d");
+    TEST_CHECK(path_join("a/b", "c/d") == "a/b/c/d");
+    TEST_CHECK(path_normalize("a/b/../c/./d//e") == "a/c/d/e");
+
+    auto tmp_res = fs_temp_dir();
+    TEST_CHECK(tmp_res.is_ok());
+    String test_dir = path_join(*tmp_res, "keel_unit_test_dir");
+    (void)fs_create_dirs(test_dir);
+    TEST_CHECK(fs_exists(test_dir));
+
+    // Test UTF-8 filename (Cyrillic)
+    String file_path = path_join(test_dir, "тест_файл.txt");
+    const StringRef payload = "Line 1: Hello keel!\nLine 2: Проверка UTF-8 пути\n";
+    TEST_CHECK(fs_write_text(file_path, payload).is_ok());
+    TEST_CHECK(fs_exists(file_path));
+
+    auto stat_res = fs_stat(file_path);
+    TEST_CHECK(stat_res.is_ok() && stat_res->is_file && stat_res->size == static_cast<u64>(payload.size()));
+
+    auto read_res = fs_read_text(file_path);
+    TEST_CHECK(read_res.is_ok() && *read_res == payload);
+
+    int dir_entries = 0;
+    Error dir_err = fs_read_dir(test_dir, [&](const DirEntry& ent) {
+        if (ent.name == "тест_файл.txt" && ent.is_file) {
+            ++dir_entries;
+        }
+        return true;
+    });
+    TEST_CHECK(dir_err.is_ok() && dir_entries == 1);
+
+    TEST_CHECK(fs_remove(file_path).is_ok());
+    TEST_CHECK(!fs_exists(file_path));
+    TEST_CHECK(fs_remove(test_dir).is_ok());
+}
+
+void test_std_interop() {
+#if !defined(_HAS_EXCEPTIONS) || _HAS_EXCEPTIONS != 0
+    std::string std_s = "from std::string";
+    StringRef ref_from_std = std_s; // Zero-cost implicit conversion without interop_std.h
+    TEST_CHECK(ref_from_std == "from std::string");
+
+    std::string roundtrip = to_std_string(ref_from_std);
+    TEST_CHECK(roundtrip == std_s);
+
+    std::vector<int> std_vec = {10, 20, 30, 40};
+    ArrayRef<int> arr_ref = std_vec;
+    TEST_CHECK(arr_ref.size() == 4 && arr_ref[2] == 30);
+#endif
+}
+
+} // namespace
+
+int main() {
+    test_core_and_bits();
+    test_arena_and_memory();
+    test_vocabulary();
+    test_containers();
+    test_text_utf8_and_numbers();
+    test_fs_and_io();
+    test_std_interop();
+
+    std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
+    return (g_tests_failed == 0) ? 0 : 1;
+}
