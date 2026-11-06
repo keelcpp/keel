@@ -555,6 +555,14 @@ void test_algo_and_rtree() {
     isize m_pos = 0, m_len = 0;
     TEST_CHECK(utf8_find_case_insensitive(text, "МИР", m_pos, m_len));
     TEST_CHECK(m_pos == 14 && m_len == 6);
+
+    // Brace-style {} and zero-padded formatting + FNV-1a
+    const auto fmt1 = format_inplace<64>("{:04d}-{:02d}-{:02d} {:.1f}", 2026, 11, 7, 12.34f);
+    TEST_CHECK(fmt1.as_ref() == "2026-11-07 12.3");
+    const auto fmt2 = format_inplace<64>("hex: {:04X}, str: {}", 0x2Au, "ok");
+    TEST_CHECK(fmt2.as_ref() == "hex: 002A, str: ok");
+    constexpr u64 h_compile = fnv1a64_chars("hello", 5);
+    TEST_CHECK(h_compile == fnv1a64_bytes("hello", 5));
 }
 
 } // namespace

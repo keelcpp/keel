@@ -5,7 +5,37 @@ namespace keel {
 
 namespace {
 
-void format_arg_into(String& out, char spec, int precision, const FormatArg& arg) {
+void append_padded_num(String& out, const char* num_buf, isize n, int width, bool zero_pad, bool plus_sign) {
+    if (n <= 0) return;
+    const bool is_neg = (num_buf[0] == '-');
+    const bool has_sign = is_neg || plus_sign;
+    const char sign_ch = is_neg ? '-' : '+';
+    const char* digits = is_neg ? (num_buf + 1) : num_buf;
+    const isize digit_len = is_neg ? (n - 1) : n;
+    const isize total_len = digit_len + (has_sign ? 1 : 0);
+    const isize pad_count = (width > total_len) ? (static_cast<isize>(width) - total_len) : 0;
+
+    if (!zero_pad) {
+        for (isize p = 0; p < pad_count; ++p) out.push_back(' ');
+    }
+    if (has_sign) {
+        out.push_back(sign_ch);
+    }
+    if (zero_pad) {
+        for (isize p = 0; p < pad_count; ++p) out.push_back('0');
+    }
+    out.append(StringRef(digits, digit_len));
+}
+
+void format_arg_into(
+    String& out,
+    char spec,
+    int width,
+    bool zero_pad,
+    bool plus_sign,
+    int precision,
+    const FormatArg& arg
+) {
     char num_buf[64];
     switch (spec) {
     case 'S':
@@ -31,20 +61,20 @@ void format_arg_into(String& out, char spec, int precision, const FormatArg& arg
     case 'i': {
         const i64 v = (arg.kind == FormatArg::Kind::Unsigned) ? static_cast<i64>(arg.u_val) : arg.i_val;
         const isize n = format_i64(num_buf, sizeof(num_buf), v, 10, false);
-        out.append(StringRef(num_buf, n));
+        append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         break;
     }
     case 'u': {
         const u64 v = (arg.kind == FormatArg::Kind::Signed) ? static_cast<u64>(arg.i_val) : arg.u_val;
         const isize n = format_u64(num_buf, sizeof(num_buf), v, 10, false);
-        out.append(StringRef(num_buf, n));
+        append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         break;
     }
     case 'x':
     case 'X': {
         const u64 v = (arg.kind == FormatArg::Kind::Signed) ? static_cast<u64>(arg.i_val) : arg.u_val;
         const isize n = format_u64(num_buf, sizeof(num_buf), v, 16, spec == 'X');
-        out.append(StringRef(num_buf, n));
+        append_padded_num(out, num_buf, n, width, zero_pad, false);
         break;
     }
     case 'p': {
@@ -53,7 +83,7 @@ void format_arg_into(String& out, char spec, int precision, const FormatArg& arg
                           ? static_cast<u64>(reinterpret_cast<usize>(arg.ptr_val))
                           : arg.u_val;
         const isize n = format_u64(num_buf, sizeof(num_buf), v, 16, false);
-        out.append(StringRef(num_buf, n));
+        append_padded_num(out, num_buf, n, width, zero_pad, false);
         break;
     }
     case 'f':
@@ -62,7 +92,7 @@ void format_arg_into(String& out, char spec, int precision, const FormatArg& arg
                           ? static_cast<f64>(arg.i_val)
                           : ((arg.kind == FormatArg::Kind::Unsigned) ? static_cast<f64>(arg.u_val) : arg.f_val);
         const isize n = format_f64_fixed(num_buf, sizeof(num_buf), v, precision >= 0 ? precision : 6);
-        out.append(StringRef(num_buf, n));
+        append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         break;
     }
     case 'g':
@@ -71,18 +101,19 @@ void format_arg_into(String& out, char spec, int precision, const FormatArg& arg
     case 'E':
     default: {
         if (arg.kind == FormatArg::Kind::Float) {
-            const isize n = format_f32(num_buf, sizeof(num_buf), static_cast<f32>(arg.f_val));
-            out.append(StringRef(num_buf, n));
+            const isize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
+                                             : format_f32(num_buf, sizeof(num_buf), static_cast<f32>(arg.f_val));
+            append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Double) {
             const isize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
                                              : format_f64(num_buf, sizeof(num_buf), arg.f_val);
-            out.append(StringRef(num_buf, n));
+            append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Signed) {
             const isize n = format_i64(num_buf, sizeof(num_buf), arg.i_val, 10, false);
-            out.append(StringRef(num_buf, n));
+            append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Unsigned) {
             const isize n = format_u64(num_buf, sizeof(num_buf), arg.u_val, 10, false);
-            out.append(StringRef(num_buf, n));
+            append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Bool) {
             out.append(arg.u_val ? "true" : "false");
         } else if (arg.kind == FormatArg::Kind::Char) {
@@ -95,7 +126,7 @@ void format_arg_into(String& out, char spec, int precision, const FormatArg& arg
             out.append("0x");
             const isize n =
                 format_u64(num_buf, sizeof(num_buf), static_cast<u64>(reinterpret_cast<usize>(arg.ptr_val)), 16, false);
-            out.append(StringRef(num_buf, n));
+            append_padded_num(out, num_buf, n, width, zero_pad, false);
         }
         break;
     }
@@ -108,8 +139,74 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
     isize arg_idx = 0;
     const isize len = fmt.size();
     for (isize i = 0; i < len; ++i) {
-        if (fmt[i] != '%') {
-            out.push_back(fmt[i]);
+        const char ch = fmt[i];
+        if (ch == '}') {
+            if (i + 1 < len && fmt[i + 1] == '}') {
+                out.push_back('}');
+                ++i;
+            } else {
+                out.push_back('}');
+            }
+            continue;
+        }
+
+        if (ch == '{') {
+            if (i + 1 < len && fmt[i + 1] == '{') {
+                out.push_back('{');
+                ++i;
+                continue;
+            }
+            isize close_pos = i + 1;
+            while (close_pos < len && fmt[close_pos] != '}') {
+                ++close_pos;
+            }
+            if (close_pos < len) {
+                char spec = '\0';
+                int width = 0;
+                bool zero_pad = false;
+                bool plus_sign = false;
+                int precision = -1;
+
+                isize p = i + 1;
+                while (p < close_pos && fmt[p] != ':') {
+                    ++p;
+                }
+                if (p < close_pos && fmt[p] == ':') {
+                    ++p;
+                    while (p < close_pos && (fmt[p] == '-' || fmt[p] == '+' || fmt[p] == ' ' || fmt[p] == '#')) {
+                        if (fmt[p] == '+') plus_sign = true;
+                        ++p;
+                    }
+                    if (p < close_pos && fmt[p] == '0') {
+                        zero_pad = true;
+                        ++p;
+                    }
+                    while (p < close_pos && fmt[p] >= '0' && fmt[p] <= '9') {
+                        width = width * 10 + (fmt[p] - '0');
+                        ++p;
+                    }
+                    if (p < close_pos && fmt[p] == '.') {
+                        ++p;
+                        precision = 0;
+                        while (p < close_pos && fmt[p] >= '0' && fmt[p] <= '9') {
+                            precision = precision * 10 + (fmt[p] - '0');
+                            ++p;
+                        }
+                    }
+                    if (p < close_pos) {
+                        spec = fmt[p];
+                    }
+                }
+                if (arg_idx < args.size()) {
+                    format_arg_into(out, spec, width, zero_pad, plus_sign, precision, args[arg_idx++]);
+                }
+                i = close_pos;
+                continue;
+            }
+        }
+
+        if (ch != '%') {
+            out.push_back(ch);
             continue;
         }
         if (i + 1 < len && fmt[i + 1] == '%') {
@@ -119,9 +216,17 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
         }
 
         ++i;
-        // Skip optional flags/width (`-`, `+`, `0`, digits)
-        while (i < len && (fmt[i] == '-' || fmt[i] == '+' || fmt[i] == ' ' || fmt[i] == '#' ||
-                           (fmt[i] >= '0' && fmt[i] <= '9'))) {
+        bool zero_pad = false;
+        bool plus_sign = false;
+        while (i < len && (fmt[i] == '-' || fmt[i] == '+' || fmt[i] == ' ' || fmt[i] == '#' || fmt[i] == '0')) {
+            if (fmt[i] == '0') zero_pad = true;
+            if (fmt[i] == '+') plus_sign = true;
+            ++i;
+        }
+
+        int width = 0;
+        while (i < len && fmt[i] >= '0' && fmt[i] <= '9') {
+            width = width * 10 + (fmt[i] - '0');
             ++i;
         }
 
@@ -143,7 +248,7 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
         if (i < len) {
             const char spec = fmt[i];
             if (arg_idx < args.size()) {
-                format_arg_into(out, spec, precision, args[arg_idx++]);
+                format_arg_into(out, spec, width, zero_pad, plus_sign, precision, args[arg_idx++]);
             }
         }
     }

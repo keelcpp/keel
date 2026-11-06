@@ -18,6 +18,26 @@ namespace keel {
     return hash_u64(seed ^ (val + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)));
 }
 
+inline constexpr u64 kFnv1aOffsetBasis = 14695981039346656037ULL;
+inline constexpr u64 kFnv1aPrime = 1099511628211ULL;
+
+[[nodiscard]] inline u64 fnv1a64_bytes(const void* data, usize len, u64 hash = kFnv1aOffsetBasis) noexcept {
+    const auto* bytes = static_cast<const u8*>(data);
+    for (usize i = 0; i < len; ++i) {
+        hash ^= static_cast<u64>(bytes[i]);
+        hash *= kFnv1aPrime;
+    }
+    return hash;
+}
+
+[[nodiscard]] constexpr u64 fnv1a64_chars(const char* str, usize len, u64 hash = kFnv1aOffsetBasis) noexcept {
+    for (usize i = 0; i < len; ++i) {
+        hash ^= static_cast<u64>(static_cast<u8>(str[i]));
+        hash *= kFnv1aPrime;
+    }
+    return hash;
+}
+
 [[nodiscard]] u64 hash_bytes(const void* data, usize len, u64 seed = 0x9e3779b97f4a7c15ULL) noexcept;
 
 template <typename T> struct Hash {

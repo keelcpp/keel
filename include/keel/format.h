@@ -54,6 +54,16 @@ struct FormatArg {
     constexpr FormatArg(const InplaceString<N>& s) noexcept
         : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
 
+    template <typename R>
+        requires(!IsSame<RemoveCvRef<R>, FormatArg>) && (!IsSame<RemoveCvRef<R>, StringRef>) &&
+                (!IsSame<RemoveCvRef<R>, String>) && (!IsSame<RemoveCvRef<R>, const char*>) &&
+                (!IsSame<RemoveCvRef<R>, char*>) && requires(const R& r) {
+                    { r.data() } -> detail::ConvertibleTo<const char*>;
+                    { r.size() };
+                }
+    constexpr FormatArg(const R& range) noexcept
+        : kind(Kind::StringRef), cstr_val(range.data()), str_len(static_cast<isize>(range.size())) {}
+
     template <typename T>
         requires(!IsSame<RemoveCv<T>, char>)
     constexpr FormatArg(const T* p) noexcept : kind(Kind::Pointer), ptr_val(static_cast<const void*>(p)) {}
