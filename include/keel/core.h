@@ -155,14 +155,14 @@ template <typename T> [[nodiscard]] constexpr T&& forward(RemoveReference<T>&& v
 }
 
 template <typename T> constexpr void swap(T& a, T& b) noexcept {
-    T tmp = move(a);
-    a = move(b);
-    b = move(tmp);
+    T tmp = keel::move(a);
+    a = keel::move(b);
+    b = keel::move(tmp);
 }
 
 template <typename T, typename U = T> constexpr T exchange(T& obj, U&& new_val) noexcept {
-    T old_val = move(obj);
-    obj = forward<U>(new_val);
+    T old_val = keel::move(obj);
+    obj = keel::forward<U>(new_val);
     return old_val;
 }
 

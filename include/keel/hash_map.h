@@ -189,7 +189,7 @@ public:
         if (min_items <= 0) return;
         const isize needed_cap = static_cast<isize>(bit_ceil(static_cast<u64>((min_items * 8 + 6) / 7)));
         if (needed_cap > m_cap) {
-            rehash(max<isize>(needed_cap, 8));
+            rehash(keel::max<isize>(needed_cap, 8));
         }
     }
 
@@ -214,13 +214,13 @@ public:
         const u8 tag = make_tag(h);
         const isize idx = find_or_prepare_insert(key, h, tag);
         if (is_occupied(m_ctrl[idx])) {
-            m_vals[idx] = move(val);
+            m_vals[idx] = keel::move(val);
             return false;
         }
         if (m_ctrl[idx] == kCtrlDeleted) --m_tombstones;
         m_ctrl[idx] = tag;
-        ::new (m_keys + idx) K(move(key));
-        ::new (m_vals + idx) V(move(val));
+        ::new (m_keys + idx) K(keel::move(key));
+        ::new (m_vals + idx) V(keel::move(val));
         ++m_size;
         return true;
     }
@@ -236,8 +236,8 @@ public:
         }
         if (m_ctrl[idx] == kCtrlDeleted) --m_tombstones;
         m_ctrl[idx] = tag;
-        ::new (m_keys + idx) K(move(key));
-        ::new (m_vals + idx) V(move(val));
+        ::new (m_keys + idx) K(keel::move(key));
+        ::new (m_vals + idx) V(keel::move(val));
         ++m_size;
         return {&m_vals[idx], true};
     }
@@ -256,7 +256,7 @@ public:
             } else {
                 ::new (m_keys + idx) K(key);
             }
-            ::new (m_vals + idx) V(move(default_val));
+            ::new (m_vals + idx) V(keel::move(default_val));
             ++m_size;
         }
         return m_vals[idx];
@@ -334,8 +334,8 @@ private:
                     idx = (idx + 1) & mask;
                 }
                 new_ctrl[idx] = tag;
-                ::new (new_keys + idx) K(move(m_keys[i]));
-                ::new (new_vals + idx) V(move(m_vals[i]));
+                ::new (new_keys + idx) K(keel::move(m_keys[i]));
+                ::new (new_vals + idx) V(keel::move(m_vals[i]));
                 m_keys[i].~K();
                 m_vals[i].~V();
             }

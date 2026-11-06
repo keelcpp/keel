@@ -67,14 +67,14 @@ public:
         Slot& s = m_slots[idx];
         m_free_head = s.next_free;
         s.next_free = kInvalidSlot;
-        ::new (s.storage) T(forward<Args>(args)...);
+        ::new (s.storage) T(keel::forward<Args>(args)...);
         s.alive = true;
         if (s.generation == 0) s.generation = 1;
         ++m_size;
         return Handle<T>{idx, s.generation};
     }
 
-    [[nodiscard]] Handle<T> insert(T val) { return emplace(move(val)); }
+    [[nodiscard]] Handle<T> insert(T val) { return emplace(keel::move(val)); }
 
     bool remove(Handle<T> h) noexcept {
         if (!is_valid(h)) return false;
@@ -138,7 +138,7 @@ private:
             new_slots[i].next_free = m_slots[i].next_free;
             new_slots[i].alive = m_slots[i].alive;
             if (m_slots[i].alive) {
-                ::new (new_slots[i].storage) T(move(*m_slots[i].ptr()));
+                ::new (new_slots[i].storage) T(keel::move(*m_slots[i].ptr()));
                 m_slots[i].ptr()->~T();
             }
         }

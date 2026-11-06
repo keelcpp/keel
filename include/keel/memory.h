@@ -63,7 +63,7 @@ struct Allocator {
 
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
         void* mem = alloc_bytes(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
-        return ::new (mem) T(forward<Args>(args)...);
+        return ::new (mem) T(keel::forward<Args>(args)...);
     }
 
     template <typename T> void destroy(T* ptr) noexcept {

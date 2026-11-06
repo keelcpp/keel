@@ -20,7 +20,7 @@ public:
 
     InplaceArray(InplaceArray&& other) noexcept : m_size(other.m_size) {
         for (isize i = 0; i < m_size; ++i) {
-            ::new (ptr_at(i)) T(move(other[i]));
+            ::new (ptr_at(i)) T(keel::move(other[i]));
             if constexpr (!IsTriviallyDestructible<T>) other[i].~T();
         }
         other.m_size = 0;
@@ -31,7 +31,7 @@ public:
             clear();
             m_size = other.m_size;
             for (isize i = 0; i < m_size; ++i) {
-                ::new (ptr_at(i)) T(move(other[i]));
+                ::new (ptr_at(i)) T(keel::move(other[i]));
                 if constexpr (!IsTriviallyDestructible<T>) other[i].~T();
             }
             other.m_size = 0;
@@ -73,13 +73,13 @@ public:
 
     template <typename... Args> T& emplace_back(Args&&... args) {
         KEEL_BOUNDS_ASSERT(m_size < N);
-        T* slot = ::new (ptr_at(m_size)) T(forward<Args>(args)...);
+        T* slot = ::new (ptr_at(m_size)) T(keel::forward<Args>(args)...);
         ++m_size;
         return *slot;
     }
 
     void push_back(const T& val) { emplace_back(val); }
-    void push_back(T&& val) { emplace_back(move(val)); }
+    void push_back(T&& val) { emplace_back(keel::move(val)); }
 
     void pop_back() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
@@ -101,7 +101,7 @@ public:
     void remove_at(isize i) noexcept {
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
         for (isize k = i; k < m_size - 1; ++k) {
-            (*this)[k] = move((*this)[k + 1]);
+            (*this)[k] = keel::move((*this)[k + 1]);
         }
         pop_back();
     }
@@ -109,7 +109,7 @@ public:
     void swap_remove(isize i) noexcept {
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
         if (i != m_size - 1) {
-            (*this)[i] = move((*this)[m_size - 1]);
+            (*this)[i] = keel::move((*this)[m_size - 1]);
         }
         pop_back();
     }
@@ -284,7 +284,7 @@ public:
         if (items.data() >= cur && items.data() < cur + m_size) {
             SmallArray tmp(m_alloc);
             tmp.append(items);
-            *this = move(tmp);
+            *this = keel::move(tmp);
             return;
         }
         clear();
@@ -293,15 +293,15 @@ public:
 
     template <typename... Args> T& emplace_back(Args&&... args) {
         if (m_size < m_cap) [[likely]] {
-            T* slot = ::new (data() + m_size) T(forward<Args>(args)...);
+            T* slot = ::new (data() + m_size) T(keel::forward<Args>(args)...);
             ++m_size;
             return *slot;
         }
-        return emplace_back_slow(forward<Args>(args)...);
+        return emplace_back_slow(keel::forward<Args>(args)...);
     }
 
     void push_back(const T& val) { emplace_back(val); }
-    void push_back(T&& val) { emplace_back(move(val)); }
+    void push_back(T&& val) { emplace_back(keel::move(val)); }
 
     void pop_back() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
@@ -321,7 +321,7 @@ public:
             reserve(m_size + count);
             T* dst = data();
             for (isize i = 0; i < count; ++i) {
-                ::new (dst + m_size + i) T(move(tmp[i]));
+                ::new (dst + m_size + i) T(keel::move(tmp[i]));
             }
             m_size += count;
             return;
@@ -342,7 +342,7 @@ public:
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
         T* cur = data();
         for (isize k = i; k < m_size - 1; ++k) {
-            cur[k] = move(cur[k + 1]);
+            cur[k] = keel::move(cur[k + 1]);
         }
         pop_back();
     }
@@ -351,7 +351,7 @@ public:
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
         T* cur = data();
         if (i != m_size - 1) {
-            cur[i] = move(cur[m_size - 1]);
+            cur[i] = keel::move(cur[m_size - 1]);
         }
         pop_back();
     }
@@ -366,7 +366,7 @@ private:
             mem_copy(dst, src, static_cast<usize>(count) * sizeof(T));
         } else {
             for (isize i = 0; i < count; ++i) {
-                ::new (dst + i) T(move(src[i]));
+                ::new (dst + i) T(keel::move(src[i]));
                 if constexpr (!IsTriviallyDestructible<T>) src[i].~T();
             }
         }
@@ -401,10 +401,10 @@ private:
     }
 
     template <typename... Args> T& emplace_back_slow(Args&&... args) {
-        const isize new_cap = max<isize>(m_cap * 2, N + 1);
+        const isize new_cap = keel::max<isize>(m_cap * 2, N + 1);
         T* new_data = m_alloc->alloc_array<T>(new_cap);
         // Construct the new element before relocating/destroying existing elements so self-aliasing args stay valid
-        T* slot = ::new (new_data + m_size) T(forward<Args>(args)...);
+        T* slot = ::new (new_data + m_size) T(keel::forward<Args>(args)...);
         relocate_elements(new_data, data(), m_size);
         if (m_heap) {
             m_alloc->free_array(m_heap, m_cap);

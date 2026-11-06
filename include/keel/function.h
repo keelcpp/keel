@@ -16,7 +16,7 @@ public:
 
     template <typename F>
         requires(!IsSame<RemoveCvRef<F>, Function>) && requires(RemoveCvRef<F>& f, Args&&... args) {
-            { static_cast<R>(f(forward<Args>(args)...)) };
+            { static_cast<R>(f(keel::forward<Args>(args)...)) };
         }
     Function(F&& callable) noexcept {
         using Decayed = RemoveCvRef<F>;
@@ -25,7 +25,7 @@ public:
         static_assert(IsNothrowMoveConstructible<Decayed>, "Callable must be noexcept move constructible");
         static_assert(IsNothrowDestructible<Decayed>, "Callable must be noexcept destructible");
 
-        ::new (m_storage) Decayed(forward<F>(callable));
+        ::new (m_storage) Decayed(keel::forward<F>(callable));
         m_ops = &ops_for<Decayed>();
     }
 
@@ -70,7 +70,7 @@ public:
 
     R operator()(Args... args) const {
         KEEL_ASSERT(m_ops != nullptr);
-        return m_ops->invoke(const_cast<u8*>(m_storage), forward<Args>(args)...);
+        return m_ops->invoke(const_cast<u8*>(m_storage), keel::forward<Args>(args)...);
     }
 
 private:
@@ -83,11 +83,11 @@ private:
     template <typename Decayed> static const Ops& ops_for() noexcept {
         static constexpr Ops kTable = {
             [](u8* storage, Args... args) -> R {
-                return (*reinterpret_cast<Decayed*>(storage))(forward<Args>(args)...);
+                return (*reinterpret_cast<Decayed*>(storage))(keel::forward<Args>(args)...);
             },
             [](u8* dst, u8* src) noexcept {
                 Decayed* s = reinterpret_cast<Decayed*>(src);
-                ::new (dst) Decayed(move(*s));
+                ::new (dst) Decayed(keel::move(*s));
                 s->~Decayed();
             },
             [](u8* storage) noexcept { reinterpret_cast<Decayed*>(storage)->~Decayed(); },

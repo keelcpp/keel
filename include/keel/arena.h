@@ -70,7 +70,7 @@ public:
 
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
         void* mem = alloc(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
-        return ::new (mem) T(forward<Args>(args)...);
+        return ::new (mem) T(keel::forward<Args>(args)...);
     }
 
     void reset() noexcept;
@@ -302,7 +302,7 @@ public:
                 mem_copy(new_buf, m_data, sizeof(T) * m_size);
             } else {
                 for (u32 i = 0; i < m_size; ++i) {
-                    ::new (new_buf + i) T(move(m_data[i]));
+                    ::new (new_buf + i) T(keel::move(m_data[i]));
                     if constexpr (!IsTriviallyDestructible<T>) m_data[i].~T();
                 }
             }
@@ -332,15 +332,15 @@ public:
 
     template <typename... Args> T& emplace_back(Args&&... args) {
         if (m_size < m_cap) [[likely]] {
-            T* elem = ::new (m_data + m_size) T(forward<Args>(args)...);
+            T* elem = ::new (m_data + m_size) T(keel::forward<Args>(args)...);
             ++m_size;
             return *elem;
         }
-        return emplace_back_slow(forward<Args>(args)...);
+        return emplace_back_slow(keel::forward<Args>(args)...);
     }
 
     void push_back(const T& value) { emplace_back(value); }
-    void push_back(T&& value) { emplace_back(move(value)); }
+    void push_back(T&& value) { emplace_back(keel::move(value)); }
 
     void pop_back() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
@@ -358,20 +358,20 @@ private:
         const isize new_bytes = static_cast<isize>(sizeof(T)) * static_cast<isize>(next_cap);
         if (m_data && m_arena->try_extend(m_data, old_bytes, new_bytes)) {
             m_cap = next_cap;
-            T* elem = ::new (m_data + m_size) T(forward<Args>(args)...);
+            T* elem = ::new (m_data + m_size) T(keel::forward<Args>(args)...);
             ++m_size;
             return *elem;
         }
 
         T* new_buf = static_cast<T*>(m_arena->alloc(new_bytes, static_cast<isize>(alignof(T))));
         // Construct new element before relocating/destroying old elements so self-aliasing args remain valid
-        T* elem = ::new (new_buf + m_size) T(forward<Args>(args)...);
+        T* elem = ::new (new_buf + m_size) T(keel::forward<Args>(args)...);
         if (m_size > 0 && m_data) {
             if constexpr (IsTriviallyCopyable<T>) {
                 mem_copy(new_buf, m_data, sizeof(T) * m_size);
             } else {
                 for (u32 i = 0; i < m_size; ++i) {
-                    ::new (new_buf + i) T(move(m_data[i]));
+                    ::new (new_buf + i) T(keel::move(m_data[i]));
                     if constexpr (!IsTriviallyDestructible<T>) m_data[i].~T();
                 }
             }

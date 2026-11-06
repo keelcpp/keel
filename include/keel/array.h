@@ -174,7 +174,7 @@ public:
         if (m_size == m_cap) [[unlikely]] {
             grow_for_one();
         }
-        T* slot = ::new (m_data + m_size) T(forward<Args>(args)...);
+        T* slot = ::new (m_data + m_size) T(keel::forward<Args>(args)...);
         ++m_size;
         return *slot;
     }
@@ -185,7 +185,7 @@ public:
             if (&val >= m_data && &val < m_data + m_size) {
                 T copy(val);
                 grow_for_one();
-                ::new (m_data + m_size) T(move(copy));
+                ::new (m_data + m_size) T(keel::move(copy));
                 ++m_size;
                 return;
             }
@@ -199,7 +199,7 @@ public:
         if (m_size == m_cap) [[unlikely]] {
             grow_for_one();
         }
-        ::new (m_data + m_size) T(move(val));
+        ::new (m_data + m_size) T(keel::move(val));
         ++m_size;
     }
 
@@ -235,7 +235,7 @@ public:
             }
         } else {
             for (isize k = i; k < m_size - 1; ++k) {
-                m_data[k] = move(m_data[k + 1]);
+                m_data[k] = keel::move(m_data[k + 1]);
             }
             m_data[m_size - 1].~T();
         }
@@ -247,7 +247,7 @@ public:
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
         --m_size;
         if (i != m_size) {
-            m_data[i] = move(m_data[m_size]);
+            m_data[i] = keel::move(m_data[m_size]);
         }
         if constexpr (!IsTriviallyDestructible<T>) {
             m_data[m_size].~T();
@@ -278,7 +278,7 @@ private:
         } else {
             T* new_data = m_alloc->alloc_array<T>(new_cap);
             for (isize i = 0; i < m_size; ++i) {
-                ::new (new_data + i) T(move(m_data[i]));
+                ::new (new_data + i) T(keel::move(m_data[i]));
                 m_data[i].~T();
             }
             if (m_data) {

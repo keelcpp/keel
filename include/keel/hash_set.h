@@ -127,7 +127,7 @@ public:
         if (min_items <= 0) return;
         const isize needed_cap = static_cast<isize>(bit_ceil(static_cast<u64>((min_items * 8 + 6) / 7)));
         if (needed_cap > m_cap) {
-            rehash(max<isize>(needed_cap, 8));
+            rehash(keel::max<isize>(needed_cap, 8));
         }
     }
 
@@ -158,7 +158,7 @@ public:
         }
         if (m_ctrl[idx] == kCtrlDeleted) --m_tombstones;
         m_ctrl[idx] = tag;
-        ::new (m_keys + idx) K(move(key));
+        ::new (m_keys + idx) K(keel::move(key));
         ++m_size;
         return true;
     }
@@ -213,7 +213,7 @@ private:
                     idx = (idx + 1) & mask;
                 }
                 new_ctrl[idx] = tag;
-                ::new (new_keys + idx) K(move(m_keys[i]));
+                ::new (new_keys + idx) K(keel::move(m_keys[i]));
                 m_keys[i].~K();
             }
         }

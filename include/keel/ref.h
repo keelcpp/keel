@@ -180,7 +180,7 @@ public:
     }
 
     [[nodiscard]] constexpr int compare(StringRef other) const noexcept {
-        const isize common = min(m_size, other.m_size);
+        const isize common = keel::min(m_size, other.m_size);
         const int cmp = detail::char_cmp(m_data, other.m_data, common);
         if (cmp != 0) return cmp;
         return (m_size < other.m_size) ? -1 : ((m_size > other.m_size) ? 1 : 0);

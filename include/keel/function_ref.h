@@ -14,18 +14,18 @@ public:
 
     template <typename F>
         requires(!IsSame<RemoveCvRef<F>, FunctionRef>) && requires(F&& f, Args&&... args) {
-            { static_cast<R>(f(forward<Args>(args)...)) };
+            { static_cast<R>(f(keel::forward<Args>(args)...)) };
         }
     constexpr FunctionRef(F&& callable KEEL_LIFETIMEBOUND) noexcept
         : m_obj(const_cast<void*>(static_cast<const void*>(&callable))),
           m_trampoline([](void* obj, Args... args) -> R {
-              return (*static_cast<RemoveReference<F>*>(obj))(forward<Args>(args)...);
+              return (*static_cast<RemoveReference<F>*>(obj))(keel::forward<Args>(args)...);
           }) {}
 
     constexpr FunctionRef(R (*fn)(Args...)) noexcept
         : m_obj(reinterpret_cast<void*>(fn)),
           m_trampoline(fn ? [](void* obj, Args... args) -> R {
-              return reinterpret_cast<R (*)(Args...)>(obj)(forward<Args>(args)...);
+              return reinterpret_cast<R (*)(Args...)>(obj)(keel::forward<Args>(args)...);
           }
                           : static_cast<Trampoline>(nullptr)) {}
 
@@ -33,7 +33,7 @@ public:
 
     constexpr R operator()(Args... args) const {
         KEEL_ASSERT(m_trampoline != nullptr);
-        return m_trampoline(m_obj, forward<Args>(args)...);
+        return m_trampoline(m_obj, keel::forward<Args>(args)...);
     }
 
 private:

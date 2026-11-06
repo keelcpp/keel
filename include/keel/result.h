@@ -7,10 +7,10 @@ namespace keel {
 template <typename T, typename E = Error> class [[nodiscard]] Result {
 public:
     constexpr Result(const T& val) : m_value(val), m_has_value(true) {}
-    constexpr Result(T&& val) noexcept : m_value(move(val)), m_has_value(true) {}
+    constexpr Result(T&& val) noexcept : m_value(keel::move(val)), m_has_value(true) {}
 
     constexpr Result(const E& err) noexcept : m_error(err), m_has_value(false) { KEEL_ASSERT(!err.is_ok()); }
-    constexpr Result(E&& err) noexcept : m_error(move(err)), m_has_value(false) { KEEL_ASSERT(!m_error.is_ok()); }
+    constexpr Result(E&& err) noexcept : m_error(keel::move(err)), m_has_value(false) { KEEL_ASSERT(!m_error.is_ok()); }
 
     constexpr Result(ErrorCode code) noexcept
         requires IsSame<E, Error>
@@ -44,9 +44,9 @@ public:
         requires(!(IsTriviallyCopyable<T> && IsTriviallyCopyable<E>))
         : m_has_value(other.m_has_value) {
         if (m_has_value) {
-            ::new (&m_value) T(move(other.m_value));
+            ::new (&m_value) T(keel::move(other.m_value));
         } else {
-            ::new (&m_error) E(move(other.m_error));
+            ::new (&m_error) E(keel::move(other.m_error));
         }
     }
 
@@ -74,9 +74,9 @@ public:
             destroy();
             m_has_value = other.m_has_value;
             if (m_has_value) {
-                ::new (&m_value) T(move(other.m_value));
+                ::new (&m_value) T(keel::move(other.m_value));
             } else {
-                ::new (&m_error) E(move(other.m_error));
+                ::new (&m_error) E(keel::move(other.m_error));
             }
         }
         return *this;
@@ -98,12 +98,12 @@ public:
 
     [[nodiscard]] constexpr T&& value() && noexcept {
         KEEL_ASSERT(m_has_value);
-        return move(m_value);
+        return keel::move(m_value);
     }
 
     [[nodiscard]] constexpr T& operator*() & noexcept { return value(); }
     [[nodiscard]] constexpr const T& operator*() const& noexcept { return value(); }
-    [[nodiscard]] constexpr T&& operator*() && noexcept { return move(value()); }
+    [[nodiscard]] constexpr T&& operator*() && noexcept { return keel::move(value()); }
 
     [[nodiscard]] constexpr T* operator->() noexcept {
         KEEL_ASSERT(m_has_value);
@@ -121,11 +121,11 @@ public:
     }
 
     template <typename U> [[nodiscard]] constexpr T value_or(U&& fallback) const& {
-        return m_has_value ? m_value : static_cast<T>(forward<U>(fallback));
+        return m_has_value ? m_value : static_cast<T>(keel::forward<U>(fallback));
     }
 
     template <typename U> [[nodiscard]] constexpr T value_or(U&& fallback) && {
-        return m_has_value ? move(m_value) : static_cast<T>(forward<U>(fallback));
+        return m_has_value ? keel::move(m_value) : static_cast<T>(keel::forward<U>(fallback));
     }
 
 private:

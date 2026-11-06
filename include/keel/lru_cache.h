@@ -35,7 +35,7 @@ public:
     V& put(const K& key, V value) {
         if (u32* idx_ptr = m_map.get(key)) {
             const u32 idx = *idx_ptr;
-            m_entries[static_cast<isize>(idx)].value = move(value);
+            m_entries[static_cast<isize>(idx)].value = keel::move(value);
             move_to_front(idx);
             return m_entries[static_cast<isize>(idx)].value;
         }
@@ -48,7 +48,7 @@ public:
             slot = static_cast<u32>(m_entries.size());
             m_entries.push_back(Entry{
                 .key = key,
-                .value = move(value),
+                .value = keel::move(value),
                 .prev = kNil,
                 .next = kNil,
             });
@@ -58,7 +58,7 @@ public:
             (void)m_map.remove(victim.key);
             detach(slot);
             victim.key = key;
-            victim.value = move(value);
+            victim.value = keel::move(value);
         }
 
         attach_front(slot);
