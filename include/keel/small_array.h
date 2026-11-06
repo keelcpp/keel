@@ -122,35 +122,35 @@ private:
 };
 
 // Small-buffer optimized dynamic array: stores up to N elements inline, spills to Allocator when size > N.
+// Never stores a self-referential pointer to its inline buffer (`m_heap == nullptr` when inline).
 template <typename T, isize N> class SmallArray {
     static_assert(N > 0, "SmallArray inline capacity N must be positive");
-    static_assert(IsNothrowMoveConstructible<T>, "SmallArray<T, N> requires noexcept move constructor");
     static_assert(IsNothrowDestructible<T>, "SmallArray<T, N> requires noexcept destructor");
 
 public:
     explicit SmallArray(Allocator* alloc = nullptr) noexcept
-        : m_data(inline_ptr()), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {}
+        : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {}
 
     ~SmallArray() noexcept {
         clear();
-        if (!is_inline()) {
-            m_alloc->free_array(m_data, m_cap);
+        if (m_heap) {
+            m_alloc->free_array(m_heap, m_cap);
         }
     }
 
     SmallArray(const SmallArray&) = delete;
     SmallArray& operator=(const SmallArray&) = delete;
 
-    SmallArray(SmallArray&& other) noexcept : m_data(inline_ptr()), m_size(0), m_cap(N), m_alloc(other.m_alloc) {
+    SmallArray(SmallArray&& other) noexcept : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(other.m_alloc) {
         move_from(other);
     }
 
     SmallArray& operator=(SmallArray&& other) noexcept {
         if (this != &other) {
             clear();
-            if (!is_inline()) {
-                m_alloc->free_array(m_data, m_cap);
-                m_data = inline_ptr();
+            if (m_heap) {
+                m_alloc->free_array(m_heap, m_cap);
+                m_heap = nullptr;
                 m_cap = N;
             }
             m_alloc = other.m_alloc;
@@ -161,33 +161,54 @@ public:
 
     [[nodiscard]] SmallArray clone(Allocator* alloc = nullptr) const {
         SmallArray copy(alloc ? alloc : m_alloc);
-        copy.append(ArrayRef<T>(m_data, m_size));
+        copy.append(ArrayRef<T>(data(), m_size));
         return copy;
     }
 
-    [[nodiscard]] operator ArrayRef<T>() const noexcept { return ArrayRef<T>(m_data, m_size); }
-    [[nodiscard]] operator MutArrayRef<T>() noexcept { return MutArrayRef<T>(m_data, m_size); }
+    [[nodiscard]] operator ArrayRef<T>() const noexcept { return ArrayRef<T>(data(), m_size); }
+    [[nodiscard]] operator MutArrayRef<T>() noexcept { return MutArrayRef<T>(data(), m_size); }
 
-    [[nodiscard]] T* data() noexcept { return m_data; }
-    [[nodiscard]] const T* data() const noexcept { return m_data; }
+    [[nodiscard]] T* data() noexcept { return m_heap ? m_heap : inline_ptr(); }
+    [[nodiscard]] const T* data() const noexcept { return m_heap ? m_heap : inline_ptr(); }
     [[nodiscard]] isize size() const noexcept { return m_size; }
     [[nodiscard]] isize capacity() const noexcept { return m_cap; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
-    [[nodiscard]] bool is_inline() const noexcept { return m_data == inline_ptr(); }
+    [[nodiscard]] bool is_inline() const noexcept { return m_heap == nullptr; }
+    [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
 
-    [[nodiscard]] T* begin() noexcept { return m_data; }
-    [[nodiscard]] const T* begin() const noexcept { return m_data; }
-    [[nodiscard]] T* end() noexcept { return m_data + m_size; }
-    [[nodiscard]] const T* end() const noexcept { return m_data + m_size; }
+    [[nodiscard]] T* begin() noexcept { return data(); }
+    [[nodiscard]] const T* begin() const noexcept { return data(); }
+    [[nodiscard]] T* end() noexcept { return data() + m_size; }
+    [[nodiscard]] const T* end() const noexcept { return data() + m_size; }
 
     [[nodiscard]] T& operator[](isize i) noexcept {
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
-        return m_data[i];
+        return data()[i];
     }
 
     [[nodiscard]] const T& operator[](isize i) const noexcept {
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
-        return m_data[i];
+        return data()[i];
+    }
+
+    [[nodiscard]] T& front() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[0];
+    }
+
+    [[nodiscard]] const T& front() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[0];
+    }
+
+    [[nodiscard]] T& back() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[m_size - 1];
+    }
+
+    [[nodiscard]] const T& back() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[m_size - 1];
     }
 
     void reserve(isize min_cap) {
@@ -199,20 +220,84 @@ public:
 
     void clear() noexcept {
         if constexpr (!IsTriviallyDestructible<T>) {
-            for (isize i = 0; i < m_size; ++i) {
-                m_data[i].~T();
+            T* cur = data();
+            for (isize i = m_size; i > 0; --i) {
+                cur[i - 1].~T();
             }
         }
         m_size = 0;
     }
 
-    template <typename... Args> T& emplace_back(Args&&... args) {
-        if (m_size == m_cap) [[unlikely]] {
-            reallocate(m_cap * 2);
+    void resize(isize new_size) {
+        KEEL_ASSERT(new_size >= 0);
+        if (new_size < m_size) {
+            if constexpr (!IsTriviallyDestructible<T>) {
+                T* cur = data();
+                for (isize i = m_size; i > new_size; --i) {
+                    cur[i - 1].~T();
+                }
+            }
+            m_size = new_size;
+        } else if (new_size > m_size) {
+            reserve(new_size);
+            T* cur = data();
+            for (isize i = m_size; i < new_size; ++i) {
+                ::new (cur + i) T{};
+            }
+            m_size = new_size;
         }
-        T* slot = ::new (m_data + m_size) T(forward<Args>(args)...);
-        ++m_size;
-        return *slot;
+    }
+
+    void resize(isize new_size, const T& fill_value) {
+        KEEL_ASSERT(new_size >= 0);
+        if (new_size < m_size) {
+            if constexpr (!IsTriviallyDestructible<T>) {
+                T* cur = data();
+                for (isize i = m_size; i > new_size; --i) {
+                    cur[i - 1].~T();
+                }
+            }
+            m_size = new_size;
+        } else if (new_size > m_size) {
+            reserve(new_size);
+            T* cur = data();
+            for (isize i = m_size; i < new_size; ++i) {
+                ::new (cur + i) T(fill_value);
+            }
+            m_size = new_size;
+        }
+    }
+
+    void assign(isize count, const T& fill_value) {
+        KEEL_ASSERT(count >= 0);
+        clear();
+        reserve(count);
+        T* cur = data();
+        for (isize i = 0; i < count; ++i) {
+            ::new (cur + i) T(fill_value);
+        }
+        m_size = count;
+    }
+
+    void assign(ArrayRef<T> items) {
+        const T* cur = data();
+        if (items.data() >= cur && items.data() < cur + m_size) {
+            SmallArray tmp(m_alloc);
+            tmp.append(items);
+            *this = move(tmp);
+            return;
+        }
+        clear();
+        append(items);
+    }
+
+    template <typename... Args> T& emplace_back(Args&&... args) {
+        if (m_size < m_cap) [[likely]] {
+            T* slot = ::new (data() + m_size) T(forward<Args>(args)...);
+            ++m_size;
+            return *slot;
+        }
+        return emplace_back_slow(forward<Args>(args)...);
     }
 
     void push_back(const T& val) { emplace_back(val); }
@@ -222,32 +307,51 @@ public:
         KEEL_BOUNDS_ASSERT(m_size > 0);
         --m_size;
         if constexpr (!IsTriviallyDestructible<T>) {
-            m_data[m_size].~T();
+            data()[m_size].~T();
         }
     }
 
     void append(ArrayRef<T> items) {
         const isize count = items.size();
         if (count == 0) return;
+        const T* cur = data();
+        if (items.data() >= cur && items.data() < cur + m_size) {
+            SmallArray tmp(m_alloc);
+            tmp.append(items);
+            reserve(m_size + count);
+            T* dst = data();
+            for (isize i = 0; i < count; ++i) {
+                ::new (dst + m_size + i) T(move(tmp[i]));
+            }
+            m_size += count;
+            return;
+        }
         reserve(m_size + count);
-        for (isize i = 0; i < count; ++i) {
-            ::new (m_data + m_size + i) T(items[i]);
+        T* dst = data();
+        if constexpr (IsTriviallyCopyable<T>) {
+            mem_copy(dst + m_size, items.data(), static_cast<usize>(count) * sizeof(T));
+        } else {
+            for (isize i = 0; i < count; ++i) {
+                ::new (dst + m_size + i) T(items[i]);
+            }
         }
         m_size += count;
     }
 
     void remove_at(isize i) noexcept {
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+        T* cur = data();
         for (isize k = i; k < m_size - 1; ++k) {
-            m_data[k] = move(m_data[k + 1]);
+            cur[k] = move(cur[k + 1]);
         }
         pop_back();
     }
 
     void swap_remove(isize i) noexcept {
         KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+        T* cur = data();
         if (i != m_size - 1) {
-            m_data[i] = move(m_data[m_size - 1]);
+            cur[i] = move(cur[m_size - 1]);
         }
         pop_back();
     }
@@ -256,21 +360,30 @@ private:
     T* inline_ptr() noexcept { return reinterpret_cast<T*>(m_inline_storage); }
     const T* inline_ptr() const noexcept { return reinterpret_cast<const T*>(m_inline_storage); }
 
+    static void relocate_elements(T* dst, T* src, isize count) {
+        if (count <= 0) return;
+        if constexpr (IsTriviallyCopyable<T>) {
+            mem_copy(dst, src, static_cast<usize>(count) * sizeof(T));
+        } else {
+            for (isize i = 0; i < count; ++i) {
+                ::new (dst + i) T(move(src[i]));
+                if constexpr (!IsTriviallyDestructible<T>) src[i].~T();
+            }
+        }
+    }
+
     void move_from(SmallArray& other) noexcept {
         if (other.is_inline()) {
-            m_data = inline_ptr();
+            m_heap = nullptr;
             m_cap = N;
             m_size = other.m_size;
-            for (isize i = 0; i < m_size; ++i) {
-                ::new (m_data + i) T(move(other.m_data[i]));
-                if constexpr (!IsTriviallyDestructible<T>) other.m_data[i].~T();
-            }
+            relocate_elements(inline_ptr(), other.inline_ptr(), m_size);
             other.m_size = 0;
         } else {
-            m_data = other.m_data;
+            m_heap = other.m_heap;
             m_size = other.m_size;
             m_cap = other.m_cap;
-            other.m_data = other.inline_ptr();
+            other.m_heap = nullptr;
             other.m_size = 0;
             other.m_cap = N;
         }
@@ -278,18 +391,31 @@ private:
 
     void reallocate(isize new_cap) {
         T* new_data = m_alloc->alloc_array<T>(new_cap);
-        for (isize i = 0; i < m_size; ++i) {
-            ::new (new_data + i) T(move(m_data[i]));
-            if constexpr (!IsTriviallyDestructible<T>) m_data[i].~T();
+        T* old_data = data();
+        relocate_elements(new_data, old_data, m_size);
+        if (m_heap) {
+            m_alloc->free_array(m_heap, m_cap);
         }
-        if (!is_inline()) {
-            m_alloc->free_array(m_data, m_cap);
-        }
-        m_data = new_data;
+        m_heap = new_data;
         m_cap = new_cap;
     }
 
-    T* m_data = nullptr;
+    template <typename... Args> T& emplace_back_slow(Args&&... args) {
+        const isize new_cap = max<isize>(m_cap * 2, N + 1);
+        T* new_data = m_alloc->alloc_array<T>(new_cap);
+        // Construct the new element before relocating/destroying existing elements so self-aliasing args stay valid
+        T* slot = ::new (new_data + m_size) T(forward<Args>(args)...);
+        relocate_elements(new_data, data(), m_size);
+        if (m_heap) {
+            m_alloc->free_array(m_heap, m_cap);
+        }
+        m_heap = new_data;
+        m_cap = new_cap;
+        ++m_size;
+        return *slot;
+    }
+
+    T* m_heap = nullptr;
     isize m_size = 0;
     isize m_cap = N;
     Allocator* m_alloc = nullptr;

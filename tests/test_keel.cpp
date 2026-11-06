@@ -228,9 +228,10 @@ void test_containers() {
     SmallArray<int, 4> small;
     for (int i = 0; i < 4; ++i) small.push_back(i * 10);
     TEST_CHECK(small.is_inline());
-    small.push_back(40);
+    // Self-aliasing push_back across inline-to-heap boundary
+    small.push_back(small[0]);
     TEST_CHECK(!small.is_inline());
-    TEST_CHECK(small.size() == 5 && small[4] == 40);
+    TEST_CHECK(small.size() == 5 && small[4] == 0);
     SmallArray<int, 4> small_copy = small.clone();
     TEST_CHECK(small_copy.size() == 5 && small_copy[3] == 30);
 

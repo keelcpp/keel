@@ -59,6 +59,7 @@ public:
 
     [[nodiscard]] void* alloc(isize size, isize align = kDefaultAlign);
     [[nodiscard]] void* realloc(void* ptr, isize old_size, isize new_size, isize align = kDefaultAlign);
+    [[nodiscard]] bool try_extend(void* ptr, isize old_size, isize new_size) noexcept;
 
     template <typename T> [[nodiscard]] T* alloc_array(isize count) {
         KEEL_ASSERT(count >= 0);

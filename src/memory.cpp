@@ -271,47 +271,51 @@ void* Arena::alloc(isize size, isize align) {
     return m_base + aligned_offset;
 }
 
+bool Arena::try_extend(void* ptr, isize old_size, isize new_size) noexcept {
+    if (!ptr || !m_base || old_size < 0 || new_size < 0) return false;
+    u8* byte_ptr = static_cast<u8*>(ptr);
+    if (byte_ptr < m_base || byte_ptr + old_size != m_base + m_offset) {
+        return false;
+    }
+    if (new_size <= old_size) {
+        m_offset = static_cast<isize>(byte_ptr - m_base) + new_size;
+        m_last_alloc_end = m_offset;
+        return true;
+    }
+    const isize extra = new_size - old_size;
+    const isize new_offset = m_offset + extra;
+    if (new_offset > m_reserved) {
+        return false;
+    }
+    if (new_offset > m_committed) {
+        const isize target_commit = min(align_up(new_offset, kCommitGranularity), m_reserved);
+        const isize commit_bytes = target_commit - m_committed;
+#if defined(_WIN32)
+        if (!VirtualAlloc(m_base + m_committed, static_cast<SIZE_T>(commit_bytes), MEM_COMMIT, PAGE_READWRITE)) {
+            return false;
+        }
+#elif !defined(__EMSCRIPTEN__)
+        if (mprotect(m_base + m_committed, static_cast<usize>(commit_bytes), PROT_READ | PROT_WRITE) != 0) {
+            return false;
+        }
+#endif
+        m_committed = target_commit;
+    }
+    m_offset = new_offset;
+    m_last_alloc_end = new_offset;
+    return true;
+}
+
 void* Arena::realloc(void* ptr, isize old_size, isize new_size, isize align) {
     if (!ptr) return alloc(new_size, align);
     if (new_size == 0) {
-        if (static_cast<u8*>(ptr) + old_size == m_base + m_offset) {
-            m_offset -= old_size;
-            m_last_alloc_end = m_offset;
-        }
+        (void)try_extend(ptr, old_size, 0);
         return nullptr;
     }
 
-    u8* byte_ptr = static_cast<u8*>(ptr);
     // In-place extension/shrinking when `ptr` is the most recent allocation at the top of the arena
-    if (byte_ptr >= m_base && byte_ptr + old_size == m_base + m_offset &&
-        (reinterpret_cast<usize>(byte_ptr) & static_cast<usize>(align - 1)) == 0) {
-        if (new_size <= old_size) {
-            m_offset = static_cast<isize>(byte_ptr - m_base) + new_size;
-            m_last_alloc_end = m_offset;
-            return ptr;
-        }
-        const isize extra = new_size - old_size;
-        const isize new_offset = m_offset + extra;
-        if (new_offset <= m_reserved) {
-            if (new_offset > m_committed) {
-                const isize target_commit = min(align_up(new_offset, kCommitGranularity), m_reserved);
-                const isize commit_bytes = target_commit - m_committed;
-#if defined(_WIN32)
-                if (!VirtualAlloc(m_base + m_committed, static_cast<SIZE_T>(commit_bytes), MEM_COMMIT,
-                                  PAGE_READWRITE)) {
-                    handle_oom(new_size, align);
-                }
-#elif !defined(__EMSCRIPTEN__)
-                if (mprotect(m_base + m_committed, static_cast<usize>(commit_bytes), PROT_READ | PROT_WRITE) != 0) {
-                    handle_oom(new_size, align);
-                }
-#endif
-                m_committed = target_commit;
-            }
-            m_offset = new_offset;
-            m_last_alloc_end = new_offset;
-            return ptr;
-        }
+    if ((reinterpret_cast<usize>(ptr) & static_cast<usize>(align - 1)) == 0 && try_extend(ptr, old_size, new_size)) {
+        return ptr;
     }
 
     void* new_ptr = alloc(new_size, align);
