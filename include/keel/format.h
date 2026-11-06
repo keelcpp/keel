@@ -106,6 +106,12 @@ template <typename... Args> isize format_buf(char* buf, isize cap, StringRef fmt
     }
 }
 
+template <usize N, typename... Args>
+[[nodiscard]] inline StringRef format_buf(char (&buf)[N], StringRef fmt, const Args&... args) noexcept {
+    const isize len = format_buf(buf, static_cast<isize>(N), fmt, args...);
+    return StringRef(buf, len > 0 ? len : 0);
+}
+
 template <isize N, typename... Args>
 void format_into(InplaceString<N>& out, StringRef fmt, const Args&... args) noexcept {
     const isize len = format_buf(out.inline_buffer(), N, fmt, args...);
