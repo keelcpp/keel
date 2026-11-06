@@ -13,6 +13,7 @@
 #include "keel/hash_map.h"
 #include "keel/hash_set.h"
 #include "keel/io.h"
+#include "keel/lru_cache.h"
 #include "keel/memory.h"
 #include "keel/number.h"
 #include "keel/optional.h"

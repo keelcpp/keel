@@ -264,6 +264,30 @@ void test_containers() {
     for (int i = 0; i < 50; ++i) TEST_CHECK(set.remove(i));
     TEST_CHECK(set.size() == 50);
     for (int i = 50; i < 100; ++i) TEST_CHECK(set.contains(i));
+
+    // ArenaArray<T> triviality & in-place try_extend growth
+    static_assert(IsTriviallyDestructible<ArenaArray<int>>);
+    static_assert(!IsTriviallyDestructible<ArenaArray<TrackedObj>>);
+    {
+        Arena arena(1024 * 1024);
+        ArenaArray<int> aarr(arena, 8);
+        const int* init_ptr = aarr.data();
+        for (int i = 0; i < 64; ++i) aarr.push_back(i * 3);
+        TEST_CHECK(aarr.size() == 64 && aarr.data() == init_ptr && aarr[20] == 60);
+    }
+
+    // LruCache<K, V, Capacity>
+    LruCache<int, int, 3> lru;
+    lru.put(1, 10);
+    lru.put(2, 20);
+    lru.put(3, 30);
+    TEST_CHECK(lru.size() == 3);
+    TEST_CHECK(lru.find(1) != nullptr && *lru.find(1) == 10); // Promotes key 1; key 2 is now LRU
+    lru.put(4, 40);                                           // Evicts key 2
+    TEST_CHECK(lru.find(2) == nullptr);
+    TEST_CHECK(lru.find(1) != nullptr && *lru.find(1) == 10);
+    TEST_CHECK(lru.find(3) != nullptr && *lru.find(3) == 30);
+    TEST_CHECK(lru.find(4) != nullptr && *lru.find(4) == 40);
 }
 
 void test_text_utf8_and_numbers() {

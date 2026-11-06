@@ -1,6 +1,7 @@
 #pragma once
 
 #include "keel/memory.h"
+#include "keel/ref.h"
 
 namespace keel {
 
@@ -110,5 +111,276 @@ inline Allocator* ArenaTemp::allocator() const noexcept {
 
 // Thread-local scratch arena acquisition with conflict avoidance (ping-pong between 2 thread-local arenas)
 [[nodiscard]] ArenaTemp get_scratch(Arena* const* conflicts = nullptr, isize conflict_count = 0) noexcept;
+
+namespace detail {
+
+template <typename T, bool TriviallyDestructible = IsTriviallyDestructible<T>> struct ArenaArrayBase {
+    Arena* m_arena = nullptr;
+    T* m_data = nullptr;
+    u32 m_size = 0;
+    u32 m_cap = 0;
+
+    constexpr ArenaArrayBase() noexcept = default;
+    constexpr explicit ArenaArrayBase(Arena* arena) noexcept : m_arena(arena) {}
+    ~ArenaArrayBase() noexcept = default;
+};
+
+template <typename T> struct ArenaArrayBase<T, false> {
+    Arena* m_arena = nullptr;
+    T* m_data = nullptr;
+    u32 m_size = 0;
+    u32 m_cap = 0;
+
+    constexpr ArenaArrayBase() noexcept = default;
+    constexpr explicit ArenaArrayBase(Arena* arena) noexcept : m_arena(arena) {}
+
+    ~ArenaArrayBase() noexcept {
+        for (u32 i = m_size; i > 0; --i) {
+            m_data[i - 1].~T();
+        }
+    }
+};
+
+} // namespace detail
+
+// Arena-backed contiguous dynamic array.
+// Trivially destructible when `T` is trivially destructible, and expands in-place via `Arena::try_extend`
+// when growing at the tip of the arena.
+template <typename T> class ArenaArray : private detail::ArenaArrayBase<T> {
+    using Base = detail::ArenaArrayBase<T>;
+    using Base::m_arena;
+    using Base::m_cap;
+    using Base::m_data;
+    using Base::m_size;
+
+public:
+    constexpr ArenaArray() noexcept = default;
+
+    explicit ArenaArray(Arena& arena, isize initial_reserve = 0) : Base(&arena) {
+        if (initial_reserve > 0) {
+            reserve(initial_reserve);
+        }
+    }
+
+    explicit ArenaArray(Arena* arena, isize initial_reserve = 0) : Base(arena) {
+        if (arena && initial_reserve > 0) {
+            reserve(initial_reserve);
+        }
+    }
+
+    ArenaArray(const ArenaArray& other) : Base(other.m_arena) {
+        if (other.m_size > 0 && m_arena) {
+            reserve(static_cast<isize>(other.m_size));
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(m_data, other.m_data, sizeof(T) * other.m_size);
+            } else {
+                for (u32 i = 0; i < other.m_size; ++i) {
+                    ::new (m_data + i) T(other.m_data[i]);
+                }
+            }
+            m_size = other.m_size;
+        }
+    }
+
+    ArenaArray(ArenaArray&& other) noexcept : Base(other.m_arena) {
+        m_data = other.m_data;
+        m_size = other.m_size;
+        m_cap = other.m_cap;
+        other.m_data = nullptr;
+        other.m_size = 0;
+        other.m_cap = 0;
+    }
+
+    ArenaArray& operator=(const ArenaArray& other) {
+        if (this != &other) {
+            clear();
+            if (!m_arena) {
+                m_arena = other.m_arena;
+            }
+            if (other.m_size > 0 && m_arena) {
+                reserve(static_cast<isize>(other.m_size));
+                if constexpr (IsTriviallyCopyable<T>) {
+                    mem_copy(m_data, other.m_data, sizeof(T) * other.m_size);
+                } else {
+                    for (u32 i = 0; i < other.m_size; ++i) {
+                        ::new (m_data + i) T(other.m_data[i]);
+                    }
+                }
+                m_size = other.m_size;
+            }
+        }
+        return *this;
+    }
+
+    ArenaArray& operator=(ArenaArray&& other) noexcept {
+        if (this != &other) {
+            clear();
+            m_arena = other.m_arena;
+            m_data = other.m_data;
+            m_size = other.m_size;
+            m_cap = other.m_cap;
+            other.m_data = nullptr;
+            other.m_size = 0;
+            other.m_cap = 0;
+        }
+        return *this;
+    }
+
+    ~ArenaArray() noexcept = default;
+
+    constexpr void bind_arena(Arena& arena) noexcept { m_arena = &arena; }
+    [[nodiscard]] constexpr Arena* arena() const noexcept { return m_arena; }
+
+    [[nodiscard]] constexpr T* data() noexcept { return m_data; }
+    [[nodiscard]] constexpr const T* data() const noexcept { return m_data; }
+    [[nodiscard]] constexpr isize size() const noexcept { return static_cast<isize>(m_size); }
+    [[nodiscard]] constexpr isize capacity() const noexcept { return static_cast<isize>(m_cap); }
+    [[nodiscard]] constexpr bool empty() const noexcept { return m_size == 0; }
+
+    [[nodiscard]] constexpr T* begin() noexcept { return m_data; }
+    [[nodiscard]] constexpr const T* begin() const noexcept { return m_data; }
+    [[nodiscard]] constexpr T* end() noexcept { return m_data + m_size; }
+    [[nodiscard]] constexpr const T* end() const noexcept { return m_data + m_size; }
+
+    [[nodiscard]] constexpr T& operator[](isize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i >= 0 && i < static_cast<isize>(m_size));
+        return m_data[i];
+    }
+
+    [[nodiscard]] constexpr const T& operator[](isize i) const noexcept {
+        KEEL_BOUNDS_ASSERT(i >= 0 && i < static_cast<isize>(m_size));
+        return m_data[i];
+    }
+
+    [[nodiscard]] constexpr T& front() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[0];
+    }
+
+    [[nodiscard]] constexpr const T& front() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[0];
+    }
+
+    [[nodiscard]] constexpr T& back() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
+    [[nodiscard]] constexpr const T& back() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
+    [[nodiscard]] constexpr operator ArrayRef<T>() const noexcept { return ArrayRef<T>(m_data, m_size); }
+    [[nodiscard]] constexpr operator MutArrayRef<T>() noexcept { return MutArrayRef<T>(m_data, m_size); }
+
+    void clear() noexcept {
+        if constexpr (!IsTriviallyDestructible<T>) {
+            for (u32 i = m_size; i > 0; --i) {
+                m_data[i - 1].~T();
+            }
+        }
+        m_size = 0;
+    }
+
+    void reserve(isize new_cap) {
+        if (new_cap <= static_cast<isize>(m_cap)) return;
+        KEEL_ASSERT(m_arena != nullptr);
+        if (!m_arena) return;
+
+        const isize old_bytes = static_cast<isize>(sizeof(T)) * static_cast<isize>(m_cap);
+        const isize new_bytes = static_cast<isize>(sizeof(T)) * new_cap;
+        if (m_data && m_arena->try_extend(m_data, old_bytes, new_bytes)) {
+            m_cap = static_cast<u32>(new_cap);
+            return;
+        }
+
+        T* new_buf = static_cast<T*>(m_arena->alloc(new_bytes, static_cast<isize>(alignof(T))));
+        if (m_size > 0 && m_data) {
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(new_buf, m_data, sizeof(T) * m_size);
+            } else {
+                for (u32 i = 0; i < m_size; ++i) {
+                    ::new (new_buf + i) T(move(m_data[i]));
+                    if constexpr (!IsTriviallyDestructible<T>) m_data[i].~T();
+                }
+            }
+        }
+        m_data = new_buf;
+        m_cap = static_cast<u32>(new_cap);
+    }
+
+    void resize(isize new_size) {
+        KEEL_ASSERT(new_size >= 0);
+        const u32 target = static_cast<u32>(new_size);
+        if (target < m_size) {
+            if constexpr (!IsTriviallyDestructible<T>) {
+                for (u32 i = m_size; i > target; --i) {
+                    m_data[i - 1].~T();
+                }
+            }
+            m_size = target;
+        } else if (target > m_size) {
+            reserve(new_size);
+            for (u32 i = m_size; i < target; ++i) {
+                ::new (m_data + i) T{};
+            }
+            m_size = target;
+        }
+    }
+
+    template <typename... Args> T& emplace_back(Args&&... args) {
+        if (m_size < m_cap) [[likely]] {
+            T* elem = ::new (m_data + m_size) T(forward<Args>(args)...);
+            ++m_size;
+            return *elem;
+        }
+        return emplace_back_slow(forward<Args>(args)...);
+    }
+
+    void push_back(const T& value) { emplace_back(value); }
+    void push_back(T&& value) { emplace_back(move(value)); }
+
+    void pop_back() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        --m_size;
+        if constexpr (!IsTriviallyDestructible<T>) {
+            m_data[m_size].~T();
+        }
+    }
+
+private:
+    template <typename... Args> T& emplace_back_slow(Args&&... args) {
+        KEEL_ASSERT(m_arena != nullptr);
+        const u32 next_cap = (m_cap == 0) ? 16u : (m_cap * 2u);
+        const isize old_bytes = static_cast<isize>(sizeof(T)) * static_cast<isize>(m_cap);
+        const isize new_bytes = static_cast<isize>(sizeof(T)) * static_cast<isize>(next_cap);
+        if (m_data && m_arena->try_extend(m_data, old_bytes, new_bytes)) {
+            m_cap = next_cap;
+            T* elem = ::new (m_data + m_size) T(forward<Args>(args)...);
+            ++m_size;
+            return *elem;
+        }
+
+        T* new_buf = static_cast<T*>(m_arena->alloc(new_bytes, static_cast<isize>(alignof(T))));
+        // Construct new element before relocating/destroying old elements so self-aliasing args remain valid
+        T* elem = ::new (new_buf + m_size) T(forward<Args>(args)...);
+        if (m_size > 0 && m_data) {
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(new_buf, m_data, sizeof(T) * m_size);
+            } else {
+                for (u32 i = 0; i < m_size; ++i) {
+                    ::new (new_buf + i) T(move(m_data[i]));
+                    if constexpr (!IsTriviallyDestructible<T>) m_data[i].~T();
+                }
+            }
+        }
+        m_data = new_buf;
+        m_cap = next_cap;
+        ++m_size;
+        return *elem;
+    }
+};
 
 } // namespace keel
