@@ -1,5 +1,6 @@
 #pragma once
 
+#include "keel/algo.h"
 #include "keel/arena.h"
 #include "keel/array.h"
 #include "keel/bits.h"
@@ -20,6 +21,7 @@
 #include "keel/pool.h"
 #include "keel/ref.h"
 #include "keel/result.h"
+#include "keel/rtree.h"
 #include "keel/small_array.h"
 #include "keel/string.h"
 #include "keel/utf8.h"

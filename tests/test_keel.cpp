@@ -454,6 +454,53 @@ void test_std_interop() {
 #endif
 }
 
+void test_algo_and_rtree() {
+    Array<int> nums;
+    for (int i = 100; i >= 1; --i) {
+        nums.push_back((i * 37) % 101);
+    }
+    keel::sort(nums);
+    for (isize i = 1; i < nums.size(); ++i) {
+        TEST_CHECK(nums[i - 1] <= nums[i]);
+    }
+    TEST_CHECK(keel::binary_search(ArrayRef<int>(nums), nums[42]));
+    TEST_CHECK(!keel::binary_search(ArrayRef<int>(nums), 999999));
+
+    RTree<u32, f32, 4> tree;
+    Array<RTreeItem<u32, f32>> items;
+    for (u32 y = 0; y < 10; ++y) {
+        for (u32 x = 0; x < 10; ++x) {
+            const u32 id = y * 10 + x;
+            const f32 fx = static_cast<f32>(x * 10);
+            const f32 fy = static_cast<f32>(y * 10);
+            items.push_back(RTreeItem<u32, f32>{
+                .id = id,
+                .box = RTreeBox<f32>::from_xywh(fx, fy, 8.0f, 8.0f)
+            });
+        }
+    }
+    tree.build(items);
+    TEST_CHECK(!tree.empty());
+    TEST_CHECK(tree.item_count() == 100);
+
+    Array<u32> hits;
+    tree.query_box(RTreeBox<f32>::from_xywh(12.0f, 22.0f, 15.0f, 15.0f), hits);
+    // Should hit cells (1,2), (2,2), (1,3), (2,3) -> ids 21, 22, 31, 32
+    keel::sort(hits);
+    TEST_CHECK(hits.size() == 4);
+    if (hits.size() == 4) {
+        TEST_CHECK(hits[0] == 21 && hits[1] == 22 && hits[2] == 31 && hits[3] == 32);
+    }
+
+    int point_hits = 0;
+    u32 hit_id = 999;
+    tree.query_point(44.0f, 54.0f, [&](u32 id) {
+        ++point_hits;
+        hit_id = id;
+    });
+    TEST_CHECK(point_hits == 1 && hit_id == 54);
+}
+
 } // namespace
 
 int main() {
@@ -464,6 +511,7 @@ int main() {
     test_text_utf8_and_numbers();
     test_fs_and_io();
     test_std_interop();
+    test_algo_and_rtree();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;
