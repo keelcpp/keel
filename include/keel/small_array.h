@@ -131,6 +131,21 @@ public:
     explicit SmallArray(Allocator* alloc = nullptr) noexcept
         : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {}
 
+    explicit SmallArray(isize count, Allocator* alloc = nullptr)
+        : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {
+        resize(count);
+    }
+
+    SmallArray(isize count, const T& fill_value, Allocator* alloc = nullptr)
+        : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {
+        assign(count, fill_value);
+    }
+
+    explicit SmallArray(ArrayRef<T> items, Allocator* alloc = nullptr)
+        : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {
+        append(items);
+    }
+
     ~SmallArray() noexcept {
         clear();
         if (m_heap) {

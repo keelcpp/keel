@@ -181,13 +181,14 @@ Arena::~Arena() noexcept { release_memory(); }
 
 Arena::Arena(Arena&& other) noexcept
     : m_base(other.m_base), m_offset(other.m_offset), m_committed(other.m_committed), m_reserved(other.m_reserved),
-      m_last_alloc_end(other.m_last_alloc_end) {
+      m_last_alloc_end(other.m_last_alloc_end), m_dtor_head(other.m_dtor_head) {
     init_allocator();
     other.m_base = nullptr;
     other.m_offset = 0;
     other.m_committed = 0;
     other.m_reserved = 0;
     other.m_last_alloc_end = 0;
+    other.m_dtor_head = nullptr;
 }
 
 Arena& Arena::operator=(Arena&& other) noexcept {
@@ -198,11 +199,13 @@ Arena& Arena::operator=(Arena&& other) noexcept {
         m_committed = other.m_committed;
         m_reserved = other.m_reserved;
         m_last_alloc_end = other.m_last_alloc_end;
+        m_dtor_head = other.m_dtor_head;
         other.m_base = nullptr;
         other.m_offset = 0;
         other.m_committed = 0;
         other.m_reserved = 0;
         other.m_last_alloc_end = 0;
+        other.m_dtor_head = nullptr;
     }
     return *this;
 }
@@ -325,18 +328,29 @@ void* Arena::realloc(void* ptr, isize old_size, isize new_size, isize align) {
     return new_ptr;
 }
 
+void Arena::run_destructors_from(isize offset) noexcept {
+    while (m_dtor_head && m_dtor_head->offset >= offset) {
+        DtorNode* node = m_dtor_head;
+        m_dtor_head = node->next;
+        node->destroy(node->obj);
+    }
+}
+
 void Arena::reset() noexcept {
+    run_destructors_from(0);
     m_offset = 0;
     m_last_alloc_end = 0;
 }
 
 void Arena::rewind_to(isize offset) noexcept {
     KEEL_ASSERT(offset >= 0 && offset <= m_offset);
+    run_destructors_from(offset);
     m_offset = offset;
     m_last_alloc_end = offset;
 }
 
 void Arena::release_memory() noexcept {
+    run_destructors_from(0);
     if (m_base) {
 #if defined(_WIN32)
         VirtualFree(m_base, 0, MEM_RELEASE);

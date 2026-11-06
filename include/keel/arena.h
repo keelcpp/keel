@@ -69,8 +69,71 @@ public:
     }
 
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
-        void* mem = alloc(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
-        return ::new (mem) T(keel::forward<Args>(args)...);
+        if constexpr (IsTriviallyDestructible<T>) {
+            void* mem = alloc(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
+            return ::new (mem) T(keel::forward<Args>(args)...);
+        } else {
+            const isize mark = m_offset;
+            void* mem = alloc(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
+            auto* node = static_cast<DtorNode*>(alloc(static_cast<isize>(sizeof(DtorNode)), static_cast<isize>(alignof(DtorNode))));
+            T* obj = ::new (mem) T(keel::forward<Args>(args)...);
+            node->obj = obj;
+            node->destroy = [](void* p) noexcept { static_cast<T*>(p)->~T(); };
+            node->next = m_dtor_head;
+            node->offset = mark;
+            m_dtor_head = node;
+            return obj;
+        }
+    }
+
+    template <typename T> [[nodiscard]] T* create_array(isize count) {
+        KEEL_ASSERT(count >= 0);
+        if (count == 0) return nullptr;
+        if constexpr (IsTriviallyDestructible<T>) {
+            T* arr = alloc_array<T>(count);
+            for (isize i = 0; i < count; ++i) {
+                ::new (arr + i) T{};
+            }
+            return arr;
+        } else {
+            struct ArrayDtorRecord {
+                DtorNode node{};
+                T* data = nullptr;
+                isize count = 0;
+            };
+            const isize mark = m_offset;
+            T* arr = alloc_array<T>(count);
+            auto* rec = static_cast<ArrayDtorRecord*>(
+                alloc(static_cast<isize>(sizeof(ArrayDtorRecord)), static_cast<isize>(alignof(ArrayDtorRecord))));
+            for (isize i = 0; i < count; ++i) {
+                ::new (arr + i) T{};
+            }
+            rec->data = arr;
+            rec->count = count;
+            rec->node.obj = rec;
+            rec->node.destroy = [](void* p) noexcept {
+                auto* r = static_cast<ArrayDtorRecord*>(p);
+                for (isize i = r->count; i > 0; --i) {
+                    r->data[i - 1].~T();
+                }
+            };
+            rec->node.next = m_dtor_head;
+            rec->node.offset = mark;
+            m_dtor_head = &rec->node;
+            return arr;
+        }
+    }
+
+    template <typename T> [[nodiscard]] MutArrayRef<T> create_slice(isize count) {
+        return MutArrayRef<T>(create_array<T>(count), count);
+    }
+
+    [[nodiscard]] StringRef alloc_string(StringRef str) {
+        if (str.empty()) return StringRef("", 0);
+        char* buf = static_cast<char*>(alloc(str.size() + 1, 1));
+        mem_copy(buf, str.data(), static_cast<usize>(str.size()));
+        buf[str.size()] = '\0';
+        return StringRef(buf, str.size());
     }
 
     void reset() noexcept;
@@ -85,13 +148,22 @@ public:
     [[nodiscard]] Allocator* allocator() noexcept { return &m_allocator; }
 
 private:
+    struct DtorNode {
+        void* obj = nullptr;
+        void (*destroy)(void*) noexcept = nullptr;
+        DtorNode* next = nullptr;
+        isize offset = 0;
+    };
+
     void init_allocator() noexcept;
+    void run_destructors_from(isize offset) noexcept;
 
     u8* m_base = nullptr;
     isize m_offset = 0;
     isize m_committed = 0;
     isize m_reserved = 0;
     isize m_last_alloc_end = 0;
+    DtorNode* m_dtor_head = nullptr;
     Allocator m_allocator{};
 };
 
