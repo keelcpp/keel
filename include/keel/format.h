@@ -50,6 +50,9 @@ struct FormatArg {
     constexpr FormatArg(char* s) noexcept : kind(Kind::CString), cstr_val(s ? s : "(null)") {}
     constexpr FormatArg(StringRef s) noexcept : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
     FormatArg(const String& s) noexcept : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
+    template <isize N>
+    constexpr FormatArg(const InplaceString<N>& s) noexcept
+        : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
 
     template <typename T>
         requires(!IsSame<RemoveCv<T>, char>)
@@ -91,6 +94,19 @@ template <typename... Args> isize format_buf(char* buf, isize cap, StringRef fmt
         const FormatArg arg_array[] = {FormatArg(args)...};
         return vformat_buf(buf, cap, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
     }
+}
+
+template <isize N, typename... Args>
+void format_into(InplaceString<N>& out, StringRef fmt, const Args&... args) noexcept {
+    const isize len = format_buf(out.inline_buffer(), N, fmt, args...);
+    out.set_inline_size(len);
+}
+
+template <isize N = 64, typename... Args>
+[[nodiscard]] InplaceString<N> format_inplace(StringRef fmt, const Args&... args) noexcept {
+    InplaceString<N> out;
+    format_into(out, fmt, args...);
+    return out;
 }
 
 template <typename... Args> [[nodiscard]] StringRef format_arena(Arena& arena, StringRef fmt, const Args&... args) {

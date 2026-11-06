@@ -194,4 +194,185 @@ template <> struct Equal<String> {
     }
 };
 
+// Zero-heap hybrid fixed-capacity string (Rule of Zero, trivially copyable).
+// Holds either a pointer to a static/arena null-terminated string literal (zero copies, m_ptr != nullptr),
+// or an inline fixed buffer (zero heap allocations, m_ptr == nullptr).
+template <isize N = 64> class InplaceString {
+    static_assert(N > 1, "InplaceString capacity N must be greater than 1");
+
+public:
+    constexpr InplaceString() noexcept : m_ptr(nullptr), m_size(0) { m_buf[0] = '\0'; }
+
+    // Constructs from a static string literal or null-terminated string with zero copy.
+    constexpr InplaceString(const char* literal) noexcept { set_static(literal); }
+
+    // Constructs from a null-terminated external/arena string with known length (zero copy).
+    constexpr InplaceString(const char* external_null_terminated, isize len) noexcept {
+        set_static(external_null_terminated, len);
+    }
+
+    // Constructs from a StringRef, copying characters into the inline buffer.
+    constexpr InplaceString(StringRef ref) noexcept { set(ref); }
+
+    // Constructs from any string-like range (e.g. std::string_view, std::string, keel::String), copying into inline buffer.
+    template <typename R>
+        requires(!IsSame<RemoveCvRef<R>, InplaceString>) && (!IsSame<RemoveCvRef<R>, StringRef>) &&
+                (!IsSame<RemoveCvRef<R>, const char*>) && (!IsSame<RemoveCvRef<R>, char*>) &&
+                requires(const R& r) {
+                    { r.data() } -> detail::ConvertibleTo<const char*>;
+                    { r.size() };
+                }
+    constexpr InplaceString(const R& range) noexcept {
+        set(StringRef(range.data(), static_cast<isize>(range.size())));
+    }
+
+    constexpr InplaceString& operator=(const char* literal) noexcept {
+        set_static(literal);
+        return *this;
+    }
+
+    constexpr InplaceString& operator=(StringRef ref) noexcept {
+        set(ref);
+        return *this;
+    }
+
+    template <typename R>
+        requires(!IsSame<RemoveCvRef<R>, InplaceString>) && (!IsSame<RemoveCvRef<R>, StringRef>) &&
+                (!IsSame<RemoveCvRef<R>, const char*>) && (!IsSame<RemoveCvRef<R>, char*>) &&
+                requires(const R& r) {
+                    { r.data() } -> detail::ConvertibleTo<const char*>;
+                    { r.size() };
+                }
+    constexpr InplaceString& operator=(const R& range) noexcept {
+        set(StringRef(range.data(), static_cast<isize>(range.size())));
+        return *this;
+    }
+
+    constexpr void set_static(const char* literal) noexcept {
+        if (literal) {
+            m_ptr = literal;
+            m_size = static_cast<u32>(detail::cstr_len(literal));
+            m_buf[0] = '\0';
+        } else {
+            clear();
+        }
+    }
+
+    constexpr void set_static(const char* external_null_terminated, isize len) noexcept {
+        if (external_null_terminated && len >= 0) {
+            m_ptr = external_null_terminated;
+            m_size = static_cast<u32>(len);
+            m_buf[0] = '\0';
+        } else {
+            clear();
+        }
+    }
+
+    constexpr void set(StringRef ref) noexcept {
+        const isize clamped = keel::min<isize>(ref.size() < 0 ? 0 : ref.size(), N - 1);
+        m_size = static_cast<u32>(clamped);
+        if (__builtin_is_constant_evaluated()) {
+            for (u32 i = 0; i < m_size; ++i) {
+                m_buf[i] = ref.data()[i];
+            }
+        } else if (m_size > 0) {
+            mem_copy(m_buf, ref.data(), static_cast<usize>(m_size));
+        }
+        m_buf[m_size] = '\0';
+        m_ptr = nullptr;
+    }
+
+    constexpr void clear() noexcept {
+        m_buf[0] = '\0';
+        m_ptr = nullptr;
+        m_size = 0;
+    }
+
+    [[nodiscard]] constexpr char* inline_buffer() noexcept {
+        m_ptr = nullptr;
+        return m_buf;
+    }
+
+    constexpr void set_inline_size(isize len) noexcept {
+        const isize clamped = keel::min<isize>(len < 0 ? 0 : len, N - 1);
+        m_size = static_cast<u32>(clamped);
+        m_buf[m_size] = '\0';
+        m_ptr = nullptr;
+    }
+
+    [[nodiscard]] constexpr StringRef as_ref() const noexcept {
+        return StringRef(data(), static_cast<isize>(m_size));
+    }
+
+    // Zero-header conversion to std::basic_string_view<char, ...>
+    template <typename SV>
+        requires IsTriviallyCopyable<SV> && requires(const char* d, usize n) {
+            typename SV::traits_type;
+            SV(d, n);
+        }
+    [[nodiscard]] constexpr operator SV() const noexcept {
+        return SV(data(), static_cast<usize>(m_size));
+    }
+
+    [[nodiscard]] constexpr const char* c_str() const noexcept { return m_ptr ? m_ptr : m_buf; }
+    [[nodiscard]] constexpr const char* data() const noexcept { return m_ptr ? m_ptr : m_buf; }
+    [[nodiscard]] constexpr isize size() const noexcept { return static_cast<isize>(m_size); }
+    [[nodiscard]] constexpr isize length() const noexcept { return static_cast<isize>(m_size); }
+    [[nodiscard]] constexpr bool empty() const noexcept { return m_size == 0; }
+    [[nodiscard]] constexpr bool is_static() const noexcept { return m_ptr != nullptr; }
+    [[nodiscard]] static constexpr isize capacity() noexcept { return N - 1; }
+
+    [[nodiscard]] constexpr const char* begin() const noexcept { return data(); }
+    [[nodiscard]] constexpr const char* end() const noexcept { return data() + m_size; }
+
+    [[nodiscard]] constexpr char operator[](isize i) const noexcept {
+        KEEL_BOUNDS_ASSERT(i >= 0 && i < static_cast<isize>(m_size));
+        return data()[i];
+    }
+
+    [[nodiscard]] constexpr bool operator==(const InplaceString& other) const noexcept {
+        return as_ref() == other.as_ref();
+    }
+    [[nodiscard]] constexpr bool operator==(StringRef other) const noexcept { return as_ref() == other; }
+    [[nodiscard]] constexpr bool operator==(const char* other) const noexcept {
+        return other ? (as_ref() == StringRef(other)) : empty();
+    }
+
+    template <typename R>
+        requires(!IsSame<RemoveCvRef<R>, InplaceString>) && (!IsSame<RemoveCvRef<R>, StringRef>) &&
+                (!IsSame<RemoveCvRef<R>, const char*>) && (!IsSame<RemoveCvRef<R>, char*>) &&
+                requires(const R& r) {
+                    { r.data() } -> detail::ConvertibleTo<const char*>;
+                    { r.size() };
+                }
+    [[nodiscard]] constexpr bool operator==(const R& other) const noexcept {
+        return as_ref() == StringRef(other.data(), static_cast<isize>(other.size()));
+    }
+
+private:
+    const char* m_ptr = nullptr;
+    u32 m_size = 0;
+    char m_buf[static_cast<usize>(N)]{};
+};
+
+static_assert(IsTriviallyCopyable<InplaceString<64>>, "InplaceString must remain trivially copyable (Rule of Zero)");
+
+template <isize N> struct Hash<InplaceString<N>> {
+    [[nodiscard]] u64 operator()(const InplaceString<N>& s) const noexcept { return Hash<StringRef>{}(s.as_ref()); }
+    [[nodiscard]] u64 operator()(StringRef s) const noexcept { return Hash<StringRef>{}(s); }
+    [[nodiscard]] u64 operator()(const char* s) const noexcept { return Hash<StringRef>{}(StringRef(s)); }
+};
+
+template <isize N> struct Equal<InplaceString<N>> {
+    [[nodiscard]] bool operator()(const InplaceString<N>& a, const InplaceString<N>& b) const noexcept {
+        return a.as_ref() == b.as_ref();
+    }
+    [[nodiscard]] bool operator()(const InplaceString<N>& a, StringRef b) const noexcept {
+        return a.as_ref() == b;
+    }
+    [[nodiscard]] bool operator()(const InplaceString<N>& a, const char* b) const noexcept {
+        return a == b;
+    }
+};
+
 } // namespace keel

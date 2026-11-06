@@ -187,6 +187,32 @@ void test_vocabulary() {
     TEST_CHECK(sp.found && sp.first == "hello" && sp.second == "world.txt");
     TEST_CHECK(StringRef("AbCd").equals_ignore_ascii_case("abcd"));
 
+    // InplaceString<N> (zero-heap, Rule-of-Zero hybrid static/inline string)
+    {
+        static_assert(IsTriviallyCopyable<InplaceString<64>>);
+        constexpr const char* kLiteral = "Static Command";
+        constexpr InplaceString<64> s_lit(kLiteral);
+        TEST_CHECK(s_lit.is_static());
+        TEST_CHECK(s_lit.data() == kLiteral);
+        TEST_CHECK(s_lit.size() == 14);
+        TEST_CHECK(s_lit == "Static Command");
+
+        InplaceString<64> s_inline(StringRef("Dynamic Value"));
+        TEST_CHECK(!s_inline.is_static());
+        TEST_CHECK(s_inline == "Dynamic Value");
+        TEST_CHECK(std::strcmp(s_inline.c_str(), "Dynamic Value") == 0);
+
+        // Rule of Zero copy must not alias source inline buffer
+        InplaceString<64> s_copy = s_inline;
+        TEST_CHECK(s_copy.data() != s_inline.data());
+        s_inline = StringRef("Mutated");
+        TEST_CHECK(s_copy == "Dynamic Value");
+        TEST_CHECK(s_inline == "Mutated");
+
+        InplaceString<32> s_fmt = format_inplace<32>("Ch %d: %.1f dB", 2, -6.5);
+        TEST_CHECK(s_fmt == "Ch 2: -6.5 dB");
+    }
+
     // FunctionRef & Function<Sig, N>
     int multiplier = 3;
     auto lam = [&](int v) { return v * multiplier; };
