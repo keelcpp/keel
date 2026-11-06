@@ -21,6 +21,7 @@
 #include "keel/pool.h"
 #include "keel/ref.h"
 #include "keel/result.h"
+#include "keel/ring_buffer.h"
 #include "keel/rtree.h"
 #include "keel/small_array.h"
 #include "keel/string.h"

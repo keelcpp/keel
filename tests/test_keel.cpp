@@ -529,6 +529,32 @@ void test_algo_and_rtree() {
         hit3d = id;
     });
     TEST_CHECK(count3d == 1 && hit3d == (3 * 16 + 2 * 4 + 1));
+
+    // RingBuffer / Deque
+    RingBuffer<int> rb;
+    for (int i = 0; i < 20; ++i) {
+        rb.push_back(i * 10);
+    }
+    TEST_CHECK(rb.size() == 20 && rb.front() == 0 && rb.back() == 190);
+    for (int i = 0; i < 5; ++i) {
+        rb.pop_front();
+    }
+    TEST_CHECK(rb.size() == 15 && rb.front() == 50);
+    rb.push_front(40);
+    rb.push_front(30);
+    TEST_CHECK(rb.size() == 17 && rb.front() == 30 && rb[1] == 40 && rb[2] == 50);
+
+    // UTF-8 boundary, word navigation & case-insensitive search
+    const StringRef text = "Привет, Мир!";
+    TEST_CHECK(utf8_next_boundary(text, 0) == 2);
+    TEST_CHECK(utf8_prev_boundary(text, 2) == 0);
+    TEST_CHECK(utf8_next_word_boundary(text, 0) == 12); // "Привет" = 6 Cyrillic chars = 12 bytes
+    isize w_start = 0, w_end = 0;
+    utf8_word_bounds_at(text, 4, w_start, w_end);
+    TEST_CHECK(w_start == 0 && w_end == 12);
+    isize m_pos = 0, m_len = 0;
+    TEST_CHECK(utf8_find_case_insensitive(text, "МИР", m_pos, m_len));
+    TEST_CHECK(m_pos == 14 && m_len == 6);
 }
 
 } // namespace

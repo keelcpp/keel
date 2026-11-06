@@ -141,4 +141,191 @@ isize utf8_codepoint_count(StringRef str) noexcept {
     return count;
 }
 
+namespace {
+
+enum class Utf8CharCategory : u8 {
+    Whitespace = 0,
+    Word,
+    Punctuation
+};
+
+[[nodiscard]] Utf8CharCategory classify_utf8_char(StringRef text, isize char_start) noexcept {
+    if (char_start < 0 || char_start >= text.size()) {
+        return Utf8CharCategory::Whitespace;
+    }
+    const u8 b = static_cast<u8>(text[char_start]);
+    if (b == ' ' || b == '\t' || b == '\n' || b == '\r') {
+        return Utf8CharCategory::Whitespace;
+    }
+    if (b >= 0x80u || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_') {
+        return Utf8CharCategory::Word;
+    }
+    return Utf8CharCategory::Punctuation;
+}
+
+} // namespace
+
+isize utf8_prev_boundary(StringRef str, isize index) noexcept {
+    if (str.empty() || index <= 0) {
+        return 0;
+    }
+    if (index > str.size()) {
+        index = str.size();
+    }
+    --index;
+    while (index > 0 && !utf8_is_lead_byte(static_cast<u8>(str[index]))) {
+        --index;
+    }
+    return index;
+}
+
+isize utf8_next_boundary(StringRef str, isize index) noexcept {
+    const isize n = str.size();
+    if (n == 0 || index >= n) {
+        return n;
+    }
+    if (index < 0) {
+        return 0;
+    }
+    ++index;
+    while (index < n && !utf8_is_lead_byte(static_cast<u8>(str[index]))) {
+        ++index;
+    }
+    return index;
+}
+
+isize utf8_prev_word_boundary(StringRef str, isize index) noexcept {
+    if (str.empty() || index <= 0) {
+        return 0;
+    }
+    isize pos = keel::min(index, str.size());
+
+    while (pos > 0) {
+        const isize prev = utf8_prev_boundary(str, pos);
+        if (classify_utf8_char(str, prev) != Utf8CharCategory::Whitespace) {
+            break;
+        }
+        pos = prev;
+    }
+    if (pos == 0) {
+        return 0;
+    }
+
+    const isize first_char = utf8_prev_boundary(str, pos);
+    const Utf8CharCategory target_cat = classify_utf8_char(str, first_char);
+    pos = first_char;
+    while (pos > 0) {
+        const isize prev = utf8_prev_boundary(str, pos);
+        if (classify_utf8_char(str, prev) != target_cat) {
+            break;
+        }
+        pos = prev;
+    }
+    return pos;
+}
+
+isize utf8_next_word_boundary(StringRef str, isize index) noexcept {
+    const isize n = str.size();
+    if (n == 0 || index >= n) {
+        return n;
+    }
+    isize pos = index < 0 ? 0 : index;
+    while (pos > 0 && !utf8_is_lead_byte(static_cast<u8>(str[pos]))) {
+        --pos;
+    }
+
+    while (pos < n && classify_utf8_char(str, pos) == Utf8CharCategory::Whitespace) {
+        pos = utf8_next_boundary(str, pos);
+    }
+    if (pos >= n) {
+        return n;
+    }
+
+    const Utf8CharCategory target_cat = classify_utf8_char(str, pos);
+    while (pos < n && classify_utf8_char(str, pos) == target_cat) {
+        pos = utf8_next_boundary(str, pos);
+    }
+    return pos;
+}
+
+void utf8_word_bounds_at(StringRef str, isize index, isize& out_start, isize& out_end) noexcept {
+    if (str.empty()) {
+        out_start = 0;
+        out_end = 0;
+        return;
+    }
+    const isize n = str.size();
+    isize pos = keel::clamp<isize>(index, 0, n);
+    if (pos == n) {
+        pos = utf8_prev_boundary(str, n);
+    } else {
+        while (pos > 0 && !utf8_is_lead_byte(static_cast<u8>(str[pos]))) {
+            --pos;
+        }
+    }
+
+    const Utf8CharCategory cat = classify_utf8_char(str, pos);
+    isize start = pos;
+    while (start > 0) {
+        const isize prev = utf8_prev_boundary(str, start);
+        if (classify_utf8_char(str, prev) != cat) {
+            break;
+        }
+        start = prev;
+    }
+
+    isize end = utf8_next_boundary(str, pos);
+    while (end < n && classify_utf8_char(str, end) == cat) {
+        end = utf8_next_boundary(str, end);
+    }
+
+    out_start = start;
+    out_end = end;
+}
+
+bool utf8_find_case_insensitive(
+    StringRef haystack, StringRef needle, isize& out_byte_pos, isize& out_byte_len) noexcept {
+    out_byte_pos = 0;
+    out_byte_len = 0;
+    if (needle.empty()) {
+        return true;
+    }
+    if (haystack.empty()) {
+        return false;
+    }
+
+    isize h_start = 0;
+    while (h_start < haystack.size()) {
+        const isize match_start = h_start;
+        isize h_cursor = h_start;
+        isize n_cursor = 0;
+        bool matched = true;
+        while (n_cursor < needle.size()) {
+            if (h_cursor >= haystack.size()) {
+                matched = false;
+                break;
+            }
+            const u32 h_cp = utf8_to_lower(utf8_decode_next(haystack, h_cursor));
+            const u32 n_cp = utf8_to_lower(utf8_decode_next(needle, n_cursor));
+            if (h_cp != n_cp) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) {
+            out_byte_pos = match_start;
+            out_byte_len = h_cursor - match_start;
+            return true;
+        }
+        (void)utf8_decode_next(haystack, h_start);
+    }
+    return false;
+}
+
+isize utf8_find_case_insensitive(StringRef haystack, StringRef needle) noexcept {
+    isize pos = 0;
+    isize len = 0;
+    return utf8_find_case_insensitive(haystack, needle, pos, len) ? pos : kInvalidIndex;
+}
+
 } // namespace keel
