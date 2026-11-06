@@ -466,16 +466,16 @@ void test_algo_and_rtree() {
     TEST_CHECK(keel::binary_search(ArrayRef<int>(nums), nums[42]));
     TEST_CHECK(!keel::binary_search(ArrayRef<int>(nums), 999999));
 
-    RTree<u32, f32, 4> tree;
-    Array<RTreeItem<u32, f32>> items;
+    RTree<u32, f32, 2, 4> tree;
+    Array<RTreeItem<u32, f32, 2>> items;
     for (u32 y = 0; y < 10; ++y) {
         for (u32 x = 0; x < 10; ++x) {
             const u32 id = y * 10 + x;
             const f32 fx = static_cast<f32>(x * 10);
             const f32 fy = static_cast<f32>(y * 10);
-            items.push_back(RTreeItem<u32, f32>{
+            items.push_back(RTreeItem<u32, f32, 2>{
                 .id = id,
-                .box = RTreeBox<f32>::from_xywh(fx, fy, 8.0f, 8.0f)
+                .box = RTreeBox<f32, 2>::from_xywh(fx, fy, 8.0f, 8.0f)
             });
         }
     }
@@ -484,7 +484,7 @@ void test_algo_and_rtree() {
     TEST_CHECK(tree.item_count() == 100);
 
     Array<u32> hits;
-    tree.query_box(RTreeBox<f32>::from_xywh(12.0f, 22.0f, 15.0f, 15.0f), hits);
+    tree.query_box(RTreeBox<f32, 2>::from_xywh(12.0f, 22.0f, 15.0f, 15.0f), hits);
     // Should hit cells (1,2), (2,2), (1,3), (2,3) -> ids 21, 22, 31, 32
     keel::sort(hits);
     TEST_CHECK(hits.size() == 4);
@@ -499,6 +499,36 @@ void test_algo_and_rtree() {
         hit_id = id;
     });
     TEST_CHECK(point_hits == 1 && hit_id == 54);
+
+    // 3D RTree (Dim = 3)
+    RTree<u32, f32, 3, 4> tree3d;
+    Array<RTreeItem<u32, f32, 3>> items3d;
+    for (u32 z = 0; z < 4; ++z) {
+        for (u32 y = 0; y < 4; ++y) {
+            for (u32 x = 0; x < 4; ++x) {
+                const u32 id = z * 16 + y * 4 + x;
+                items3d.push_back(RTreeItem<u32, f32, 3>{
+                    .id = id,
+                    .box = RTreeBox<f32, 3>::from_xyzwhd(
+                        static_cast<f32>(x * 10),
+                        static_cast<f32>(y * 10),
+                        static_cast<f32>(z * 10),
+                        6.0f, 6.0f, 6.0f
+                    )
+                });
+            }
+        }
+    }
+    tree3d.build(items3d);
+    TEST_CHECK(tree3d.item_count() == 64);
+
+    u32 hit3d = 999;
+    int count3d = 0;
+    tree3d.query_point(12.0f, 22.0f, 32.0f, [&](u32 id) {
+        ++count3d;
+        hit3d = id;
+    });
+    TEST_CHECK(count3d == 1 && hit3d == (3 * 16 + 2 * 4 + 1));
 }
 
 } // namespace
