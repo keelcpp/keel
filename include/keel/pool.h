@@ -90,7 +90,7 @@ public:
     }
 
     [[nodiscard]] bool is_valid(Handle<T> h) const noexcept {
-        return h.generation != 0 && static_cast<isize>(h.index) < m_cap && m_slots[h.index].alive &&
+        return h.generation != 0 && static_cast<usize>(h.index) < m_cap && m_slots[h.index].alive &&
                m_slots[h.index].generation == h.generation;
     }
 
@@ -98,11 +98,11 @@ public:
 
     [[nodiscard]] const T* get(Handle<T> h) const noexcept { return is_valid(h) ? m_slots[h.index].ptr() : nullptr; }
 
-    [[nodiscard]] isize size() const noexcept { return m_size; }
+    [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
 
     void clear() noexcept {
-        for (isize i = 0; i < m_cap; ++i) {
+        for (usize i = 0; i < m_cap; ++i) {
             if (m_slots[i].alive) {
                 m_slots[i].ptr()->~T();
                 m_slots[i].alive = false;
@@ -111,9 +111,9 @@ public:
             }
         }
         m_free_head = kInvalidSlot;
-        for (isize i = m_cap - 1; i >= 0; --i) {
-            m_slots[i].next_free = m_free_head;
-            m_free_head = static_cast<u32>(i);
+        for (usize i = m_cap; i > 0; --i) {
+            m_slots[i - 1].next_free = m_free_head;
+            m_free_head = static_cast<u32>(i - 1);
         }
         m_size = 0;
     }
@@ -131,9 +131,9 @@ private:
         const T* ptr() const noexcept { return reinterpret_cast<const T*>(storage); }
     };
 
-    void grow(isize new_cap) {
+    void grow(usize new_cap) {
         Slot* new_slots = m_alloc->alloc_array<Slot>(new_cap);
-        for (isize i = 0; i < m_cap; ++i) {
+        for (usize i = 0; i < m_cap; ++i) {
             new_slots[i].generation = m_slots[i].generation;
             new_slots[i].next_free = m_slots[i].next_free;
             new_slots[i].alive = m_slots[i].alive;
@@ -142,14 +142,14 @@ private:
                 m_slots[i].ptr()->~T();
             }
         }
-        for (isize i = m_cap; i < new_cap; ++i) {
+        for (usize i = m_cap; i < new_cap; ++i) {
             new_slots[i].generation = 1;
             new_slots[i].next_free = kInvalidSlot;
             new_slots[i].alive = false;
         }
-        for (isize i = new_cap - 1; i >= m_cap; --i) {
-            new_slots[i].next_free = m_free_head;
-            m_free_head = static_cast<u32>(i);
+        for (usize i = new_cap; i > m_cap; --i) {
+            new_slots[i - 1].next_free = m_free_head;
+            m_free_head = static_cast<u32>(i - 1);
         }
         if (m_slots) m_alloc->free_array(m_slots, m_cap);
         m_slots = new_slots;
@@ -157,8 +157,8 @@ private:
     }
 
     Slot* m_slots = nullptr;
-    isize m_size = 0;
-    isize m_cap = 0;
+    usize m_size = 0;
+    usize m_cap = 0;
     u32 m_free_head = kInvalidSlot;
     Allocator* m_alloc = nullptr;
 };

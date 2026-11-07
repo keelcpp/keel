@@ -4,8 +4,8 @@ namespace keel {
 
 bool utf8_validate(StringRef str) noexcept {
     const u8* s = reinterpret_cast<const u8*>(str.data());
-    const isize len = str.size();
-    isize i = 0;
+    const usize len = str.size();
+    usize i = 0;
     while (i < len) {
         const u8 b0 = s[i];
         if (b0 < 0x80u) {
@@ -48,10 +48,10 @@ bool utf8_validate(StringRef str) noexcept {
     return true;
 }
 
-u32 utf8_decode_next(StringRef str, isize& byte_offset) noexcept {
+u32 utf8_decode_next(StringRef str, usize& byte_offset) noexcept {
     const u8* s = reinterpret_cast<const u8*>(str.data());
-    const isize len = str.size();
-    if (byte_offset < 0 || byte_offset >= len) {
+    const usize len = str.size();
+    if (byte_offset >= len) {
         return 0;
     }
 
@@ -105,7 +105,7 @@ u32 utf8_decode_next(StringRef str, isize& byte_offset) noexcept {
     return kReplacementChar;
 }
 
-isize utf8_encode(u32 cp, char out[4]) noexcept {
+usize utf8_encode(u32 cp, char out[4]) noexcept {
     if (cp > 0x10FFFFu || (cp >= 0xD800u && cp <= 0xDFFFu)) {
         cp = kReplacementChar;
     }
@@ -131,9 +131,9 @@ isize utf8_encode(u32 cp, char out[4]) noexcept {
     return 4;
 }
 
-isize utf8_codepoint_count(StringRef str) noexcept {
-    isize offset = 0;
-    isize count = 0;
+usize utf8_codepoint_count(StringRef str) noexcept {
+    usize offset = 0;
+    usize count = 0;
     while (offset < str.size()) {
         (void)utf8_decode_next(str, offset);
         ++count;
@@ -149,8 +149,8 @@ enum class Utf8CharCategory : u8 {
     Punctuation
 };
 
-[[nodiscard]] Utf8CharCategory classify_utf8_char(StringRef text, isize char_start) noexcept {
-    if (char_start < 0 || char_start >= text.size()) {
+[[nodiscard]] Utf8CharCategory classify_utf8_char(StringRef text, usize char_start) noexcept {
+    if (char_start >= text.size()) {
         return Utf8CharCategory::Whitespace;
     }
     const u8 b = static_cast<u8>(text[char_start]);
@@ -165,8 +165,8 @@ enum class Utf8CharCategory : u8 {
 
 } // namespace
 
-isize utf8_prev_boundary(StringRef str, isize index) noexcept {
-    if (str.empty() || index <= 0) {
+usize utf8_prev_boundary(StringRef str, usize index) noexcept {
+    if (str.empty() || index == 0) {
         return 0;
     }
     if (index > str.size()) {
@@ -179,13 +179,10 @@ isize utf8_prev_boundary(StringRef str, isize index) noexcept {
     return index;
 }
 
-isize utf8_next_boundary(StringRef str, isize index) noexcept {
-    const isize n = str.size();
+usize utf8_next_boundary(StringRef str, usize index) noexcept {
+    const usize n = str.size();
     if (n == 0 || index >= n) {
         return n;
-    }
-    if (index < 0) {
-        return 0;
     }
     ++index;
     while (index < n && !utf8_is_lead_byte(static_cast<u8>(str[index]))) {
@@ -194,14 +191,14 @@ isize utf8_next_boundary(StringRef str, isize index) noexcept {
     return index;
 }
 
-isize utf8_prev_word_boundary(StringRef str, isize index) noexcept {
-    if (str.empty() || index <= 0) {
+usize utf8_prev_word_boundary(StringRef str, usize index) noexcept {
+    if (str.empty() || index == 0) {
         return 0;
     }
-    isize pos = keel::min(index, str.size());
+    usize pos = keel::min(index, str.size());
 
     while (pos > 0) {
-        const isize prev = utf8_prev_boundary(str, pos);
+        const usize prev = utf8_prev_boundary(str, pos);
         if (classify_utf8_char(str, prev) != Utf8CharCategory::Whitespace) {
             break;
         }
@@ -211,11 +208,11 @@ isize utf8_prev_word_boundary(StringRef str, isize index) noexcept {
         return 0;
     }
 
-    const isize first_char = utf8_prev_boundary(str, pos);
+    const usize first_char = utf8_prev_boundary(str, pos);
     const Utf8CharCategory target_cat = classify_utf8_char(str, first_char);
     pos = first_char;
     while (pos > 0) {
-        const isize prev = utf8_prev_boundary(str, pos);
+        const usize prev = utf8_prev_boundary(str, pos);
         if (classify_utf8_char(str, prev) != target_cat) {
             break;
         }
@@ -224,12 +221,12 @@ isize utf8_prev_word_boundary(StringRef str, isize index) noexcept {
     return pos;
 }
 
-isize utf8_next_word_boundary(StringRef str, isize index) noexcept {
-    const isize n = str.size();
+usize utf8_next_word_boundary(StringRef str, usize index) noexcept {
+    const usize n = str.size();
     if (n == 0 || index >= n) {
         return n;
     }
-    isize pos = index < 0 ? 0 : index;
+    usize pos = index;
     while (pos > 0 && !utf8_is_lead_byte(static_cast<u8>(str[pos]))) {
         --pos;
     }
@@ -248,14 +245,14 @@ isize utf8_next_word_boundary(StringRef str, isize index) noexcept {
     return pos;
 }
 
-void utf8_word_bounds_at(StringRef str, isize index, isize& out_start, isize& out_end) noexcept {
+void utf8_word_bounds_at(StringRef str, usize index, usize& out_start, usize& out_end) noexcept {
     if (str.empty()) {
         out_start = 0;
         out_end = 0;
         return;
     }
-    const isize n = str.size();
-    isize pos = keel::clamp<isize>(index, 0, n);
+    const usize n = str.size();
+    usize pos = keel::min(index, n);
     if (pos == n) {
         pos = utf8_prev_boundary(str, n);
     } else {
@@ -265,16 +262,16 @@ void utf8_word_bounds_at(StringRef str, isize index, isize& out_start, isize& ou
     }
 
     const Utf8CharCategory cat = classify_utf8_char(str, pos);
-    isize start = pos;
+    usize start = pos;
     while (start > 0) {
-        const isize prev = utf8_prev_boundary(str, start);
+        const usize prev = utf8_prev_boundary(str, start);
         if (classify_utf8_char(str, prev) != cat) {
             break;
         }
         start = prev;
     }
 
-    isize end = utf8_next_boundary(str, pos);
+    usize end = utf8_next_boundary(str, pos);
     while (end < n && classify_utf8_char(str, end) == cat) {
         end = utf8_next_boundary(str, end);
     }
@@ -284,7 +281,7 @@ void utf8_word_bounds_at(StringRef str, isize index, isize& out_start, isize& ou
 }
 
 bool utf8_find_case_insensitive(
-    StringRef haystack, StringRef needle, isize& out_byte_pos, isize& out_byte_len) noexcept {
+    StringRef haystack, StringRef needle, usize& out_byte_pos, usize& out_byte_len) noexcept {
     out_byte_pos = 0;
     out_byte_len = 0;
     if (needle.empty()) {
@@ -294,11 +291,11 @@ bool utf8_find_case_insensitive(
         return false;
     }
 
-    isize h_start = 0;
+    usize h_start = 0;
     while (h_start < haystack.size()) {
-        const isize match_start = h_start;
-        isize h_cursor = h_start;
-        isize n_cursor = 0;
+        const usize match_start = h_start;
+        usize h_cursor = h_start;
+        usize n_cursor = 0;
         bool matched = true;
         while (n_cursor < needle.size()) {
             if (h_cursor >= haystack.size()) {
@@ -322,9 +319,9 @@ bool utf8_find_case_insensitive(
     return false;
 }
 
-isize utf8_find_case_insensitive(StringRef haystack, StringRef needle) noexcept {
-    isize pos = 0;
-    isize len = 0;
+usize utf8_find_case_insensitive(StringRef haystack, StringRef needle) noexcept {
+    usize pos = 0;
+    usize len = 0;
     return utf8_find_case_insensitive(haystack, needle, pos, len) ? pos : kInvalidIndex;
 }
 

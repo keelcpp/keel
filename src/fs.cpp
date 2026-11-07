@@ -29,15 +29,15 @@ namespace detail {
 #if defined(_WIN32)
 Error win32_error_to_keel(DWORD err) noexcept;
 bool utf8_path_to_win32_wide(StringRef utf8_path, SmallArray<wchar_t, 260>& out);
-void win32_wide_to_utf8_path(const wchar_t* wstr, isize wlen, String& out);
+void win32_wide_to_utf8_path(const wchar_t* wstr, usize wlen, String& out);
 #else
 Error errno_to_keel(int err) noexcept;
 #endif
 
 constexpr bool is_sep(char c) noexcept { return c == '/' || c == '\\'; }
 
-constexpr isize strip_trailing_seps(StringRef path) noexcept {
-    isize n = path.size();
+constexpr usize strip_trailing_seps(StringRef path) noexcept {
+    usize n = path.size();
     while (n > 1 && is_sep(path[n - 1])) {
         // Keep root after Windows drive colon `C:/`
         if (n == 3 && path[1] == ':') break;
@@ -49,13 +49,13 @@ constexpr isize strip_trailing_seps(StringRef path) noexcept {
 
 StringRef path_dirname(StringRef path) noexcept {
     if (path.empty()) return ".";
-    const isize len = detail::strip_trailing_seps(path);
+    const usize len = detail::strip_trailing_seps(path);
     const StringRef trimmed = path.substr(0, len);
 
-    isize last_sep = kInvalidIndex;
-    for (isize i = trimmed.size() - 1; i >= 0; --i) {
-        if (detail::is_sep(trimmed[i])) {
-            last_sep = i;
+    usize last_sep = kInvalidIndex;
+    for (usize i = trimmed.size(); i > 0; --i) {
+        if (detail::is_sep(trimmed[i - 1])) {
+            last_sep = i - 1;
             break;
         }
     }
@@ -77,13 +77,13 @@ StringRef path_dirname(StringRef path) noexcept {
 
 StringRef path_basename(StringRef path) noexcept {
     if (path.empty()) return "";
-    isize end = path.size();
+    usize end = path.size();
     while (end > 0 && detail::is_sep(path[end - 1])) {
         --end;
     }
     if (end == 0) return path.substr(0, 1);
 
-    isize start = end;
+    usize start = end;
     while (start > 0 && !detail::is_sep(path[start - 1])) {
         --start;
     }
@@ -93,8 +93,8 @@ StringRef path_basename(StringRef path) noexcept {
 StringRef path_extension(StringRef path) noexcept {
     const StringRef base = path_basename(path);
     if (base.empty() || base == "." || base == "..") return "";
-    const isize dot = base.rfind('.');
-    if (dot <= 0) return ""; // Leading dot `.gitignore` has no extension
+    const usize dot = base.rfind('.');
+    if (dot == kInvalidIndex || dot == 0) return ""; // Leading dot `.gitignore` has no extension
     return base.substr(dot);
 }
 
@@ -129,12 +129,12 @@ void path_join_into(String& out, StringRef a, StringRef b) {
     if (!detail::is_sep(a.back())) {
         out.push_back('/');
     }
-    isize b_start = 0;
+    usize b_start = 0;
     while (b_start < b.size() && detail::is_sep(b[b_start])) {
         ++b_start;
     }
     out.append(b.substr(b_start));
-    for (isize i = 0; i < out.size(); ++i) {
+    for (usize i = 0; i < out.size(); ++i) {
         if (out[i] == '\\') out[i] = '/';
     }
 }
@@ -155,7 +155,7 @@ void path_normalize_into(String& out, StringRef path) {
     SmallArray<StringRef, 32> parts(scratch.allocator());
 
     StringRef prefix{};
-    isize i = 0;
+    usize i = 0;
     bool rooted = false;
 
     if (path.size() >= 2 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
@@ -174,7 +174,7 @@ void path_normalize_into(String& out, StringRef path) {
     while (i < path.size()) {
         while (i < path.size() && detail::is_sep(path[i])) ++i;
         if (i >= path.size()) break;
-        const isize start = i;
+        const usize start = i;
         while (i < path.size() && !detail::is_sep(path[i])) ++i;
         const StringRef seg = path.substr(start, i - start);
         if (seg == ".") {
@@ -197,7 +197,7 @@ void path_normalize_into(String& out, StringRef path) {
     if (rooted) {
         out.push_back('/');
     }
-    for (isize k = 0; k < parts.size(); ++k) {
+    for (usize k = 0; k < parts.size(); ++k) {
         if (k > 0) out.push_back('/');
         out.append(parts[k]);
     }
@@ -273,10 +273,10 @@ Result<Array<u8>> fs_read_file(StringRef path, Allocator* alloc) {
     if (sz < 0) return Error{ErrorCode::IoError, 0};
 
     Array<u8> buf(alloc);
-    buf.resize(static_cast<isize>(sz));
-    isize total = 0;
+    buf.resize(static_cast<usize>(sz));
+    usize total = 0;
     while (total < buf.size()) {
-        KEEL_TRY_ASSIGN(isize n, f.read(MutArrayRef<u8>(buf.data() + total, buf.size() - total)));
+        KEEL_TRY_ASSIGN(usize n, f.read(MutArrayRef<u8>(buf.data() + total, buf.size() - total)));
         if (n == 0) break;
         total += n;
     }
@@ -290,11 +290,11 @@ Result<String> fs_read_text(StringRef path, Allocator* alloc) {
     if (sz < 0) return Error{ErrorCode::IoError, 0};
 
     String text(alloc);
-    text.resize(static_cast<isize>(sz));
-    isize total = 0;
+    text.resize(static_cast<usize>(sz));
+    usize total = 0;
     while (total < text.size()) {
         KEEL_TRY_ASSIGN(
-            isize n, f.read(MutArrayRef<u8>(reinterpret_cast<u8*>(text.data() + total), text.size() - total)));
+            usize n, f.read(MutArrayRef<u8>(reinterpret_cast<u8*>(text.data() + total), text.size() - total)));
         if (n == 0) break;
         total += n;
     }
@@ -338,7 +338,7 @@ Error fs_create_dirs(StringRef path) noexcept {
     String norm = path_normalize(path, scratch.allocator());
     if (fs_exists(norm)) return Error::ok();
 
-    for (isize i = 1; i <= norm.size(); ++i) {
+    for (usize i = 1; i <= norm.size(); ++i) {
         if (i == norm.size() || norm[i] == '/') {
             const StringRef sub = norm.substr(0, i);
             if (sub.empty() || (sub.size() == 2 && sub[1] == ':')) continue;
@@ -425,7 +425,7 @@ Error fs_copy_file(StringRef from, StringRef to) noexcept {
     KEEL_TRY_ASSIGN(File dst, File::open(to, FileMode::Write));
     u8 buf[16384];
     for (;;) {
-        KEEL_TRY_ASSIGN(isize n, src.read(MutArrayRef<u8>(buf, sizeof(buf))));
+        KEEL_TRY_ASSIGN(usize n, src.read(MutArrayRef<u8>(buf, sizeof(buf))));
         if (n == 0) break;
         dst.write(ArrayRef<u8>(buf, n));
     }
@@ -439,11 +439,11 @@ Result<String> fs_current_dir(Allocator* alloc) {
     if (needed == 0) return detail::win32_error_to_keel(GetLastError());
     ArenaTemp scratch = get_scratch();
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
-    wbuf.reserve(static_cast<isize>(needed) + 1);
+    wbuf.reserve(static_cast<usize>(needed) + 1);
     const DWORD len = GetCurrentDirectoryW(needed, wbuf.data());
     if (len == 0) return detail::win32_error_to_keel(GetLastError());
     String out(alloc);
-    detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<isize>(len), out);
+    detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<usize>(len), out);
     return out;
 #else
     char buf[4096];
@@ -460,7 +460,7 @@ Result<String> fs_temp_dir(Allocator* alloc) {
     const DWORD len = GetTempPathW(MAX_PATH + 1, wbuf);
     if (len == 0) return detail::win32_error_to_keel(GetLastError());
     String out(alloc);
-    detail::win32_wide_to_utf8_path(wbuf, static_cast<isize>(len), out);
+    detail::win32_wide_to_utf8_path(wbuf, static_cast<usize>(len), out);
     if (out.size() > 1 && out[out.size() - 1] == '/') out.pop_back();
     return out;
 #else
@@ -476,12 +476,12 @@ Result<String> fs_exe_path(Allocator* alloc) {
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
     DWORD cap = 260;
     for (;;) {
-        wbuf.reserve(static_cast<isize>(cap));
+        wbuf.reserve(static_cast<usize>(cap));
         const DWORD len = GetModuleFileNameW(nullptr, wbuf.data(), cap);
         if (len == 0) return detail::win32_error_to_keel(GetLastError());
         if (len < cap) {
             String out(alloc);
-            detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<isize>(len), out);
+            detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<usize>(len), out);
             return out;
         }
         cap *= 2;
@@ -491,7 +491,7 @@ Result<String> fs_exe_path(Allocator* alloc) {
     _NSGetExecutablePath(nullptr, &sz);
     ArenaTemp scratch = get_scratch();
     String buf(scratch.allocator());
-    buf.resize(static_cast<isize>(sz));
+    buf.resize(static_cast<usize>(sz));
     if (_NSGetExecutablePath(buf.data(), &sz) != 0) {
         return Error{ErrorCode::IoError, 0};
     }
@@ -503,7 +503,7 @@ Result<String> fs_exe_path(Allocator* alloc) {
     const ssize_t len = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (len < 0) return detail::errno_to_keel(errno);
     buf[len] = '\0';
-    return String::from(StringRef(buf, static_cast<isize>(len)), alloc);
+    return String::from(StringRef(buf, static_cast<usize>(len)), alloc);
 #endif
 }
 
@@ -533,7 +533,7 @@ Error fs_read_dir(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callbac
             (fdata.cFileName[1] == L'\0' || (fdata.cFileName[1] == L'.' && fdata.cFileName[2] == L'\0'))) {
             continue;
         }
-        isize wlen = 0;
+        usize wlen = 0;
         while (fdata.cFileName[wlen] != L'\0') ++wlen;
         detail::win32_wide_to_utf8_path(fdata.cFileName, wlen, name_str);
         full_str.clear();

@@ -206,7 +206,7 @@ Result<i64, ParseError> parse_i64(StringRef str, int base) noexcept {
     if (base < 2 || base > 36) return ParseError{ErrorCode::InvalidArgument, 0};
     if (str.empty()) return ParseError{ErrorCode::InvalidData, 0};
 
-    isize i = 0;
+    usize i = 0;
     bool negative = false;
     if (str[0] == '-') {
         negative = true;
@@ -243,7 +243,7 @@ Result<u64, ParseError> parse_u64(StringRef str, int base) noexcept {
     if (base < 2 || base > 36) return ParseError{ErrorCode::InvalidArgument, 0};
     if (str.empty()) return ParseError{ErrorCode::InvalidData, 0};
 
-    isize i = 0;
+    usize i = 0;
     if (str[0] == '+') {
         ++i;
     } else if (str[0] == '-') {
@@ -271,7 +271,7 @@ Result<u64, ParseError> parse_u64(StringRef str, int base) noexcept {
 Result<f64, ParseError> parse_f64(StringRef str) noexcept {
     if (str.empty()) return ParseError{ErrorCode::InvalidData, 0};
 
-    isize i = 0;
+    usize i = 0;
     bool negative = false;
     if (str[0] == '-') {
         negative = true;
@@ -367,26 +367,26 @@ Result<f32, ParseError> parse_f32(StringRef str) noexcept {
     return f;
 }
 
-isize format_u64(char* buf, isize cap, u64 value, int base, bool uppercase) noexcept {
-    if (cap <= 0 || base < 2 || base > 36) return 0;
+usize format_u64(char* buf, usize cap, u64 value, int base, bool uppercase) noexcept {
+    if (cap == 0 || base < 2 || base > 36) return 0;
     const char* digits = uppercase ? "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "0123456789abcdefghijklmnopqrstuvwxyz";
     char tmp[68];
-    isize n = 0;
+    usize n = 0;
     const u64 u_base = static_cast<u64>(base);
     do {
         tmp[n++] = digits[value % u_base];
         value /= u_base;
     } while (value != 0);
 
-    const isize out_len = min(n, cap);
-    for (isize i = 0; i < out_len; ++i) {
+    const usize out_len = min(n, cap);
+    for (usize i = 0; i < out_len; ++i) {
         buf[i] = tmp[n - 1 - i];
     }
     return out_len;
 }
 
-isize format_i64(char* buf, isize cap, i64 value, int base, bool uppercase) noexcept {
-    if (cap <= 0) return 0;
+usize format_i64(char* buf, usize cap, i64 value, int base, bool uppercase) noexcept {
+    if (cap == 0) return 0;
     if (value < 0 && base == 10) {
         buf[0] = '-';
         const u64 u_val = (value == INT64_MIN) ? (static_cast<u64>(INT64_MAX) + 1ULL) : static_cast<u64>(-value);
@@ -406,7 +406,7 @@ int count_decimal_digits(u64 v) noexcept {
     return n;
 }
 
-isize emit_decimal_sci_or_fixed(char* buf, isize cap, bool negative, u64 digits_val, int num_digits,
+usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_val, int num_digits,
                                 i32 exp10) noexcept {
     char dig[24];
     for (int i = num_digits - 1; i >= 0; --i) {
@@ -422,7 +422,7 @@ isize emit_decimal_sci_or_fixed(char* buf, isize cap, bool negative, u64 digits_
 
     const i32 sci_exp = exp10 + num_digits - 1;
     char out[64];
-    isize pos = 0;
+    usize pos = 0;
     if (negative) out[pos++] = '-';
 
     // Choose fixed vs scientific notation (matching std::to_chars shortest general format)
@@ -458,19 +458,19 @@ isize emit_decimal_sci_or_fixed(char* buf, isize cap, bool negative, u64 digits_
             out[pos++] = '0';
             out[pos++] = static_cast<char>('0' + abs_exp);
         } else {
-            pos += format_u64(out + pos, static_cast<isize>(sizeof(out)) - pos, abs_exp, 10, false);
+            pos += format_u64(out + pos, sizeof(out) - pos, abs_exp, 10, false);
         }
     }
 
-    const isize copy_len = min(pos, cap);
-    mem_copy(buf, out, static_cast<usize>(copy_len));
+    const usize copy_len = min(pos, cap);
+    mem_copy(buf, out, copy_len);
     return copy_len;
 }
 
 } // namespace
 
-isize format_f64(char* buf, isize cap, f64 value) noexcept {
-    if (cap <= 0) return 0;
+usize format_f64(char* buf, usize cap, f64 value) noexcept {
+    if (cap == 0) return 0;
 
     const u64 bits = f64_to_bits(value);
     const bool negative = (bits >> 63) != 0;
@@ -479,15 +479,15 @@ isize format_f64(char* buf, isize cap, f64 value) noexcept {
 
     if (ieee_exp == 0x7FFULL) {
         const StringRef s = (ieee_mant != 0) ? StringRef("nan") : (negative ? StringRef("-inf") : StringRef("inf"));
-        const isize n = min(s.size(), cap);
-        mem_copy(buf, s.data(), static_cast<usize>(n));
+        const usize n = min(s.size(), cap);
+        mem_copy(buf, s.data(), n);
         return n;
     }
 
     if (ieee_exp == 0 && ieee_mant == 0) {
         const StringRef s = negative ? StringRef("-0") : StringRef("0");
-        const isize n = min(s.size(), cap);
-        mem_copy(buf, s.data(), static_cast<usize>(n));
+        const usize n = min(s.size(), cap);
+        mem_copy(buf, s.data(), n);
         return n;
     }
 
@@ -556,8 +556,8 @@ isize format_f64(char* buf, isize cap, f64 value) noexcept {
     return emit_decimal_sci_or_fixed(buf, cap, negative, dec, num_digits, exp10);
 }
 
-isize format_f32(char* buf, isize cap, f32 value) noexcept {
-    if (cap <= 0) return 0;
+usize format_f32(char* buf, usize cap, f32 value) noexcept {
+    if (cap == 0) return 0;
 
     const u32 bits = f32_to_bits(value);
     const bool negative = (bits >> 31) != 0;
@@ -566,15 +566,15 @@ isize format_f32(char* buf, isize cap, f32 value) noexcept {
 
     if (ieee_exp == 0xFFu) {
         const StringRef s = (ieee_mant != 0) ? StringRef("nan") : (negative ? StringRef("-inf") : StringRef("inf"));
-        const isize n = min(s.size(), cap);
-        mem_copy(buf, s.data(), static_cast<usize>(n));
+        const usize n = min(s.size(), cap);
+        mem_copy(buf, s.data(), n);
         return n;
     }
 
     if (ieee_exp == 0 && ieee_mant == 0) {
         const StringRef s = negative ? StringRef("-0") : StringRef("0");
-        const isize n = min(s.size(), cap);
-        mem_copy(buf, s.data(), static_cast<usize>(n));
+        const usize n = min(s.size(), cap);
+        mem_copy(buf, s.data(), n);
         return n;
     }
 
@@ -642,8 +642,8 @@ isize format_f32(char* buf, isize cap, f32 value) noexcept {
     return emit_decimal_sci_or_fixed(buf, cap, negative, dec, num_digits, exp10);
 }
 
-isize format_f64_fixed(char* buf, isize cap, f64 value, int precision) noexcept {
-    if (cap <= 0) return 0;
+usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept {
+    if (cap == 0) return 0;
     if (precision < 0) precision = 6;
     if (precision > 18) precision = 18;
 
@@ -654,8 +654,8 @@ isize format_f64_fixed(char* buf, isize cap, f64 value, int precision) noexcept 
 
     if (ieee_exp == 0x7FFULL) {
         const StringRef s = (ieee_mant != 0) ? StringRef("nan") : (negative ? StringRef("-inf") : StringRef("inf"));
-        const isize n = min(s.size(), cap);
-        mem_copy(buf, s.data(), static_cast<usize>(n));
+        const usize n = min(s.size(), cap);
+        mem_copy(buf, s.data(), n);
         return n;
     }
 
@@ -673,22 +673,22 @@ isize format_f64_fixed(char* buf, isize cap, f64 value, int precision) noexcept 
     const u64 frac_part = rounded % scale;
 
     char tmp[64];
-    isize pos = 0;
+    usize pos = 0;
     if (negative) tmp[pos++] = '-';
-    pos += format_u64(tmp + pos, static_cast<isize>(sizeof(tmp)) - pos, int_part, 10, false);
+    pos += format_u64(tmp + pos, sizeof(tmp) - pos, int_part, 10, false);
 
     if (precision > 0) {
         tmp[pos++] = '.';
         u64 f = frac_part;
         for (int i = precision - 1; i >= 0; --i) {
-            tmp[pos + i] = static_cast<char>('0' + (f % 10ULL));
+            tmp[pos + static_cast<usize>(i)] = static_cast<char>('0' + (f % 10ULL));
             f /= 10ULL;
         }
-        pos += precision;
+        pos += static_cast<usize>(precision);
     }
 
-    const isize copy_len = min(pos, cap);
-    mem_copy(buf, tmp, static_cast<usize>(copy_len));
+    const usize copy_len = min(pos, cap);
+    mem_copy(buf, tmp, copy_len);
     return copy_len;
 }
 

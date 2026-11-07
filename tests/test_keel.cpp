@@ -371,7 +371,7 @@ void test_text_utf8_and_numbers() {
 
     for (f64 d : test_doubles) {
         char buf[64];
-        const isize len = format_f64(buf, sizeof(buf), d);
+        const usize len = format_f64(buf, sizeof(buf), d);
         TEST_CHECK(len > 0);
         auto parsed = parse_f64(StringRef(buf, len));
         TEST_CHECK(parsed.is_ok());
@@ -445,12 +445,33 @@ void test_std_interop() {
     StringRef ref_from_std = std_s; // Zero-cost implicit conversion without interop_std.h
     TEST_CHECK(ref_from_std == "from std::string");
 
+    std::string_view sv_from_ref = ref_from_std; // Zero-header implicit conversion to std::string_view
+    TEST_CHECK(sv_from_ref == "from std::string");
+
+    String k_str = String::from("keel::String");
+    std::string_view sv_from_str = k_str;
+    TEST_CHECK(sv_from_str == "keel::String");
+
+    InplaceString<32> k_inp("keel::InplaceString");
+    std::string_view sv_from_inp = k_inp;
+    TEST_CHECK(sv_from_inp == "keel::InplaceString");
+
     std::string roundtrip = to_std_string(ref_from_std);
     TEST_CHECK(roundtrip == std_s);
 
     std::vector<int> std_vec = {10, 20, 30, 40};
     ArrayRef<int> arr_ref = std_vec;
     TEST_CHECK(arr_ref.size() == 4 && arr_ref[2] == 30);
+
+    std::span<const int> span_from_ref = arr_ref;
+    TEST_CHECK(span_from_ref.size() == 4 && span_from_ref[2] == 30);
+
+    SmallArray<int, 4> small_arr;
+    small_arr.push_back(7);
+    small_arr.push_back(8);
+    std::span<const int> span_from_small = small_arr;
+    std::span<int> mut_span_from_small = small_arr;
+    TEST_CHECK(span_from_small.size() == 2 && mut_span_from_small[1] == 8);
 #endif
 }
 
@@ -460,7 +481,7 @@ void test_algo_and_rtree() {
         nums.push_back((i * 37) % 101);
     }
     keel::sort(nums);
-    for (isize i = 1; i < nums.size(); ++i) {
+    for (usize i = 1; i < nums.size(); ++i) {
         TEST_CHECK(nums[i - 1] <= nums[i]);
     }
     TEST_CHECK(keel::binary_search(ArrayRef<int>(nums), nums[42]));
@@ -549,10 +570,10 @@ void test_algo_and_rtree() {
     TEST_CHECK(utf8_next_boundary(text, 0) == 2);
     TEST_CHECK(utf8_prev_boundary(text, 2) == 0);
     TEST_CHECK(utf8_next_word_boundary(text, 0) == 12); // "Привет" = 6 Cyrillic chars = 12 bytes
-    isize w_start = 0, w_end = 0;
+    usize w_start = 0, w_end = 0;
     utf8_word_bounds_at(text, 4, w_start, w_end);
     TEST_CHECK(w_start == 0 && w_end == 12);
-    isize m_pos = 0, m_len = 0;
+    usize m_pos = 0, m_len = 0;
     TEST_CHECK(utf8_find_case_insensitive(text, "МИР", m_pos, m_len));
     TEST_CHECK(m_pos == 14 && m_len == 6);
 

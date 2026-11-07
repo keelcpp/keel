@@ -60,9 +60,9 @@ bool utf8_path_to_win32_wide(StringRef utf8_path, SmallArray<wchar_t, 260>& out)
     if (wlen <= 0) return false;
 
     const bool needs_long_prefix = (wlen >= MAX_PATH - 12) && !utf8_path.starts_with("\\\\");
-    const isize prefix_len = needs_long_prefix ? 4 : 0;
+    const usize prefix_len = needs_long_prefix ? 4 : 0;
     out.clear();
-    out.reserve(prefix_len + wlen + 1);
+    out.reserve(prefix_len + static_cast<usize>(wlen) + 1);
     if (needs_long_prefix) {
         out.push_back(L'\\');
         out.push_back(L'\\');
@@ -74,16 +74,16 @@ bool utf8_path_to_win32_wide(StringRef utf8_path, SmallArray<wchar_t, 260>& out)
     }
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8_path.data(), static_cast<int>(utf8_path.size()),
                         out.data() + prefix_len, wlen);
-    for (isize i = prefix_len; i < out.size(); ++i) {
+    for (usize i = prefix_len; i < out.size(); ++i) {
         if (out[i] == L'/') out[i] = L'\\';
     }
     out.push_back(L'\0');
     return true;
 }
 
-void win32_wide_to_utf8_path(const wchar_t* wstr, isize wlen, String& out) {
+void win32_wide_to_utf8_path(const wchar_t* wstr, usize wlen, String& out) {
     out.clear();
-    if (!wstr || wlen <= 0) return;
+    if (!wstr || wlen == 0) return;
     // Strip `\\?\` prefix if present
     if (wlen >= 4 && wstr[0] == L'\\' && wstr[1] == L'\\' && wstr[2] == L'?' && wstr[3] == L'\\') {
         wstr += 4;
@@ -92,9 +92,9 @@ void win32_wide_to_utf8_path(const wchar_t* wstr, isize wlen, String& out) {
     const int u8len =
         WideCharToMultiByte(CP_UTF8, 0, wstr, static_cast<int>(wlen), nullptr, 0, nullptr, nullptr);
     if (u8len <= 0) return;
-    out.resize(u8len);
+    out.resize(static_cast<usize>(u8len));
     WideCharToMultiByte(CP_UTF8, 0, wstr, static_cast<int>(wlen), out.data(), u8len, nullptr, nullptr);
-    for (isize i = 0; i < out.size(); ++i) {
+    for (usize i = 0; i < out.size(); ++i) {
         if (out[i] == '\\') out[i] = '/';
     }
 }
@@ -214,25 +214,25 @@ Result<File> File::open(StringRef path, FileMode mode) noexcept {
 #endif
 }
 
-Result<isize> File::read(MutArrayRef<u8> buf) noexcept {
+Result<usize> File::read(MutArrayRef<u8> buf) noexcept {
     if (!is_open()) return Error{ErrorCode::InvalidArgument, 0};
-    if (buf.empty()) return isize{0};
+    if (buf.empty()) return usize{0};
 
 #if defined(_WIN32)
     HANDLE h = reinterpret_cast<HANDLE>(m_handle);
-    const DWORD to_read = (buf.size() > 0x7FFFFFFF) ? 0x7FFFFFFFu : static_cast<DWORD>(buf.size());
+    const DWORD to_read = (buf.size() > 0x7FFFFFFFu) ? 0x7FFFFFFFu : static_cast<DWORD>(buf.size());
     DWORD bytes_read = 0;
     if (!ReadFile(h, buf.data(), to_read, &bytes_read, nullptr)) {
         return detail::win32_error_to_keel(GetLastError());
     }
-    return static_cast<isize>(bytes_read);
+    return static_cast<usize>(bytes_read);
 #else
     const int fd = static_cast<int>(m_handle);
-    const ssize_t n = ::read(fd, buf.data(), static_cast<usize>(buf.size()));
+    const ssize_t n = ::read(fd, buf.data(), buf.size());
     if (n < 0) {
         return detail::errno_to_keel(errno);
     }
-    return static_cast<isize>(n);
+    return static_cast<usize>(n);
 #endif
 }
 
@@ -247,30 +247,30 @@ void File::write(ArrayRef<u8> data) noexcept {
 #if defined(_WIN32)
     HANDLE h = reinterpret_cast<HANDLE>(m_handle);
     const u8* p = data.data();
-    isize rem = data.size();
+    usize rem = data.size();
     while (rem > 0) {
-        const DWORD chunk = (rem > 0x7FFFFFFF) ? 0x7FFFFFFFu : static_cast<DWORD>(rem);
+        const DWORD chunk = (rem > 0x7FFFFFFFu) ? 0x7FFFFFFFu : static_cast<DWORD>(rem);
         DWORD written = 0;
         if (!WriteFile(h, p, chunk, &written, nullptr)) {
             m_sticky_error = detail::win32_error_to_keel(GetLastError());
             return;
         }
         p += written;
-        rem -= static_cast<isize>(written);
+        rem -= static_cast<usize>(written);
     }
 #else
     const int fd = static_cast<int>(m_handle);
     const u8* p = data.data();
-    isize rem = data.size();
+    usize rem = data.size();
     while (rem > 0) {
-        const ssize_t n = ::write(fd, p, static_cast<usize>(rem));
+        const ssize_t n = ::write(fd, p, rem);
         if (n < 0) {
             if (errno == EINTR) continue;
             m_sticky_error = detail::errno_to_keel(errno);
             return;
         }
         p += n;
-        rem -= static_cast<isize>(n);
+        rem -= static_cast<usize>(n);
     }
 #endif
 }
@@ -389,13 +389,13 @@ Error File::close() noexcept {
 
 void stdout_write(StringRef str) noexcept {
     if (!str.empty()) {
-        (void)std::fwrite(str.data(), 1, static_cast<usize>(str.size()), stdout);
+        (void)std::fwrite(str.data(), 1, str.size(), stdout);
     }
 }
 
 void stderr_write(StringRef str) noexcept {
     if (!str.empty()) {
-        (void)std::fwrite(str.data(), 1, static_cast<usize>(str.size()), stderr);
+        (void)std::fwrite(str.data(), 1, str.size(), stderr);
     }
 }
 

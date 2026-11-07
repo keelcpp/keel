@@ -5,24 +5,25 @@ namespace keel {
 
 namespace {
 
-void append_padded_num(String& out, const char* num_buf, isize n, int width, bool zero_pad, bool plus_sign) {
-    if (n <= 0) return;
+void append_padded_num(String& out, const char* num_buf, usize n, int width, bool zero_pad, bool plus_sign) {
+    if (n == 0) return;
     const bool is_neg = (num_buf[0] == '-');
     const bool has_sign = is_neg || plus_sign;
     const char sign_ch = is_neg ? '-' : '+';
     const char* digits = is_neg ? (num_buf + 1) : num_buf;
-    const isize digit_len = is_neg ? (n - 1) : n;
-    const isize total_len = digit_len + (has_sign ? 1 : 0);
-    const isize pad_count = (width > total_len) ? (static_cast<isize>(width) - total_len) : 0;
+    const usize digit_len = is_neg ? (n - 1) : n;
+    const usize total_len = digit_len + (has_sign ? 1u : 0u);
+    const usize pad_count =
+        (width > 0 && static_cast<usize>(width) > total_len) ? (static_cast<usize>(width) - total_len) : 0;
 
     if (!zero_pad) {
-        for (isize p = 0; p < pad_count; ++p) out.push_back(' ');
+        for (usize p = 0; p < pad_count; ++p) out.push_back(' ');
     }
     if (has_sign) {
         out.push_back(sign_ch);
     }
     if (zero_pad) {
-        for (isize p = 0; p < pad_count; ++p) out.push_back('0');
+        for (usize p = 0; p < pad_count; ++p) out.push_back('0');
     }
     out.append(StringRef(digits, digit_len));
 }
@@ -60,20 +61,20 @@ void format_arg_into(
     case 'd':
     case 'i': {
         const i64 v = (arg.kind == FormatArg::Kind::Unsigned) ? static_cast<i64>(arg.u_val) : arg.i_val;
-        const isize n = format_i64(num_buf, sizeof(num_buf), v, 10, false);
+        const usize n = format_i64(num_buf, sizeof(num_buf), v, 10, false);
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         break;
     }
     case 'u': {
         const u64 v = (arg.kind == FormatArg::Kind::Signed) ? static_cast<u64>(arg.i_val) : arg.u_val;
-        const isize n = format_u64(num_buf, sizeof(num_buf), v, 10, false);
+        const usize n = format_u64(num_buf, sizeof(num_buf), v, 10, false);
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         break;
     }
     case 'x':
     case 'X': {
         const u64 v = (arg.kind == FormatArg::Kind::Signed) ? static_cast<u64>(arg.i_val) : arg.u_val;
-        const isize n = format_u64(num_buf, sizeof(num_buf), v, 16, spec == 'X');
+        const usize n = format_u64(num_buf, sizeof(num_buf), v, 16, spec == 'X');
         append_padded_num(out, num_buf, n, width, zero_pad, false);
         break;
     }
@@ -82,7 +83,7 @@ void format_arg_into(
         const u64 v = (arg.kind == FormatArg::Kind::Pointer)
                           ? static_cast<u64>(reinterpret_cast<usize>(arg.ptr_val))
                           : arg.u_val;
-        const isize n = format_u64(num_buf, sizeof(num_buf), v, 16, false);
+        const usize n = format_u64(num_buf, sizeof(num_buf), v, 16, false);
         append_padded_num(out, num_buf, n, width, zero_pad, false);
         break;
     }
@@ -91,7 +92,7 @@ void format_arg_into(
         const f64 v = (arg.kind == FormatArg::Kind::Signed)
                           ? static_cast<f64>(arg.i_val)
                           : ((arg.kind == FormatArg::Kind::Unsigned) ? static_cast<f64>(arg.u_val) : arg.f_val);
-        const isize n = format_f64_fixed(num_buf, sizeof(num_buf), v, precision >= 0 ? precision : 6);
+        const usize n = format_f64_fixed(num_buf, sizeof(num_buf), v, precision >= 0 ? precision : 6);
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         break;
     }
@@ -101,18 +102,18 @@ void format_arg_into(
     case 'E':
     default: {
         if (arg.kind == FormatArg::Kind::Float) {
-            const isize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
+            const usize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
                                              : format_f32(num_buf, sizeof(num_buf), static_cast<f32>(arg.f_val));
             append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Double) {
-            const isize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
+            const usize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
                                              : format_f64(num_buf, sizeof(num_buf), arg.f_val);
             append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Signed) {
-            const isize n = format_i64(num_buf, sizeof(num_buf), arg.i_val, 10, false);
+            const usize n = format_i64(num_buf, sizeof(num_buf), arg.i_val, 10, false);
             append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Unsigned) {
-            const isize n = format_u64(num_buf, sizeof(num_buf), arg.u_val, 10, false);
+            const usize n = format_u64(num_buf, sizeof(num_buf), arg.u_val, 10, false);
             append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
         } else if (arg.kind == FormatArg::Kind::Bool) {
             out.append(arg.u_val ? "true" : "false");
@@ -124,7 +125,7 @@ void format_arg_into(
             out.append(StringRef(arg.cstr_val));
         } else if (arg.kind == FormatArg::Kind::Pointer) {
             out.append("0x");
-            const isize n =
+            const usize n =
                 format_u64(num_buf, sizeof(num_buf), static_cast<u64>(reinterpret_cast<usize>(arg.ptr_val)), 16, false);
             append_padded_num(out, num_buf, n, width, zero_pad, false);
         }
@@ -136,9 +137,9 @@ void format_arg_into(
 } // namespace
 
 void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
-    isize arg_idx = 0;
-    const isize len = fmt.size();
-    for (isize i = 0; i < len; ++i) {
+    usize arg_idx = 0;
+    const usize len = fmt.size();
+    for (usize i = 0; i < len; ++i) {
         const char ch = fmt[i];
         if (ch == '}') {
             if (i + 1 < len && fmt[i + 1] == '}') {
@@ -156,7 +157,7 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
                 ++i;
                 continue;
             }
-            isize close_pos = i + 1;
+            usize close_pos = i + 1;
             while (close_pos < len && fmt[close_pos] != '}') {
                 ++close_pos;
             }
@@ -167,7 +168,7 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
                 bool plus_sign = false;
                 int precision = -1;
 
-                isize p = i + 1;
+                usize p = i + 1;
                 while (p < close_pos && fmt[p] != ':') {
                     ++p;
                 }
@@ -254,13 +255,13 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
     }
 }
 
-isize vformat_buf(char* buf, isize cap, StringRef fmt, ArrayRef<FormatArg> args) noexcept {
-    if (!buf || cap <= 0) return 0;
+usize vformat_buf(char* buf, usize cap, StringRef fmt, ArrayRef<FormatArg> args) noexcept {
+    if (!buf || cap == 0) return 0;
     ArenaTemp scratch = get_scratch();
     String tmp(scratch.allocator());
     vformat_into(tmp, fmt, args);
-    const isize copy_len = min(tmp.size(), cap - 1);
-    mem_copy(buf, tmp.data(), static_cast<usize>(copy_len));
+    const usize copy_len = min(tmp.size(), cap - 1);
+    mem_copy(buf, tmp.data(), copy_len);
     buf[copy_len] = '\0';
     return copy_len;
 }
@@ -268,9 +269,9 @@ isize vformat_buf(char* buf, isize cap, StringRef fmt, ArrayRef<FormatArg> args)
 StringRef vformat_arena(Arena& arena, StringRef fmt, ArrayRef<FormatArg> args) {
     String out(arena.allocator());
     vformat_into(out, fmt, args);
-    const isize len = out.size();
+    const usize len = out.size();
     char* copy = static_cast<char*>(arena.alloc(len + 1, 1));
-    mem_copy(copy, out.c_str(), static_cast<usize>(len + 1));
+    mem_copy(copy, out.c_str(), len + 1);
     return StringRef(copy, len);
 }
 

@@ -38,7 +38,7 @@ public:
 
     class Iterator {
     public:
-        constexpr Iterator(const u8* ctrl, const K* keys, V* vals, isize idx, isize cap) noexcept
+        constexpr Iterator(const u8* ctrl, const K* keys, V* vals, usize idx, usize cap) noexcept
             : m_ctrl(ctrl), m_keys(keys), m_vals(vals), m_idx(idx), m_cap(cap) {
             advance_to_occupied();
         }
@@ -64,13 +64,13 @@ public:
         const u8* m_ctrl = nullptr;
         const K* m_keys = nullptr;
         V* m_vals = nullptr;
-        isize m_idx = 0;
-        isize m_cap = 0;
+        usize m_idx = 0;
+        usize m_cap = 0;
     };
 
     class ConstIterator {
     public:
-        constexpr ConstIterator(const u8* ctrl, const K* keys, const V* vals, isize idx, isize cap) noexcept
+        constexpr ConstIterator(const u8* ctrl, const K* keys, const V* vals, usize idx, usize cap) noexcept
             : m_ctrl(ctrl), m_keys(keys), m_vals(vals), m_idx(idx), m_cap(cap) {
             advance_to_occupied();
         }
@@ -102,8 +102,8 @@ public:
         const u8* m_ctrl = nullptr;
         const K* m_keys = nullptr;
         const V* m_vals = nullptr;
-        isize m_idx = 0;
-        isize m_cap = 0;
+        usize m_idx = 0;
+        usize m_cap = 0;
     };
 
     explicit HashMap(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
@@ -151,7 +151,7 @@ public:
     [[nodiscard]] HashMap clone(Allocator* alloc = nullptr) const {
         HashMap copy(alloc ? alloc : m_alloc);
         copy.reserve(m_size);
-        for (isize i = 0; i < m_cap; ++i) {
+        for (usize i = 0; i < m_cap; ++i) {
             if (is_occupied(m_ctrl[i])) {
                 if constexpr (requires(const K& k) { k.clone(); } && requires(const V& v) { v.clone(); }) {
                     copy.put(m_keys[i].clone(copy.m_alloc), m_vals[i].clone(copy.m_alloc));
@@ -167,8 +167,8 @@ public:
         return copy;
     }
 
-    [[nodiscard]] isize size() const noexcept { return m_size; }
-    [[nodiscard]] isize capacity() const noexcept { return m_cap; }
+    [[nodiscard]] usize size() const noexcept { return m_size; }
+    [[nodiscard]] usize capacity() const noexcept { return m_cap; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
 
     [[nodiscard]] Iterator begin() noexcept { return Iterator(m_ctrl, m_keys, m_vals, 0, m_cap); }
@@ -179,32 +179,32 @@ public:
     void clear() noexcept {
         destroy_elements();
         if (m_ctrl) {
-            mem_zero(m_ctrl, static_cast<usize>(m_cap));
+            mem_zero(m_ctrl, m_cap);
         }
         m_size = 0;
         m_tombstones = 0;
     }
 
-    void reserve(isize min_items) {
-        if (min_items <= 0) return;
-        const isize needed_cap = static_cast<isize>(bit_ceil(static_cast<u64>((min_items * 8 + 6) / 7)));
+    void reserve(usize min_items) {
+        if (min_items == 0) return;
+        const usize needed_cap = static_cast<usize>(bit_ceil(static_cast<u64>((min_items * 8 + 6) / 7)));
         if (needed_cap > m_cap) {
-            rehash(keel::max<isize>(needed_cap, 8));
+            rehash(keel::max<usize>(needed_cap, 8));
         }
     }
 
     template <typename KeyLike> [[nodiscard]] V* get(const KeyLike& key) noexcept {
-        const isize idx = find_slot(key);
-        return (idx >= 0) ? &m_vals[idx] : nullptr;
+        const usize idx = find_slot(key);
+        return (idx != kInvalidIndex) ? &m_vals[idx] : nullptr;
     }
 
     template <typename KeyLike> [[nodiscard]] const V* get(const KeyLike& key) const noexcept {
-        const isize idx = find_slot(key);
-        return (idx >= 0) ? &m_vals[idx] : nullptr;
+        const usize idx = find_slot(key);
+        return (idx != kInvalidIndex) ? &m_vals[idx] : nullptr;
     }
 
     template <typename KeyLike> [[nodiscard]] bool contains(const KeyLike& key) const noexcept {
-        return find_slot(key) >= 0;
+        return find_slot(key) != kInvalidIndex;
     }
 
     // Inserts or overwrites `key` with `val`. Returns true if newly inserted, false if overwritten.
@@ -212,7 +212,7 @@ public:
         ensure_for_insert();
         const u64 h = HashFn{}(key);
         const u8 tag = make_tag(h);
-        const isize idx = find_or_prepare_insert(key, h, tag);
+        const usize idx = find_or_prepare_insert(key, h, tag);
         if (is_occupied(m_ctrl[idx])) {
             m_vals[idx] = keel::move(val);
             return false;
@@ -230,7 +230,7 @@ public:
         ensure_for_insert();
         const u64 h = HashFn{}(key);
         const u8 tag = make_tag(h);
-        const isize idx = find_or_prepare_insert(key, h, tag);
+        const usize idx = find_or_prepare_insert(key, h, tag);
         if (is_occupied(m_ctrl[idx])) {
             return {&m_vals[idx], false};
         }
@@ -247,7 +247,7 @@ public:
         ensure_for_insert();
         const u64 h = HashFn{}(key);
         const u8 tag = make_tag(h);
-        const isize idx = find_or_prepare_insert(key, h, tag);
+        const usize idx = find_or_prepare_insert(key, h, tag);
         if (!is_occupied(m_ctrl[idx])) {
             if (m_ctrl[idx] == kCtrlDeleted) --m_tombstones;
             m_ctrl[idx] = tag;
@@ -263,8 +263,8 @@ public:
     }
 
     template <typename KeyLike> bool remove(const KeyLike& key) noexcept {
-        const isize idx = find_slot(key);
-        if (idx < 0) return false;
+        const usize idx = find_slot(key);
+        if (idx == kInvalidIndex) return false;
         m_keys[idx].~K();
         m_vals[idx].~V();
         m_ctrl[idx] = kCtrlDeleted;
@@ -274,13 +274,13 @@ public:
     }
 
 private:
-    template <typename KeyLike> [[nodiscard]] isize find_slot(const KeyLike& key) const noexcept {
+    template <typename KeyLike> [[nodiscard]] usize find_slot(const KeyLike& key) const noexcept {
         if (m_size == 0) return kInvalidIndex;
         const u64 h = HashFn{}(key);
         const u8 tag = make_tag(h);
-        const isize mask = m_cap - 1;
-        isize idx = static_cast<isize>(h) & mask;
-        for (isize step = 0; step < m_cap; ++step) {
+        const usize mask = m_cap - 1;
+        usize idx = static_cast<usize>(h) & mask;
+        for (usize step = 0; step < m_cap; ++step) {
             const u8 c = m_ctrl[idx];
             if (c == kCtrlEmpty) return kInvalidIndex;
             if (c == tag && EqualFn{}(m_keys[idx], key)) {
@@ -291,17 +291,17 @@ private:
         return kInvalidIndex;
     }
 
-    [[nodiscard]] isize find_or_prepare_insert(const K& key, u64 h, u8 tag) const noexcept {
-        const isize mask = m_cap - 1;
-        isize idx = static_cast<isize>(h) & mask;
-        isize first_tombstone = kInvalidIndex;
+    [[nodiscard]] usize find_or_prepare_insert(const K& key, u64 h, u8 tag) const noexcept {
+        const usize mask = m_cap - 1;
+        usize idx = static_cast<usize>(h) & mask;
+        usize first_tombstone = kInvalidIndex;
         for (;;) {
             const u8 c = m_ctrl[idx];
             if (c == kCtrlEmpty) {
-                return (first_tombstone >= 0) ? first_tombstone : idx;
+                return (first_tombstone != kInvalidIndex) ? first_tombstone : idx;
             }
             if (c == kCtrlDeleted) {
-                if (first_tombstone < 0) first_tombstone = idx;
+                if (first_tombstone == kInvalidIndex) first_tombstone = idx;
             } else if (c == tag && EqualFn{}(m_keys[idx], key)) {
                 return idx;
             }
@@ -313,23 +313,23 @@ private:
         if (m_cap == 0) {
             rehash(8);
         } else if ((m_size + m_tombstones + 1) * 8 > m_cap * 7) {
-            const isize next_cap = (m_size * 2 >= m_cap) ? (m_cap * 2) : m_cap;
+            const usize next_cap = (m_size * 2 >= m_cap) ? (m_cap * 2) : m_cap;
             rehash(next_cap);
         }
     }
 
-    void rehash(isize new_cap) {
+    void rehash(usize new_cap) {
         u8* new_ctrl = m_alloc->alloc_array<u8>(new_cap);
-        mem_zero(new_ctrl, static_cast<usize>(new_cap));
+        mem_zero(new_ctrl, new_cap);
         K* new_keys = m_alloc->alloc_array<K>(new_cap);
         V* new_vals = m_alloc->alloc_array<V>(new_cap);
 
-        const isize mask = new_cap - 1;
-        for (isize i = 0; i < m_cap; ++i) {
+        const usize mask = new_cap - 1;
+        for (usize i = 0; i < m_cap; ++i) {
             if (is_occupied(m_ctrl[i])) {
                 const u64 h = HashFn{}(m_keys[i]);
                 const u8 tag = make_tag(h);
-                isize idx = static_cast<isize>(h) & mask;
+                usize idx = static_cast<usize>(h) & mask;
                 while (new_ctrl[idx] != kCtrlEmpty) {
                     idx = (idx + 1) & mask;
                 }
@@ -352,7 +352,7 @@ private:
     void destroy_elements() noexcept {
         if (!m_ctrl) return;
         if constexpr (!IsTriviallyDestructible<K> || !IsTriviallyDestructible<V>) {
-            for (isize i = 0; i < m_cap; ++i) {
+            for (usize i = 0; i < m_cap; ++i) {
                 if (is_occupied(m_ctrl[i])) {
                     m_keys[i].~K();
                     m_vals[i].~V();
@@ -375,9 +375,9 @@ private:
     u8* m_ctrl = nullptr;
     K* m_keys = nullptr;
     V* m_vals = nullptr;
-    isize m_size = 0;
-    isize m_cap = 0;
-    isize m_tombstones = 0;
+    usize m_size = 0;
+    usize m_cap = 0;
+    usize m_tombstones = 0;
     Allocator* m_alloc = nullptr;
 };
 

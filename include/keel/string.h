@@ -16,7 +16,7 @@ public:
         return s;
     }
 
-    static String with_capacity(isize cap, Allocator* alloc = nullptr) {
+    static String with_capacity(usize cap, Allocator* alloc = nullptr) {
         String s(alloc);
         s.reserve(cap);
         return s;
@@ -59,12 +59,24 @@ public:
     [[nodiscard]] operator StringRef() const noexcept { return StringRef(c_str(), m_size); }
     [[nodiscard]] StringRef as_ref() const noexcept { return StringRef(c_str(), m_size); }
 
+    // Zero-header conversion to std::basic_string_view<char, ...>
+    template <typename SV>
+        requires(!IsSame<RemoveCvRef<SV>, String>) && (!IsSame<RemoveCvRef<SV>, StringRef>) &&
+                IsTriviallyCopyable<SV> && requires(const char* d, usize n) {
+                    typename SV::traits_type;
+                    SV(d, n);
+                }
+    [[nodiscard]] operator SV() const noexcept {
+        return SV(c_str(), m_size);
+    }
+
     [[nodiscard]] const char* c_str() const noexcept { return m_data ? m_data : ""; }
     [[nodiscard]] char* data() noexcept { return m_data ? m_data : const_cast<char*>(""); }
     [[nodiscard]] const char* data() const noexcept { return c_str(); }
 
-    [[nodiscard]] isize size() const noexcept { return m_size; }
-    [[nodiscard]] isize capacity() const noexcept { return m_cap; }
+    [[nodiscard]] usize size() const noexcept { return m_size; }
+    [[nodiscard]] usize length() const noexcept { return m_size; }
+    [[nodiscard]] usize capacity() const noexcept { return m_cap; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
 
@@ -73,19 +85,19 @@ public:
     [[nodiscard]] char* end() noexcept { return data() + m_size; }
     [[nodiscard]] const char* end() const noexcept { return data() + m_size; }
 
-    [[nodiscard]] char& operator[](isize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+    [[nodiscard]] char& operator[](usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
         return m_data[i];
     }
 
-    [[nodiscard]] char operator[](isize i) const noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+    [[nodiscard]] char operator[](usize i) const noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
         return m_data[i];
     }
 
-    void reserve(isize min_cap) {
+    void reserve(usize min_cap) {
         if (min_cap <= m_cap) return;
-        isize new_cap = (m_cap == 0) ? 15 : m_cap;
+        usize new_cap = (m_cap == 0) ? 15 : m_cap;
         while (new_cap < min_cap) {
             new_cap = new_cap * 2 + 1;
         }
@@ -97,13 +109,12 @@ public:
         if (m_data) m_data[0] = '\0';
     }
 
-    void resize(isize new_size, char fill = '\0') {
-        KEEL_ASSERT(new_size >= 0);
+    void resize(usize new_size, char fill = '\0') {
         if (new_size > m_cap) {
             reserve(new_size);
         }
         if (new_size > m_size) {
-            mem_set(m_data + m_size, static_cast<u8>(fill), static_cast<usize>(new_size - m_size));
+            mem_set(m_data + m_size, static_cast<u8>(fill), new_size - m_size);
         }
         m_size = new_size;
         if (m_data) m_data[m_size] = '\0';
@@ -124,33 +135,35 @@ public:
     }
 
     void append(StringRef str) {
-        const isize n = str.size();
+        const usize n = str.size();
         if (n == 0) return;
         const char* src = str.data();
         // Handle self-aliasing if str points inside m_data
         if (m_data && src >= m_data && src <= m_data + m_size) {
-            const isize offset = static_cast<isize>(src - m_data);
+            const usize offset = static_cast<usize>(src - m_data);
             reserve(m_size + n);
-            mem_move(m_data + m_size, m_data + offset, static_cast<usize>(n));
+            mem_move(m_data + m_size, m_data + offset, n);
         } else {
             reserve(m_size + n);
-            mem_copy(m_data + m_size, src, static_cast<usize>(n));
+            mem_copy(m_data + m_size, src, n);
         }
         m_size += n;
         m_data[m_size] = '\0';
     }
 
-    void remove_at(isize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
-        const isize tail = m_size - i - 1;
+    void remove_at(usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
+        const usize tail = m_size - i - 1;
         if (tail > 0) {
-            mem_move(m_data + i, m_data + i + 1, static_cast<usize>(tail));
+            mem_move(m_data + i, m_data + i + 1, tail);
         }
         --m_size;
         m_data[m_size] = '\0';
     }
 
-    [[nodiscard]] StringRef substr(isize offset, isize count = StringRef::kMaxSize) const noexcept {
+    void erase(usize i) noexcept { remove_at(i); }
+
+    [[nodiscard]] StringRef substr(usize offset, usize count = StringRef::npos) const noexcept {
         return as_ref().substr(offset, count);
     }
 
@@ -167,16 +180,16 @@ public:
     [[nodiscard]] friend bool operator!=(const String& a, const char* b) noexcept { return !(a == b); }
 
 private:
-    void reallocate(isize new_cap) {
-        const isize old_bytes = (m_data != nullptr) ? (m_cap + 1) : 0;
+    void reallocate(usize new_cap) {
+        const usize old_bytes = (m_data != nullptr) ? (m_cap + 1) : 0;
         m_data = static_cast<char*>(m_alloc->realloc_bytes(m_data, old_bytes, new_cap + 1, 1));
         m_cap = new_cap;
         m_data[m_size] = '\0';
     }
 
     char* m_data = nullptr;
-    isize m_size = 0;
-    isize m_cap = 0;
+    usize m_size = 0;
+    usize m_cap = 0;
     Allocator* m_alloc = nullptr;
 };
 
@@ -197,7 +210,7 @@ template <> struct Equal<String> {
 // Zero-heap hybrid fixed-capacity string (Rule of Zero, trivially copyable).
 // Holds either a pointer to a static/arena null-terminated string literal (zero copies, m_ptr != nullptr),
 // or an inline fixed buffer (zero heap allocations, m_ptr == nullptr).
-template <isize N = 64> class InplaceString {
+template <usize N = 64> class InplaceString {
     static_assert(N > 1, "InplaceString capacity N must be greater than 1");
 
 public:
@@ -207,7 +220,7 @@ public:
     constexpr InplaceString(const char* literal) noexcept { set_static(literal); }
 
     // Constructs from a null-terminated external/arena string with known length (zero copy).
-    constexpr InplaceString(const char* external_null_terminated, isize len) noexcept {
+    constexpr InplaceString(const char* external_null_terminated, usize len) noexcept {
         set_static(external_null_terminated, len);
     }
 
@@ -223,7 +236,7 @@ public:
                     { r.size() };
                 }
     constexpr InplaceString(const R& range) noexcept {
-        set(StringRef(range.data(), static_cast<isize>(range.size())));
+        set(StringRef(range.data(), static_cast<usize>(range.size())));
     }
 
     constexpr InplaceString& operator=(const char* literal) noexcept {
@@ -244,7 +257,7 @@ public:
                     { r.size() };
                 }
     constexpr InplaceString& operator=(const R& range) noexcept {
-        set(StringRef(range.data(), static_cast<isize>(range.size())));
+        set(StringRef(range.data(), static_cast<usize>(range.size())));
         return *this;
     }
 
@@ -258,8 +271,8 @@ public:
         }
     }
 
-    constexpr void set_static(const char* external_null_terminated, isize len) noexcept {
-        if (external_null_terminated && len >= 0) {
+    constexpr void set_static(const char* external_null_terminated, usize len) noexcept {
+        if (external_null_terminated) {
             m_ptr = external_null_terminated;
             m_size = static_cast<u32>(len);
             m_buf[0] = '\0';
@@ -269,7 +282,7 @@ public:
     }
 
     constexpr void set(StringRef ref) noexcept {
-        const isize clamped = keel::min<isize>(ref.size() < 0 ? 0 : ref.size(), N - 1);
+        const usize clamped = keel::min<usize>(ref.size(), N - 1);
         m_size = static_cast<u32>(clamped);
         if (__builtin_is_constant_evaluated()) {
             for (u32 i = 0; i < m_size; ++i) {
@@ -293,40 +306,45 @@ public:
         return m_buf;
     }
 
-    constexpr void set_inline_size(isize len) noexcept {
-        const isize clamped = keel::min<isize>(len < 0 ? 0 : len, N - 1);
+    constexpr void set_inline_size(usize len) noexcept {
+        const usize clamped = keel::min<usize>(len, N - 1);
         m_size = static_cast<u32>(clamped);
         m_buf[m_size] = '\0';
         m_ptr = nullptr;
     }
 
+    [[nodiscard]] constexpr operator StringRef() const noexcept {
+        return StringRef(data(), static_cast<usize>(m_size));
+    }
+
     [[nodiscard]] constexpr StringRef as_ref() const noexcept {
-        return StringRef(data(), static_cast<isize>(m_size));
+        return StringRef(data(), static_cast<usize>(m_size));
     }
 
     // Zero-header conversion to std::basic_string_view<char, ...>
     template <typename SV>
-        requires IsTriviallyCopyable<SV> && requires(const char* d, usize n) {
-            typename SV::traits_type;
-            SV(d, n);
-        }
+        requires(!IsSame<RemoveCvRef<SV>, InplaceString>) && (!IsSame<RemoveCvRef<SV>, StringRef>) &&
+                IsTriviallyCopyable<SV> && requires(const char* d, usize n) {
+                    typename SV::traits_type;
+                    SV(d, n);
+                }
     [[nodiscard]] constexpr operator SV() const noexcept {
         return SV(data(), static_cast<usize>(m_size));
     }
 
     [[nodiscard]] constexpr const char* c_str() const noexcept { return m_ptr ? m_ptr : m_buf; }
     [[nodiscard]] constexpr const char* data() const noexcept { return m_ptr ? m_ptr : m_buf; }
-    [[nodiscard]] constexpr isize size() const noexcept { return static_cast<isize>(m_size); }
-    [[nodiscard]] constexpr isize length() const noexcept { return static_cast<isize>(m_size); }
+    [[nodiscard]] constexpr usize size() const noexcept { return static_cast<usize>(m_size); }
+    [[nodiscard]] constexpr usize length() const noexcept { return static_cast<usize>(m_size); }
     [[nodiscard]] constexpr bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] constexpr bool is_static() const noexcept { return m_ptr != nullptr; }
-    [[nodiscard]] static constexpr isize capacity() noexcept { return N - 1; }
+    [[nodiscard]] static constexpr usize capacity() noexcept { return N - 1; }
 
     [[nodiscard]] constexpr const char* begin() const noexcept { return data(); }
     [[nodiscard]] constexpr const char* end() const noexcept { return data() + m_size; }
 
-    [[nodiscard]] constexpr char operator[](isize i) const noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < static_cast<isize>(m_size));
+    [[nodiscard]] constexpr char operator[](usize i) const noexcept {
+        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
         return data()[i];
     }
 
@@ -346,24 +364,24 @@ public:
                     { r.size() };
                 }
     [[nodiscard]] constexpr bool operator==(const R& other) const noexcept {
-        return as_ref() == StringRef(other.data(), static_cast<isize>(other.size()));
+        return as_ref() == StringRef(other.data(), static_cast<usize>(other.size()));
     }
 
 private:
     const char* m_ptr = nullptr;
     u32 m_size = 0;
-    char m_buf[static_cast<usize>(N)]{};
+    char m_buf[N]{};
 };
 
 static_assert(IsTriviallyCopyable<InplaceString<64>>, "InplaceString must remain trivially copyable (Rule of Zero)");
 
-template <isize N> struct Hash<InplaceString<N>> {
+template <usize N> struct Hash<InplaceString<N>> {
     [[nodiscard]] u64 operator()(const InplaceString<N>& s) const noexcept { return Hash<StringRef>{}(s.as_ref()); }
     [[nodiscard]] u64 operator()(StringRef s) const noexcept { return Hash<StringRef>{}(s); }
     [[nodiscard]] u64 operator()(const char* s) const noexcept { return Hash<StringRef>{}(StringRef(s)); }
 };
 
-template <isize N> struct Equal<InplaceString<N>> {
+template <usize N> struct Equal<InplaceString<N>> {
     [[nodiscard]] bool operator()(const InplaceString<N>& a, const InplaceString<N>& b) const noexcept {
         return a.as_ref() == b.as_ref();
     }

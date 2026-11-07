@@ -1,8 +1,9 @@
 #pragma once
 
 // Opt-in interoperability conversions to C++ standard library types.
-// Note: StringRef and ArrayRef<T> already accept std::string, std::string_view, std::vector, and std::span
-// implicitly WITHOUT including this header. Include `keel/interop_std.h` only when converting FROM keel TO std.
+// Note: StringRef and ArrayRef<T> already convert implicitly to and from std::string_view and std::span
+// WITHOUT including this header. Include `keel/interop_std.h` only when converting to std::string, std::vector,
+// std::optional, or std::hash.
 
 #include "keel/array.h"
 #include "keel/optional.h"
@@ -18,19 +19,19 @@
 namespace keel {
 
 [[nodiscard]] inline std::string to_std_string(StringRef s) {
-    return std::string(s.data(), static_cast<std::size_t>(s.size()));
+    return std::string(s.data(), s.size());
 }
 
 [[nodiscard]] constexpr std::string_view to_std_string_view(StringRef s) noexcept {
-    return std::string_view(s.data(), static_cast<std::size_t>(s.size()));
+    return std::string_view(s.data(), s.size());
 }
 
 template <typename T> [[nodiscard]] constexpr std::span<const T> to_std_span(ArrayRef<T> arr) noexcept {
-    return std::span<const T>(arr.data(), static_cast<std::size_t>(arr.size()));
+    return std::span<const T>(arr.data(), arr.size());
 }
 
 template <typename T> [[nodiscard]] constexpr std::span<T> to_std_span(MutArrayRef<T> arr) noexcept {
-    return std::span<T>(arr.data(), static_cast<std::size_t>(arr.size()));
+    return std::span<T>(arr.data(), arr.size());
 }
 
 template <typename T> [[nodiscard]] std::vector<T> to_std_vector(ArrayRef<T> arr) {

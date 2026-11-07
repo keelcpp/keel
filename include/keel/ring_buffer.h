@@ -19,7 +19,7 @@ public:
         using PtrType = Conditional<IsConst, const T*, T*>;
 
         constexpr IteratorImpl() noexcept = default;
-        constexpr IteratorImpl(BufferPtr buf, isize index) noexcept : m_buf(buf), m_index(index) {}
+        constexpr IteratorImpl(BufferPtr buf, usize index) noexcept : m_buf(buf), m_index(index) {}
 
         [[nodiscard]] constexpr RefType operator*() const noexcept { return (*m_buf)[m_index]; }
         [[nodiscard]] constexpr PtrType operator->() const noexcept { return &((*m_buf)[m_index]); }
@@ -52,7 +52,7 @@ public:
 
     private:
         BufferPtr m_buf = nullptr;
-        isize m_index = 0;
+        usize m_index = 0;
     };
 
     using Iterator = IteratorImpl<false>;
@@ -60,7 +60,7 @@ public:
 
     explicit RingBuffer(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
-    static RingBuffer with_capacity(isize cap, Allocator* alloc = nullptr) {
+    static RingBuffer with_capacity(usize cap, Allocator* alloc = nullptr) {
         RingBuffer rb(alloc);
         rb.reserve(cap);
         return rb;
@@ -71,7 +71,7 @@ public:
     RingBuffer(const RingBuffer& other) : m_alloc(other.m_alloc) {
         if (other.m_size > 0) {
             reserve(other.m_size);
-            for (isize i = 0; i < other.m_size; ++i) {
+            for (usize i = 0; i < other.m_size; ++i) {
                 ::new (m_data + i) T(other[i]);
             }
             m_head = 0;
@@ -84,7 +84,7 @@ public:
             clear();
             if (other.m_size > 0) {
                 reserve(other.m_size);
-                for (isize i = 0; i < other.m_size; ++i) {
+                for (usize i = 0; i < other.m_size; ++i) {
                     ::new (m_data + i) T(other[i]);
                 }
                 m_head = 0;
@@ -126,7 +126,7 @@ public:
         RingBuffer copy(alloc ? alloc : m_alloc);
         if (m_size > 0) {
             copy.reserve(m_size);
-            for (isize i = 0; i < m_size; ++i) {
+            for (usize i = 0; i < m_size; ++i) {
                 ::new (copy.m_data + i) T((*this)[i]);
             }
             copy.m_head = 0;
@@ -135,8 +135,8 @@ public:
         return copy;
     }
 
-    [[nodiscard]] isize size() const noexcept { return m_size; }
-    [[nodiscard]] isize capacity() const noexcept { return m_cap; }
+    [[nodiscard]] usize size() const noexcept { return m_size; }
+    [[nodiscard]] usize capacity() const noexcept { return m_cap; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
 
@@ -145,13 +145,13 @@ public:
     [[nodiscard]] Iterator end() noexcept { return Iterator(this, m_size); }
     [[nodiscard]] ConstIterator end() const noexcept { return ConstIterator(this, m_size); }
 
-    [[nodiscard]] T& operator[](isize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+    [[nodiscard]] T& operator[](usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
         return m_data[phys_index(i)];
     }
 
-    [[nodiscard]] const T& operator[](isize i) const noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+    [[nodiscard]] const T& operator[](usize i) const noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
         return m_data[phys_index(i)];
     }
 
@@ -177,7 +177,7 @@ public:
 
     void clear() noexcept {
         if constexpr (!IsTriviallyDestructible<T>) {
-            for (isize i = 0; i < m_size; ++i) {
+            for (usize i = 0; i < m_size; ++i) {
                 m_data[phys_index(i)].~T();
             }
         }
@@ -194,17 +194,17 @@ public:
         }
     }
 
-    void reserve(isize min_cap) {
+    void reserve(usize min_cap) {
         if (min_cap <= m_cap) return;
-        const usize pow2 = bit_ceil(static_cast<usize>(min_cap < 8 ? 8 : min_cap));
-        reallocate(static_cast<isize>(pow2));
+        const usize pow2 = static_cast<usize>(bit_ceil(static_cast<u64>(min_cap < 8 ? 8 : min_cap)));
+        reallocate(pow2);
     }
 
     template <typename... Args> T& emplace_back(Args&&... args) {
         if (m_size == m_cap) [[unlikely]] {
             grow();
         }
-        const isize tail = phys_index(m_size);
+        const usize tail = phys_index(m_size);
         T* slot = ::new (m_data + tail) T(keel::forward<Args>(args)...);
         ++m_size;
         return *slot;
@@ -237,7 +237,7 @@ public:
         if (m_size == m_cap) [[unlikely]] {
             grow();
         }
-        const isize new_head = (m_head - 1) & (m_cap - 1);
+        const usize new_head = (m_head - 1) & (m_cap - 1);
         T* slot = ::new (m_data + new_head) T(keel::forward<Args>(args)...);
         m_head = new_head;
         ++m_size;
@@ -249,7 +249,7 @@ public:
             if (m_data && &val >= m_data && &val < m_data + m_cap) {
                 T copy(val);
                 grow();
-                const isize new_head = (m_head - 1) & (m_cap - 1);
+                const usize new_head = (m_head - 1) & (m_cap - 1);
                 ::new (m_data + new_head) T(keel::move(copy));
                 m_head = new_head;
                 ++m_size;
@@ -257,7 +257,7 @@ public:
             }
             grow();
         }
-        const isize new_head = (m_head - 1) & (m_cap - 1);
+        const usize new_head = (m_head - 1) & (m_cap - 1);
         ::new (m_data + new_head) T(val);
         m_head = new_head;
         ++m_size;
@@ -267,7 +267,7 @@ public:
         if (m_size == m_cap) [[unlikely]] {
             grow();
         }
-        const isize new_head = (m_head - 1) & (m_cap - 1);
+        const usize new_head = (m_head - 1) & (m_cap - 1);
         ::new (m_data + new_head) T(keel::move(val));
         m_head = new_head;
         ++m_size;
@@ -311,19 +311,19 @@ public:
     }
 
 private:
-    [[nodiscard]] constexpr isize phys_index(isize logical) const noexcept {
+    [[nodiscard]] constexpr usize phys_index(usize logical) const noexcept {
         return (m_head + logical) & (m_cap - 1);
     }
 
     void grow() {
-        const isize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
+        const usize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
         reallocate(new_cap);
     }
 
-    void reallocate(isize new_cap) {
+    void reallocate(usize new_cap) {
         T* new_data = m_alloc->alloc_array<T>(new_cap);
-        for (isize i = 0; i < m_size; ++i) {
-            const isize old_idx = phys_index(i);
+        for (usize i = 0; i < m_size; ++i) {
+            const usize old_idx = phys_index(i);
             ::new (new_data + i) T(keel::move(m_data[old_idx]));
             if constexpr (!IsTriviallyDestructible<T>) {
                 m_data[old_idx].~T();
@@ -338,9 +338,9 @@ private:
     }
 
     T* m_data = nullptr;
-    isize m_head = 0;
-    isize m_size = 0;
-    isize m_cap = 0;
+    usize m_head = 0;
+    usize m_size = 0;
+    usize m_cap = 0;
     Allocator* m_alloc = nullptr;
 };
 

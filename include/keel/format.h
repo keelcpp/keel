@@ -27,7 +27,7 @@ struct FormatArg {
         const char* cstr_val;
         const void* ptr_val;
     };
-    isize str_len = 0;
+    usize str_len = 0;
 
     constexpr FormatArg(bool v) noexcept : kind(Kind::Bool), u_val(v ? 1 : 0) {}
     constexpr FormatArg(char v) noexcept : kind(Kind::Char), i_val(static_cast<unsigned char>(v)) {}
@@ -50,7 +50,7 @@ struct FormatArg {
     constexpr FormatArg(char* s) noexcept : kind(Kind::CString), cstr_val(s ? s : "(null)") {}
     constexpr FormatArg(StringRef s) noexcept : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
     FormatArg(const String& s) noexcept : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
-    template <isize N>
+    template <usize N>
     constexpr FormatArg(const InplaceString<N>& s) noexcept
         : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
 
@@ -62,7 +62,7 @@ struct FormatArg {
                     { r.size() };
                 }
     constexpr FormatArg(const R& range) noexcept
-        : kind(Kind::StringRef), cstr_val(range.data()), str_len(static_cast<isize>(range.size())) {}
+        : kind(Kind::StringRef), cstr_val(range.data()), str_len(static_cast<usize>(range.size())) {}
 
     template <typename T>
         requires(!IsSame<RemoveCv<T>, char>)
@@ -72,7 +72,7 @@ struct FormatArg {
 
 // Low-level type-erased printf-like formatter (`%d`, `%u`, `%x`, `%X`, `%f`, `%.2f`, `%g`, `%s`, `%S`, `%c`, `%p`, `%%`)
 void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args);
-isize vformat_buf(char* buf, isize cap, StringRef fmt, ArrayRef<FormatArg> args) noexcept;
+usize vformat_buf(char* buf, usize cap, StringRef fmt, ArrayRef<FormatArg> args) noexcept;
 StringRef vformat_arena(Arena& arena, StringRef fmt, ArrayRef<FormatArg> args);
 
 template <typename... Args> void format_into(String& out, StringRef fmt, const Args&... args) {
@@ -80,7 +80,7 @@ template <typename... Args> void format_into(String& out, StringRef fmt, const A
         vformat_into(out, fmt, ArrayRef<FormatArg>{});
     } else {
         const FormatArg arg_array[] = {FormatArg(args)...};
-        vformat_into(out, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
+        vformat_into(out, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
 }
 
@@ -97,28 +97,28 @@ template <typename... Args>
     return out;
 }
 
-template <typename... Args> isize format_buf(char* buf, isize cap, StringRef fmt, const Args&... args) noexcept {
+template <typename... Args> usize format_buf(char* buf, usize cap, StringRef fmt, const Args&... args) noexcept {
     if constexpr (sizeof...(Args) == 0) {
         return vformat_buf(buf, cap, fmt, ArrayRef<FormatArg>{});
     } else {
         const FormatArg arg_array[] = {FormatArg(args)...};
-        return vformat_buf(buf, cap, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
+        return vformat_buf(buf, cap, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
 }
 
 template <usize N, typename... Args>
 [[nodiscard]] inline StringRef format_buf(char (&buf)[N], StringRef fmt, const Args&... args) noexcept {
-    const isize len = format_buf(buf, static_cast<isize>(N), fmt, args...);
-    return StringRef(buf, len > 0 ? len : 0);
+    const usize len = format_buf(buf, N, fmt, args...);
+    return StringRef(buf, len);
 }
 
-template <isize N, typename... Args>
+template <usize N, typename... Args>
 void format_into(InplaceString<N>& out, StringRef fmt, const Args&... args) noexcept {
-    const isize len = format_buf(out.inline_buffer(), N, fmt, args...);
+    const usize len = format_buf(out.inline_buffer(), N, fmt, args...);
     out.set_inline_size(len);
 }
 
-template <isize N = 64, typename... Args>
+template <usize N = 64, typename... Args>
 [[nodiscard]] InplaceString<N> format_inplace(StringRef fmt, const Args&... args) noexcept {
     InplaceString<N> out;
     format_into(out, fmt, args...);
@@ -130,7 +130,7 @@ template <typename... Args> [[nodiscard]] StringRef format_arena(Arena& arena, S
         return vformat_arena(arena, fmt, ArrayRef<FormatArg>{});
     } else {
         const FormatArg arg_array[] = {FormatArg(args)...};
-        return vformat_arena(arena, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
+        return vformat_arena(arena, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
 }
 
@@ -141,7 +141,7 @@ template <typename... Args> void print(StringRef fmt, const Args&... args) noexc
         vprint(false, false, fmt, ArrayRef<FormatArg>{});
     } else {
         const FormatArg arg_array[] = {FormatArg(args)...};
-        vprint(false, false, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
+        vprint(false, false, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
 }
 
@@ -150,7 +150,7 @@ template <typename... Args> void println(StringRef fmt, const Args&... args) noe
         vprint(false, true, fmt, ArrayRef<FormatArg>{});
     } else {
         const FormatArg arg_array[] = {FormatArg(args)...};
-        vprint(false, true, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
+        vprint(false, true, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
 }
 
@@ -159,7 +159,7 @@ template <typename... Args> void eprint(StringRef fmt, const Args&... args) noex
         vprint(true, false, fmt, ArrayRef<FormatArg>{});
     } else {
         const FormatArg arg_array[] = {FormatArg(args)...};
-        vprint(true, false, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
+        vprint(true, false, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
 }
 
@@ -168,7 +168,7 @@ template <typename... Args> void eprintln(StringRef fmt, const Args&... args) no
         vprint(true, true, fmt, ArrayRef<FormatArg>{});
     } else {
         const FormatArg arg_array[] = {FormatArg(args)...};
-        vprint(true, true, fmt, ArrayRef<FormatArg>(arg_array, static_cast<isize>(sizeof...(Args))));
+        vprint(true, true, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
 }
 

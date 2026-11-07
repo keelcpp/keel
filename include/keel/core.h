@@ -44,7 +44,8 @@ using usize = std::size_t;
 static_assert(sizeof(isize) == sizeof(void*), "isize must match pointer size");
 static_assert(sizeof(usize) == sizeof(void*), "usize must match pointer size");
 
-inline constexpr isize kInvalidIndex = -1;
+inline constexpr usize kInvalidIndex = ~usize{0};
+inline constexpr usize npos = ~usize{0};
 
 namespace detail {
 [[noreturn]] void assert_fail(const char* expr, const char* file, int line) noexcept;

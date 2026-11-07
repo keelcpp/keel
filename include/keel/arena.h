@@ -10,7 +10,7 @@ class Arena;
 class ArenaTemp {
 public:
     ArenaTemp() noexcept = default;
-    ArenaTemp(Arena& arena, isize saved_offset) noexcept : m_arena(&arena), m_saved_offset(saved_offset) {}
+    ArenaTemp(Arena& arena, usize saved_offset) noexcept : m_arena(&arena), m_saved_offset(saved_offset) {}
     ~ArenaTemp() noexcept;
 
     ArenaTemp(const ArenaTemp&) = delete;
@@ -42,14 +42,14 @@ public:
 
 private:
     Arena* m_arena = nullptr;
-    isize m_saved_offset = 0;
+    usize m_saved_offset = 0;
 };
 
 class Arena {
 public:
-    static constexpr isize kDefaultReserveSize = (sizeof(void*) >= 8) ? (64LL * 1024 * 1024) : (4 * 1024 * 1024);
+    static constexpr usize kDefaultReserveSize = (sizeof(void*) >= 8) ? (64ULL * 1024 * 1024) : (4ULL * 1024 * 1024);
 
-    explicit Arena(isize reserve_size = kDefaultReserveSize) noexcept;
+    explicit Arena(usize reserve_size = kDefaultReserveSize) noexcept;
     ~Arena() noexcept;
 
     Arena(const Arena&) = delete;
@@ -58,24 +58,23 @@ public:
     Arena(Arena&& other) noexcept;
     Arena& operator=(Arena&& other) noexcept;
 
-    [[nodiscard]] void* alloc(isize size, isize align = kDefaultAlign);
-    [[nodiscard]] void* realloc(void* ptr, isize old_size, isize new_size, isize align = kDefaultAlign);
-    [[nodiscard]] bool try_extend(void* ptr, isize old_size, isize new_size) noexcept;
+    [[nodiscard]] void* alloc(usize size, usize align = kDefaultAlign);
+    [[nodiscard]] void* realloc(void* ptr, usize old_size, usize new_size, usize align = kDefaultAlign);
+    [[nodiscard]] bool try_extend(void* ptr, usize old_size, usize new_size) noexcept;
 
-    template <typename T> [[nodiscard]] T* alloc_array(isize count) {
-        KEEL_ASSERT(count >= 0);
+    template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
-        return static_cast<T*>(alloc(count * static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T))));
+        return static_cast<T*>(alloc(count * sizeof(T), alignof(T)));
     }
 
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
         if constexpr (IsTriviallyDestructible<T>) {
-            void* mem = alloc(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
+            void* mem = alloc(sizeof(T), alignof(T));
             return ::new (mem) T(keel::forward<Args>(args)...);
         } else {
-            const isize mark = m_offset;
-            void* mem = alloc(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
-            auto* node = static_cast<DtorNode*>(alloc(static_cast<isize>(sizeof(DtorNode)), static_cast<isize>(alignof(DtorNode))));
+            const usize mark = m_offset;
+            void* mem = alloc(sizeof(T), alignof(T));
+            auto* node = static_cast<DtorNode*>(alloc(sizeof(DtorNode), alignof(DtorNode)));
             T* obj = ::new (mem) T(keel::forward<Args>(args)...);
             node->obj = obj;
             node->destroy = [](void* p) noexcept { static_cast<T*>(p)->~T(); };
@@ -86,12 +85,11 @@ public:
         }
     }
 
-    template <typename T> [[nodiscard]] T* create_array(isize count) {
-        KEEL_ASSERT(count >= 0);
+    template <typename T> [[nodiscard]] T* create_array(usize count) {
         if (count == 0) return nullptr;
         if constexpr (IsTriviallyDestructible<T>) {
             T* arr = alloc_array<T>(count);
-            for (isize i = 0; i < count; ++i) {
+            for (usize i = 0; i < count; ++i) {
                 ::new (arr + i) T{};
             }
             return arr;
@@ -99,13 +97,12 @@ public:
             struct ArrayDtorRecord {
                 DtorNode node{};
                 T* data = nullptr;
-                isize count = 0;
+                usize count = 0;
             };
-            const isize mark = m_offset;
+            const usize mark = m_offset;
             T* arr = alloc_array<T>(count);
-            auto* rec = static_cast<ArrayDtorRecord*>(
-                alloc(static_cast<isize>(sizeof(ArrayDtorRecord)), static_cast<isize>(alignof(ArrayDtorRecord))));
-            for (isize i = 0; i < count; ++i) {
+            auto* rec = static_cast<ArrayDtorRecord*>(alloc(sizeof(ArrayDtorRecord), alignof(ArrayDtorRecord)));
+            for (usize i = 0; i < count; ++i) {
                 ::new (arr + i) T{};
             }
             rec->data = arr;
@@ -113,7 +110,7 @@ public:
             rec->node.obj = rec;
             rec->node.destroy = [](void* p) noexcept {
                 auto* r = static_cast<ArrayDtorRecord*>(p);
-                for (isize i = r->count; i > 0; --i) {
+                for (usize i = r->count; i > 0; --i) {
                     r->data[i - 1].~T();
                 }
             };
@@ -124,25 +121,25 @@ public:
         }
     }
 
-    template <typename T> [[nodiscard]] MutArrayRef<T> create_slice(isize count) {
+    template <typename T> [[nodiscard]] MutArrayRef<T> create_slice(usize count) {
         return MutArrayRef<T>(create_array<T>(count), count);
     }
 
     [[nodiscard]] StringRef alloc_string(StringRef str) {
         if (str.empty()) return StringRef("", 0);
         char* buf = static_cast<char*>(alloc(str.size() + 1, 1));
-        mem_copy(buf, str.data(), static_cast<usize>(str.size()));
+        mem_copy(buf, str.data(), str.size());
         buf[str.size()] = '\0';
         return StringRef(buf, str.size());
     }
 
     void reset() noexcept;
-    void rewind_to(isize offset) noexcept;
+    void rewind_to(usize offset) noexcept;
     void release_memory() noexcept;
 
-    [[nodiscard]] isize used() const noexcept { return m_offset; }
-    [[nodiscard]] isize committed() const noexcept { return m_committed; }
-    [[nodiscard]] isize reserved() const noexcept { return m_reserved; }
+    [[nodiscard]] usize used() const noexcept { return m_offset; }
+    [[nodiscard]] usize committed() const noexcept { return m_committed; }
+    [[nodiscard]] usize reserved() const noexcept { return m_reserved; }
 
     [[nodiscard]] ArenaTemp begin_temp() noexcept { return ArenaTemp(*this, m_offset); }
     [[nodiscard]] Allocator* allocator() noexcept { return &m_allocator; }
@@ -152,17 +149,17 @@ private:
         void* obj = nullptr;
         void (*destroy)(void*) noexcept = nullptr;
         DtorNode* next = nullptr;
-        isize offset = 0;
+        usize offset = 0;
     };
 
     void init_allocator() noexcept;
-    void run_destructors_from(isize offset) noexcept;
+    void run_destructors_from(usize offset) noexcept;
 
     u8* m_base = nullptr;
-    isize m_offset = 0;
-    isize m_committed = 0;
-    isize m_reserved = 0;
-    isize m_last_alloc_end = 0;
+    usize m_offset = 0;
+    usize m_committed = 0;
+    usize m_reserved = 0;
+    usize m_last_alloc_end = 0;
     DtorNode* m_dtor_head = nullptr;
     Allocator m_allocator{};
 };
@@ -182,7 +179,7 @@ inline Allocator* ArenaTemp::allocator() const noexcept {
 }
 
 // Thread-local scratch arena acquisition with conflict avoidance (ping-pong between 2 thread-local arenas)
-[[nodiscard]] ArenaTemp get_scratch(Arena* const* conflicts = nullptr, isize conflict_count = 0) noexcept;
+[[nodiscard]] ArenaTemp get_scratch(Arena* const* conflicts = nullptr, usize conflict_count = 0) noexcept;
 
 namespace detail {
 
@@ -228,13 +225,13 @@ template <typename T> class ArenaArray : private detail::ArenaArrayBase<T> {
 public:
     constexpr ArenaArray() noexcept = default;
 
-    explicit ArenaArray(Arena& arena, isize initial_reserve = 0) : Base(&arena) {
+    explicit ArenaArray(Arena& arena, usize initial_reserve = 0) : Base(&arena) {
         if (initial_reserve > 0) {
             reserve(initial_reserve);
         }
     }
 
-    explicit ArenaArray(Arena* arena, isize initial_reserve = 0) : Base(arena) {
+    explicit ArenaArray(Arena* arena, usize initial_reserve = 0) : Base(arena) {
         if (arena && initial_reserve > 0) {
             reserve(initial_reserve);
         }
@@ -242,7 +239,7 @@ public:
 
     ArenaArray(const ArenaArray& other) : Base(other.m_arena) {
         if (other.m_size > 0 && m_arena) {
-            reserve(static_cast<isize>(other.m_size));
+            reserve(other.m_size);
             if constexpr (IsTriviallyCopyable<T>) {
                 mem_copy(m_data, other.m_data, sizeof(T) * other.m_size);
             } else {
@@ -270,7 +267,7 @@ public:
                 m_arena = other.m_arena;
             }
             if (other.m_size > 0 && m_arena) {
-                reserve(static_cast<isize>(other.m_size));
+                reserve(other.m_size);
                 if constexpr (IsTriviallyCopyable<T>) {
                     mem_copy(m_data, other.m_data, sizeof(T) * other.m_size);
                 } else {
@@ -305,8 +302,8 @@ public:
 
     [[nodiscard]] constexpr T* data() noexcept { return m_data; }
     [[nodiscard]] constexpr const T* data() const noexcept { return m_data; }
-    [[nodiscard]] constexpr isize size() const noexcept { return static_cast<isize>(m_size); }
-    [[nodiscard]] constexpr isize capacity() const noexcept { return static_cast<isize>(m_cap); }
+    [[nodiscard]] constexpr usize size() const noexcept { return static_cast<usize>(m_size); }
+    [[nodiscard]] constexpr usize capacity() const noexcept { return static_cast<usize>(m_cap); }
     [[nodiscard]] constexpr bool empty() const noexcept { return m_size == 0; }
 
     [[nodiscard]] constexpr T* begin() noexcept { return m_data; }
@@ -314,13 +311,13 @@ public:
     [[nodiscard]] constexpr T* end() noexcept { return m_data + m_size; }
     [[nodiscard]] constexpr const T* end() const noexcept { return m_data + m_size; }
 
-    [[nodiscard]] constexpr T& operator[](isize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < static_cast<isize>(m_size));
+    [[nodiscard]] constexpr T& operator[](usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
         return m_data[i];
     }
 
-    [[nodiscard]] constexpr const T& operator[](isize i) const noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < static_cast<isize>(m_size));
+    [[nodiscard]] constexpr const T& operator[](usize i) const noexcept {
+        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
         return m_data[i];
     }
 
@@ -356,19 +353,19 @@ public:
         m_size = 0;
     }
 
-    void reserve(isize new_cap) {
-        if (new_cap <= static_cast<isize>(m_cap)) return;
+    void reserve(usize new_cap) {
+        if (new_cap <= static_cast<usize>(m_cap)) return;
         KEEL_ASSERT(m_arena != nullptr);
         if (!m_arena) return;
 
-        const isize old_bytes = static_cast<isize>(sizeof(T)) * static_cast<isize>(m_cap);
-        const isize new_bytes = static_cast<isize>(sizeof(T)) * new_cap;
+        const usize old_bytes = sizeof(T) * static_cast<usize>(m_cap);
+        const usize new_bytes = sizeof(T) * new_cap;
         if (m_data && m_arena->try_extend(m_data, old_bytes, new_bytes)) {
             m_cap = static_cast<u32>(new_cap);
             return;
         }
 
-        T* new_buf = static_cast<T*>(m_arena->alloc(new_bytes, static_cast<isize>(alignof(T))));
+        T* new_buf = static_cast<T*>(m_arena->alloc(new_bytes, alignof(T)));
         if (m_size > 0 && m_data) {
             if constexpr (IsTriviallyCopyable<T>) {
                 mem_copy(new_buf, m_data, sizeof(T) * m_size);
@@ -383,8 +380,7 @@ public:
         m_cap = static_cast<u32>(new_cap);
     }
 
-    void resize(isize new_size) {
-        KEEL_ASSERT(new_size >= 0);
+    void resize(usize new_size) {
         const u32 target = static_cast<u32>(new_size);
         if (target < m_size) {
             if constexpr (!IsTriviallyDestructible<T>) {
@@ -426,8 +422,8 @@ private:
     template <typename... Args> T& emplace_back_slow(Args&&... args) {
         KEEL_ASSERT(m_arena != nullptr);
         const u32 next_cap = (m_cap == 0) ? 16u : (m_cap * 2u);
-        const isize old_bytes = static_cast<isize>(sizeof(T)) * static_cast<isize>(m_cap);
-        const isize new_bytes = static_cast<isize>(sizeof(T)) * static_cast<isize>(next_cap);
+        const usize old_bytes = sizeof(T) * static_cast<usize>(m_cap);
+        const usize new_bytes = sizeof(T) * static_cast<usize>(next_cap);
         if (m_data && m_arena->try_extend(m_data, old_bytes, new_bytes)) {
             m_cap = next_cap;
             T* elem = ::new (m_data + m_size) T(keel::forward<Args>(args)...);
@@ -435,7 +431,7 @@ private:
             return *elem;
         }
 
-        T* new_buf = static_cast<T*>(m_arena->alloc(new_bytes, static_cast<isize>(alignof(T))));
+        T* new_buf = static_cast<T*>(m_arena->alloc(new_bytes, alignof(T)));
         // Construct new element before relocating/destroying old elements so self-aliasing args remain valid
         T* elem = ::new (new_buf + m_size) T(keel::forward<Args>(args)...);
         if (m_size > 0 && m_data) {

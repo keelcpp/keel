@@ -38,7 +38,7 @@ public:
     [[nodiscard]] explicit operator bool() const noexcept { return is_open() && m_sticky_error.is_ok(); }
 
     // Reads up to `buf.size()` bytes; returns actual bytes read (0 on EOF).
-    [[nodiscard]] Result<isize> read(MutArrayRef<u8> buf) noexcept;
+    [[nodiscard]] Result<usize> read(MutArrayRef<u8> buf) noexcept;
 
     // Sequential write with sticky error: if an error occurred earlier, subsequent writes are no-ops.
     void write(ArrayRef<u8> data) noexcept;

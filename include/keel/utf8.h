@@ -11,32 +11,32 @@ inline constexpr u32 kReplacementChar = 0xFFFDu;
 
 // Decodes the next UTF-8 codepoint starting at `byte_offset` and advances `byte_offset`.
 // On invalid byte sequence, advances `byte_offset` by 1 and returns `kReplacementChar` (0xFFFD).
-[[nodiscard]] u32 utf8_decode_next(StringRef str, isize& byte_offset) noexcept;
+[[nodiscard]] u32 utf8_decode_next(StringRef str, usize& byte_offset) noexcept;
 
 // Encodes `codepoint` into `out` (at least 4 bytes) and returns the number of bytes written (1..4).
 // Invalid codepoints (> 0x10FFFF or surrogates 0xD800..0xDFFF) are encoded as `kReplacementChar` (3 bytes).
-isize utf8_encode(u32 codepoint, char out[4]) noexcept;
+usize utf8_encode(u32 codepoint, char out[4]) noexcept;
 
 // Returns the number of Unicode codepoints in `str`.
-[[nodiscard]] isize utf8_codepoint_count(StringRef str) noexcept;
+[[nodiscard]] usize utf8_codepoint_count(StringRef str) noexcept;
 
 // Returns true if `b` is a UTF-8 lead byte (i.e. not a continuation byte 10xxxxxx).
 [[nodiscard]] constexpr bool utf8_is_lead_byte(u8 b) noexcept { return (b & 0xC0u) != 0x80u; }
 
 // Returns the byte index of the previous UTF-8 codepoint boundary before `index` (clamped to [0, str.size()]).
-[[nodiscard]] isize utf8_prev_boundary(StringRef str, isize index) noexcept;
+[[nodiscard]] usize utf8_prev_boundary(StringRef str, usize index) noexcept;
 
 // Returns the byte index of the next UTF-8 codepoint boundary after `index` (clamped to [0, str.size()]).
-[[nodiscard]] isize utf8_next_boundary(StringRef str, isize index) noexcept;
+[[nodiscard]] usize utf8_next_boundary(StringRef str, usize index) noexcept;
 
 // Returns the byte index of the previous word boundary before `index` (for Ctrl+Left / Ctrl+Backspace).
-[[nodiscard]] isize utf8_prev_word_boundary(StringRef str, isize index) noexcept;
+[[nodiscard]] usize utf8_prev_word_boundary(StringRef str, usize index) noexcept;
 
 // Returns the byte index of the next word boundary after `index` (for Ctrl+Right / Ctrl+Delete).
-[[nodiscard]] isize utf8_next_word_boundary(StringRef str, isize index) noexcept;
+[[nodiscard]] usize utf8_next_word_boundary(StringRef str, usize index) noexcept;
 
 // Computes the `[out_start, out_end)` byte range of the word or token at `index` (for double-click selection).
-void utf8_word_bounds_at(StringRef str, isize index, isize& out_start, isize& out_end) noexcept;
+void utf8_word_bounds_at(StringRef str, usize index, usize& out_start, usize& out_end) noexcept;
 
 // Unicode case folding for ASCII, Latin-1 Supplement, and Cyrillic codepoints.
 [[nodiscard]] constexpr u32 utf8_to_lower(u32 cp) noexcept {
@@ -58,10 +58,10 @@ void utf8_word_bounds_at(StringRef str, isize index, isize& out_start, isize& ou
 // Finds the first UTF-8 case-insensitive occurrence of `needle` inside `haystack`.
 // Returns true and populates `[out_byte_pos, out_byte_pos + out_byte_len)` when found.
 [[nodiscard]] bool utf8_find_case_insensitive(
-    StringRef haystack, StringRef needle, isize& out_byte_pos, isize& out_byte_len) noexcept;
+    StringRef haystack, StringRef needle, usize& out_byte_pos, usize& out_byte_len) noexcept;
 
 // Returns the starting byte offset of the first UTF-8 case-insensitive occurrence of `needle` inside `haystack`,
-// or `kInvalidIndex` (-1) if not found.
-[[nodiscard]] isize utf8_find_case_insensitive(StringRef haystack, StringRef needle) noexcept;
+// or `kInvalidIndex` (`npos`) if not found.
+[[nodiscard]] usize utf8_find_case_insensitive(StringRef haystack, StringRef needle) noexcept;
 
 } // namespace keel

@@ -11,9 +11,9 @@ namespace keel {
 
 namespace detail {
 
-[[nodiscard]] constexpr u64 upow_saturating(u64 base, isize exp) noexcept {
+[[nodiscard]] constexpr u64 upow_saturating(u64 base, usize exp) noexcept {
     u64 result = 1;
-    for (isize i = 0; i < exp; ++i) {
+    for (usize i = 0; i < exp; ++i) {
         if (base != 0 && result > (~u64{0}) / base) {
             return ~u64{0};
         }
@@ -23,7 +23,7 @@ namespace detail {
 }
 
 // Computes ceil(n^(1 / root)) using exact integer binary search (zero <cmath>).
-[[nodiscard]] constexpr isize iroot_ceil(isize n, isize root) noexcept {
+[[nodiscard]] constexpr usize iroot_ceil(usize n, usize root) noexcept {
     if (n <= 1) return 1;
     if (root <= 1) return n;
     const u64 target = static_cast<u64>(n);
@@ -38,16 +38,16 @@ namespace detail {
             hi = mid;
         }
     }
-    return static_cast<isize>(lo > 0 ? lo : 1);
+    return static_cast<usize>(lo > 0 ? lo : 1);
 }
 
 } // namespace detail
 
-template <typename CoordT = f32, isize Dim = 2> struct RTreeBox {
+template <typename CoordT = f32, usize Dim = 2> struct RTreeBox {
     static_assert(Dim >= 1, "RTreeBox dimension Dim must be >= 1");
 
-    CoordT min[static_cast<usize>(Dim)]{};
-    CoordT max[static_cast<usize>(Dim)]{};
+    CoordT min[Dim]{};
+    CoordT max[Dim]{};
 
     constexpr RTreeBox() noexcept = default;
 
@@ -73,20 +73,20 @@ template <typename CoordT = f32, isize Dim = 2> struct RTreeBox {
         return RTreeBox(x, y, z, x + w, y + h, z + d);
     }
 
-    [[nodiscard]] constexpr CoordT extent(isize axis) const noexcept {
-        KEEL_BOUNDS_ASSERT(axis >= 0 && axis < Dim);
+    [[nodiscard]] constexpr CoordT extent(usize axis) const noexcept {
+        KEEL_BOUNDS_ASSERT(axis < Dim);
         return max[axis] - min[axis];
     }
 
-    [[nodiscard]] constexpr CoordT center(isize axis) const noexcept {
-        KEEL_BOUNDS_ASSERT(axis >= 0 && axis < Dim);
+    [[nodiscard]] constexpr CoordT center(usize axis) const noexcept {
+        KEEL_BOUNDS_ASSERT(axis < Dim);
         return (min[axis] + max[axis]) * CoordT(0.5);
     }
 
     [[nodiscard]] constexpr RTreeBox inflated_min_size(CoordT min_extent) const noexcept {
         RTreeBox out = *this;
         const CoordT half = min_extent * CoordT(0.5);
-        for (isize d = 0; d < Dim; ++d) {
+        for (usize d = 0; d < Dim; ++d) {
             if (out.max[d] - out.min[d] < min_extent) {
                 out.min[d] -= half;
                 out.max[d] = out.min[d] + min_extent;
@@ -95,8 +95,8 @@ template <typename CoordT = f32, isize Dim = 2> struct RTreeBox {
         return out;
     }
 
-    [[nodiscard]] constexpr bool contains_point(const CoordT (&pt)[static_cast<usize>(Dim)]) const noexcept {
-        for (isize d = 0; d < Dim; ++d) {
+    [[nodiscard]] constexpr bool contains_point(const CoordT (&pt)[Dim]) const noexcept {
+        for (usize d = 0; d < Dim; ++d) {
             if (pt[d] < min[d] || pt[d] > max[d]) return false;
         }
         return true;
@@ -115,7 +115,7 @@ template <typename CoordT = f32, isize Dim = 2> struct RTreeBox {
     }
 
     [[nodiscard]] constexpr bool intersects(const RTreeBox& other) const noexcept {
-        for (isize d = 0; d < Dim; ++d) {
+        for (usize d = 0; d < Dim; ++d) {
             if (min[d] >= other.max[d] || max[d] <= other.min[d]) return false;
         }
         return true;
@@ -123,7 +123,7 @@ template <typename CoordT = f32, isize Dim = 2> struct RTreeBox {
 
     [[nodiscard]] constexpr RTreeBox merged(const RTreeBox& other) const noexcept {
         RTreeBox out;
-        for (isize d = 0; d < Dim; ++d) {
+        for (usize d = 0; d < Dim; ++d) {
             out.min[d] = keel::min(min[d], other.min[d]);
             out.max[d] = keel::max(max[d], other.max[d]);
         }
@@ -131,20 +131,20 @@ template <typename CoordT = f32, isize Dim = 2> struct RTreeBox {
     }
 
     [[nodiscard]] constexpr bool operator==(const RTreeBox& other) const noexcept {
-        for (isize d = 0; d < Dim; ++d) {
+        for (usize d = 0; d < Dim; ++d) {
             if (min[d] != other.min[d] || max[d] != other.max[d]) return false;
         }
         return true;
     }
 };
 
-template <typename IdT = u32, typename CoordT = f32, isize Dim = 2> struct RTreeItem {
+template <typename IdT = u32, typename CoordT = f32, usize Dim = 2> struct RTreeItem {
     IdT id{};
     RTreeBox<CoordT, Dim> box{};
 };
 
 // Flat Sort-Tile-Recursive (STR) packed N-dimensional R-Tree for O(log N) bounding-box and point queries.
-template <typename IdT = u32, typename CoordT = f32, isize Dim = 2, isize NodeCap = 16> class RTree {
+template <typename IdT = u32, typename CoordT = f32, usize Dim = 2, usize NodeCap = 16> class RTree {
     static_assert(Dim >= 1, "RTree dimension Dim must be >= 1");
     static_assert(NodeCap >= 2 && NodeCap <= 65535, "RTree NodeCap must be in [2..65535]");
 
@@ -212,24 +212,24 @@ public:
     }
 
     [[nodiscard]] bool empty() const noexcept { return m_nodes.empty(); }
-    [[nodiscard]] isize node_count() const noexcept { return m_nodes.size(); }
-    [[nodiscard]] isize item_count() const noexcept { return m_leaves.size(); }
+    [[nodiscard]] usize node_count() const noexcept { return m_nodes.size(); }
+    [[nodiscard]] usize item_count() const noexcept { return m_leaves.size(); }
     [[nodiscard]] u32 root_index() const noexcept { return m_root_index; }
     [[nodiscard]] ArrayRef<Node> nodes() const noexcept { return m_nodes; }
     [[nodiscard]] ArrayRef<Leaf> leaves() const noexcept { return m_leaves; }
 
     void build(ArrayRef<Item> input_items) {
         clear();
-        const isize n = input_items.size();
-        if (n <= 0) return;
+        const usize n = input_items.size();
+        if (n == 0) return;
 
         ArenaTemp scratch = get_scratch();
         SortEntry* entries = scratch.arena().template alloc_array<SortEntry>(n);
-        for (isize i = 0; i < n; ++i) {
+        for (usize i = 0; i < n; ++i) {
             const Box& b = input_items[i].box;
             entries[i].id = input_items[i].id;
             entries[i].box = b;
-            for (isize d = 0; d < Dim; ++d) {
+            for (usize d = 0; d < Dim; ++d) {
                 entries[i].center[d] = b.center(d);
             }
         }
@@ -238,22 +238,22 @@ public:
         str_partition_axis(entries, n, 0);
 
         m_leaves.resize(n);
-        for (isize i = 0; i < n; ++i) {
+        for (usize i = 0; i < n; ++i) {
             m_leaves[i] = Leaf{
                 .bounds = entries[i].box,
                 .id = entries[i].id
             };
         }
 
-        const isize num_leaves = (n + NodeCap - 1) / NodeCap;
+        const usize num_leaves = (n + NodeCap - 1) / NodeCap;
         m_nodes.reserve(num_leaves * 2 + 4);
 
         // 2. Create leaf nodes
         u32 level_start = 0;
-        for (isize i = 0; i < n; i += NodeCap) {
-            const isize end = keel::min(n, i + NodeCap);
+        for (usize i = 0; i < n; i += NodeCap) {
+            const usize end = keel::min(n, i + NodeCap);
             Box box = entries[i].box;
-            for (isize j = i + 1; j < end; ++j) {
+            for (usize j = i + 1; j < end; ++j) {
                 box = box.merged(entries[j].box);
             }
             m_nodes.push_back(Node{
@@ -270,9 +270,9 @@ public:
             const u32 next_level_start = level_end;
             for (u32 i = level_start; i < level_end; i += static_cast<u32>(NodeCap)) {
                 const u32 end = keel::min(level_end, i + static_cast<u32>(NodeCap));
-                Box box = m_nodes[static_cast<isize>(i)].bounds;
+                Box box = m_nodes[i].bounds;
                 for (u32 j = i + 1; j < end; ++j) {
-                    box = box.merged(m_nodes[static_cast<isize>(j)].bounds);
+                    box = box.merged(m_nodes[j].bounds);
                 }
                 m_nodes.push_back(Node{
                     .bounds = box,
@@ -292,18 +292,18 @@ public:
         if (m_nodes.empty()) return;
 
         u32 stack[128]{};
-        isize sp = 0;
+        usize sp = 0;
         stack[sp++] = m_root_index;
 
         while (sp > 0) {
-            const Node& node = m_nodes[static_cast<isize>(stack[--sp])];
+            const Node& node = m_nodes[stack[--sp]];
             if (!node.bounds.intersects(query)) {
                 continue;
             }
             const u32 end = node.first_child + node.count;
             if (node.is_leaf) {
                 for (u32 i = node.first_child; i < end; ++i) {
-                    const Leaf& leaf = m_leaves[static_cast<isize>(i)];
+                    const Leaf& leaf = m_leaves[i];
                     if (leaf.bounds.intersects(query)) {
                         on_hit(leaf.id);
                     }
@@ -324,22 +324,22 @@ public:
     }
 
     template <typename Fn>
-    void query_point(const CoordT (&pt)[static_cast<usize>(Dim)], Fn&& on_hit) const {
+    void query_point(const CoordT (&pt)[Dim], Fn&& on_hit) const {
         if (m_nodes.empty()) return;
 
         u32 stack[128]{};
-        isize sp = 0;
+        usize sp = 0;
         stack[sp++] = m_root_index;
 
         while (sp > 0) {
-            const Node& node = m_nodes[static_cast<isize>(stack[--sp])];
+            const Node& node = m_nodes[stack[--sp]];
             if (!node.bounds.contains_point(pt)) {
                 continue;
             }
             const u32 end = node.first_child + node.count;
             if (node.is_leaf) {
                 for (u32 i = node.first_child; i < end; ++i) {
-                    const Leaf& leaf = m_leaves[static_cast<isize>(i)];
+                    const Leaf& leaf = m_leaves[i];
                     if (leaf.bounds.contains_point(pt)) {
                         on_hit(leaf.id);
                     }
@@ -374,10 +374,10 @@ private:
     struct SortEntry {
         IdT id{};
         Box box{};
-        CoordT center[static_cast<usize>(Dim)]{};
+        CoordT center[Dim]{};
     };
 
-    static void str_partition_axis(SortEntry* entries, isize count, isize axis) noexcept {
+    static void str_partition_axis(SortEntry* entries, usize count, usize axis) noexcept {
         if (count <= 1) return;
 
         keel::sort(entries, count, [axis](const SortEntry& a, const SortEntry& b) noexcept {
@@ -388,13 +388,13 @@ private:
             return;
         }
 
-        const isize num_leaves = (count + NodeCap - 1) / NodeCap;
-        const isize rem_dims = Dim - axis;
-        const isize num_strips = detail::iroot_ceil(num_leaves, rem_dims);
-        const isize items_per_strip = (count + num_strips - 1) / num_strips;
+        const usize num_leaves = (count + NodeCap - 1) / NodeCap;
+        const usize rem_dims = Dim - axis;
+        const usize num_strips = detail::iroot_ceil(num_leaves, rem_dims);
+        const usize items_per_strip = (count + num_strips - 1) / num_strips;
 
-        for (isize s = 0; s < count; s += items_per_strip) {
-            const isize end = keel::min(count, s + items_per_strip);
+        for (usize s = 0; s < count; s += items_per_strip) {
+            const usize end = keel::min(count, s + items_per_strip);
             str_partition_axis(entries + s, end - s, axis + 1);
         }
     }

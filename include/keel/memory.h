@@ -4,21 +4,21 @@
 
 namespace keel {
 
-inline constexpr isize kDefaultAlign = static_cast<isize>(alignof(std::max_align_t));
+inline constexpr usize kDefaultAlign = alignof(std::max_align_t);
 
-using OomHandler = void (*)(isize size, isize align, void* user_data);
+using OomHandler = void (*)(usize size, usize align, void* user_data);
 
 void set_oom_handler(OomHandler handler, void* user_data = nullptr) noexcept;
-[[noreturn]] void handle_oom(isize size, isize align);
+[[noreturn]] void handle_oom(usize size, usize align);
 
 struct Allocator {
-    void* (*alloc)(void* ctx, isize size, isize align) noexcept = nullptr;
-    void* (*realloc)(void* ctx, void* ptr, isize old_size, isize new_size, isize align) noexcept = nullptr;
-    void (*free)(void* ctx, void* ptr, isize size, isize align) noexcept = nullptr;
+    void* (*alloc)(void* ctx, usize size, usize align) noexcept = nullptr;
+    void* (*realloc)(void* ctx, void* ptr, usize old_size, usize new_size, usize align) noexcept = nullptr;
+    void (*free)(void* ctx, void* ptr, usize size, usize align) noexcept = nullptr;
     void* ctx = nullptr;
 
-    [[nodiscard]] void* alloc_bytes(isize size, isize align = kDefaultAlign) {
-        KEEL_ASSERT(size >= 0 && align > 0 && (align & (align - 1)) == 0);
+    [[nodiscard]] void* alloc_bytes(usize size, usize align = kDefaultAlign) {
+        KEEL_ASSERT(align > 0 && (align & (align - 1)) == 0);
         if (size == 0) return nullptr;
         void* p = alloc(ctx, size, align);
         if (!p) [[unlikely]] {
@@ -27,8 +27,8 @@ struct Allocator {
         return p;
     }
 
-    [[nodiscard]] void* realloc_bytes(void* ptr, isize old_size, isize new_size, isize align = kDefaultAlign) {
-        KEEL_ASSERT(old_size >= 0 && new_size >= 0 && align > 0 && (align & (align - 1)) == 0);
+    [[nodiscard]] void* realloc_bytes(void* ptr, usize old_size, usize new_size, usize align = kDefaultAlign) {
+        KEEL_ASSERT(align > 0 && (align & (align - 1)) == 0);
         if (new_size == 0) {
             if (ptr) free(ctx, ptr, old_size, align);
             return nullptr;
@@ -43,33 +43,32 @@ struct Allocator {
         return p;
     }
 
-    void free_bytes(void* ptr, isize size, isize align = kDefaultAlign) noexcept {
+    void free_bytes(void* ptr, usize size, usize align = kDefaultAlign) noexcept {
         if (ptr) {
             free(ctx, ptr, size, align);
         }
     }
 
-    template <typename T> [[nodiscard]] T* alloc_array(isize count) {
-        KEEL_ASSERT(count >= 0);
+    template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
-        return static_cast<T*>(alloc_bytes(count * static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T))));
+        return static_cast<T*>(alloc_bytes(count * sizeof(T), alignof(T)));
     }
 
-    template <typename T> void free_array(T* ptr, isize count) noexcept {
+    template <typename T> void free_array(T* ptr, usize count) noexcept {
         if (ptr) {
-            free_bytes(ptr, count * static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
+            free_bytes(ptr, count * sizeof(T), alignof(T));
         }
     }
 
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
-        void* mem = alloc_bytes(static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
+        void* mem = alloc_bytes(sizeof(T), alignof(T));
         return ::new (mem) T(keel::forward<Args>(args)...);
     }
 
     template <typename T> void destroy(T* ptr) noexcept {
         if (ptr) {
             ptr->~T();
-            free_bytes(ptr, static_cast<isize>(sizeof(T)), static_cast<isize>(alignof(T)));
+            free_bytes(ptr, sizeof(T), alignof(T));
         }
     }
 };

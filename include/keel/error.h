@@ -40,10 +40,10 @@ struct [[nodiscard]] Error {
 
 struct [[nodiscard]] ParseError {
     ErrorCode code = ErrorCode::Ok;
-    isize offset = 0;
+    usize offset = 0;
 
     constexpr ParseError() noexcept = default;
-    constexpr ParseError(ErrorCode c, isize off = 0) noexcept : code(c), offset(off) {}
+    constexpr ParseError(ErrorCode c, usize off = 0) noexcept : code(c), offset(off) {}
 
     [[nodiscard]] constexpr bool is_ok() const noexcept { return code == ErrorCode::Ok; }
     [[nodiscard]] constexpr bool is_err() const noexcept { return code != ErrorCode::Ok; }

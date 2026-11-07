@@ -15,15 +15,15 @@ struct DefaultLess {
 namespace detail {
 
 template <typename T, typename LessFn>
-constexpr void insertion_sort_range(T* data, isize count, LessFn& less) noexcept {
-    for (isize i = 1; i < count; ++i) {
+constexpr void insertion_sort_range(T* data, usize count, LessFn& less) noexcept {
+    for (usize i = 1; i < count; ++i) {
         T key = keel::move(data[i]);
-        isize j = i - 1;
-        while (j >= 0 && less(key, data[j])) {
-            data[j + 1] = keel::move(data[j]);
+        usize j = i;
+        while (j > 0 && less(key, data[j - 1])) {
+            data[j] = keel::move(data[j - 1]);
             --j;
         }
-        data[j + 1] = keel::move(key);
+        data[j] = keel::move(key);
     }
 }
 
@@ -31,7 +31,7 @@ constexpr void insertion_sort_range(T* data, isize count, LessFn& less) noexcept
 
 // Non-recursive median-of-three quicksort with insertion-sort threshold and tail-call elimination.
 template <typename T, typename LessFn = DefaultLess>
-constexpr void sort(T* data, isize count, LessFn less = LessFn{}) noexcept {
+constexpr void sort(T* data, usize count, LessFn less = LessFn{}) noexcept {
     if (count <= 1) return;
 
     struct Range {
@@ -39,8 +39,8 @@ constexpr void sort(T* data, isize count, LessFn less = LessFn{}) noexcept {
         isize hi;
     };
     Range stack[64]{};
-    isize sp = 0;
-    stack[sp++] = Range{0, count - 1};
+    usize sp = 0;
+    stack[sp++] = Range{0, static_cast<isize>(count - 1)};
 
     while (sp > 0) {
         const Range cur = stack[--sp];
@@ -75,7 +75,7 @@ constexpr void sort(T* data, isize count, LessFn less = LessFn{}) noexcept {
         }
 
         if (hi > lo) {
-            detail::insertion_sort_range(data + lo, hi - lo + 1, less);
+            detail::insertion_sort_range(data + lo, static_cast<usize>(hi - lo + 1), less);
         }
     }
 }
@@ -91,15 +91,15 @@ template <typename R, typename LessFn = DefaultLess>
         r.size();
     }
 constexpr void sort(R& range, LessFn less = LessFn{}) noexcept {
-    keel::sort(range.data(), static_cast<isize>(range.size()), keel::move(less));
+    keel::sort(range.data(), static_cast<usize>(range.size()), keel::move(less));
 }
 
 template <typename T, typename V, typename LessFn = DefaultLess>
-[[nodiscard]] constexpr isize lower_bound(ArrayRef<T> slice, const V& value, LessFn less = LessFn{}) noexcept {
-    isize lo = 0;
-    isize hi = slice.size();
+[[nodiscard]] constexpr usize lower_bound(ArrayRef<T> slice, const V& value, LessFn less = LessFn{}) noexcept {
+    usize lo = 0;
+    usize hi = slice.size();
     while (lo < hi) {
-        const isize mid = lo + ((hi - lo) >> 1);
+        const usize mid = lo + ((hi - lo) >> 1);
         if (less(slice[mid], value)) {
             lo = mid + 1;
         } else {
@@ -110,11 +110,11 @@ template <typename T, typename V, typename LessFn = DefaultLess>
 }
 
 template <typename T, typename V, typename LessFn = DefaultLess>
-[[nodiscard]] constexpr isize upper_bound(ArrayRef<T> slice, const V& value, LessFn less = LessFn{}) noexcept {
-    isize lo = 0;
-    isize hi = slice.size();
+[[nodiscard]] constexpr usize upper_bound(ArrayRef<T> slice, const V& value, LessFn less = LessFn{}) noexcept {
+    usize lo = 0;
+    usize hi = slice.size();
     while (lo < hi) {
-        const isize mid = lo + ((hi - lo) >> 1);
+        const usize mid = lo + ((hi - lo) >> 1);
         if (!less(value, slice[mid])) {
             lo = mid + 1;
         } else {
@@ -126,13 +126,14 @@ template <typename T, typename V, typename LessFn = DefaultLess>
 
 template <typename T, typename V, typename LessFn = DefaultLess>
 [[nodiscard]] constexpr bool binary_search(ArrayRef<T> slice, const V& value, LessFn less = LessFn{}) noexcept {
-    const isize idx = keel::lower_bound(slice, value, less);
+    const usize idx = keel::lower_bound(slice, value, less);
     return idx < slice.size() && !less(value, slice[idx]);
 }
 
 template <typename T> constexpr void reverse(MutArrayRef<T> slice) noexcept {
-    isize i = 0;
-    isize j = slice.size() - 1;
+    if (slice.size() <= 1) return;
+    usize i = 0;
+    usize j = slice.size() - 1;
     while (i < j) {
         keel::swap(slice[i], slice[j]);
         ++i;
@@ -141,7 +142,7 @@ template <typename T> constexpr void reverse(MutArrayRef<T> slice) noexcept {
 }
 
 template <typename T> constexpr void fill(MutArrayRef<T> slice, const T& value) {
-    for (isize i = 0; i < slice.size(); ++i) {
+    for (usize i = 0; i < slice.size(); ++i) {
         slice[i] = value;
     }
 }

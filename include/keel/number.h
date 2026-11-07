@@ -14,14 +14,14 @@ namespace keel {
 [[nodiscard]] Result<f32, ParseError> parse_f32(StringRef str) noexcept;
 
 // Writes integer representation into `buf` (up to `cap` bytes, not null-terminated) and returns length written.
-isize format_i64(char* buf, isize cap, i64 value, int base = 10, bool uppercase = false) noexcept;
-isize format_u64(char* buf, isize cap, u64 value, int base = 10, bool uppercase = false) noexcept;
+usize format_i64(char* buf, usize cap, i64 value, int base = 10, bool uppercase = false) noexcept;
+usize format_u64(char* buf, usize cap, u64 value, int base = 10, bool uppercase = false) noexcept;
 
 // Shortest round-trip formatting of `value` into `buf` (up to `cap` bytes) and returns length written.
-isize format_f64(char* buf, isize cap, f64 value) noexcept;
-isize format_f32(char* buf, isize cap, f32 value) noexcept;
+usize format_f64(char* buf, usize cap, f64 value) noexcept;
+usize format_f32(char* buf, usize cap, f32 value) noexcept;
 
 // Fixed-precision (`%.Nf`) formatting of `value` into `buf`.
-isize format_f64_fixed(char* buf, isize cap, f64 value, int precision) noexcept;
+usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept;
 
 } // namespace keel

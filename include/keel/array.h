@@ -13,7 +13,7 @@ template <typename T> class Array {
 public:
     explicit Array(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
-    static Array with_capacity(isize cap, Allocator* alloc = nullptr) {
+    static Array with_capacity(usize cap, Allocator* alloc = nullptr) {
         Array arr(alloc);
         arr.reserve(cap);
         return arr;
@@ -68,8 +68,8 @@ public:
 
     [[nodiscard]] T* data() noexcept { return m_data; }
     [[nodiscard]] const T* data() const noexcept { return m_data; }
-    [[nodiscard]] isize size() const noexcept { return m_size; }
-    [[nodiscard]] isize capacity() const noexcept { return m_cap; }
+    [[nodiscard]] usize size() const noexcept { return m_size; }
+    [[nodiscard]] usize capacity() const noexcept { return m_cap; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
 
@@ -78,13 +78,13 @@ public:
     [[nodiscard]] T* end() noexcept { return m_data + m_size; }
     [[nodiscard]] const T* end() const noexcept { return m_data + m_size; }
 
-    [[nodiscard]] T& operator[](isize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+    [[nodiscard]] T& operator[](usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
         return m_data[i];
     }
 
-    [[nodiscard]] const T& operator[](isize i) const noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+    [[nodiscard]] const T& operator[](usize i) const noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
         return m_data[i];
     }
 
@@ -108,7 +108,7 @@ public:
         return m_data[m_size - 1];
     }
 
-    void reserve(isize min_cap) {
+    void reserve(usize min_cap) {
         if (min_cap <= m_cap) return;
         reallocate(min_cap);
     }
@@ -127,43 +127,41 @@ public:
 
     void clear() noexcept {
         if constexpr (!IsTriviallyDestructible<T>) {
-            for (isize i = 0; i < m_size; ++i) {
+            for (usize i = 0; i < m_size; ++i) {
                 m_data[i].~T();
             }
         }
         m_size = 0;
     }
 
-    void resize(isize new_size) {
-        KEEL_ASSERT(new_size >= 0);
+    void resize(usize new_size) {
         if (new_size < m_size) {
             if constexpr (!IsTriviallyDestructible<T>) {
-                for (isize i = new_size; i < m_size; ++i) {
+                for (usize i = new_size; i < m_size; ++i) {
                     m_data[i].~T();
                 }
             }
             m_size = new_size;
         } else if (new_size > m_size) {
             ensure_capacity(new_size);
-            for (isize i = m_size; i < new_size; ++i) {
+            for (usize i = m_size; i < new_size; ++i) {
                 ::new (m_data + i) T();
             }
             m_size = new_size;
         }
     }
 
-    void resize(isize new_size, const T& fill_value) {
-        KEEL_ASSERT(new_size >= 0);
+    void resize(usize new_size, const T& fill_value) {
         if (new_size < m_size) {
             if constexpr (!IsTriviallyDestructible<T>) {
-                for (isize i = new_size; i < m_size; ++i) {
+                for (usize i = new_size; i < m_size; ++i) {
                     m_data[i].~T();
                 }
             }
             m_size = new_size;
         } else if (new_size > m_size) {
             ensure_capacity(new_size);
-            for (isize i = m_size; i < new_size; ++i) {
+            for (usize i = m_size; i < new_size; ++i) {
                 ::new (m_data + i) T(fill_value);
             }
             m_size = new_size;
@@ -212,13 +210,13 @@ public:
     }
 
     void append(ArrayRef<T> items) {
-        const isize count = items.size();
+        const usize count = items.size();
         if (count == 0) return;
         ensure_capacity(m_size + count);
         if constexpr (IsTriviallyCopyable<T>) {
-            mem_copy(m_data + m_size, items.data(), static_cast<usize>(count) * sizeof(T));
+            mem_copy(m_data + m_size, items.data(), count * sizeof(T));
         } else {
-            for (isize i = 0; i < count; ++i) {
+            for (usize i = 0; i < count; ++i) {
                 ::new (m_data + m_size + i) T(items[i]);
             }
         }
@@ -226,15 +224,15 @@ public:
     }
 
     // Removes element at index `i`, shifting subsequent elements left (O(N)).
-    void remove_at(isize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
-        const isize tail = m_size - i - 1;
+    void remove_at(usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
+        const usize tail = m_size - i - 1;
         if constexpr (IsTriviallyCopyable<T>) {
             if (tail > 0) {
-                mem_move(m_data + i, m_data + i + 1, static_cast<usize>(tail) * sizeof(T));
+                mem_move(m_data + i, m_data + i + 1, tail * sizeof(T));
             }
         } else {
-            for (isize k = i; k < m_size - 1; ++k) {
+            for (usize k = i; k < m_size - 1; ++k) {
                 m_data[k] = keel::move(m_data[k + 1]);
             }
             m_data[m_size - 1].~T();
@@ -242,9 +240,11 @@ public:
         --m_size;
     }
 
+    void erase(usize i) noexcept { remove_at(i); }
+
     // Removes element at index `i` by moving the last element into its slot (O(1), does not preserve order).
-    void swap_remove(isize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i >= 0 && i < m_size);
+    void swap_remove(usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < m_size);
         --m_size;
         if (i != m_size) {
             m_data[i] = keel::move(m_data[m_size]);
@@ -256,28 +256,27 @@ public:
 
 private:
     void grow_for_one() {
-        const isize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
+        const usize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
         reallocate(new_cap);
     }
 
-    void ensure_capacity(isize needed) {
+    void ensure_capacity(usize needed) {
         if (needed <= m_cap) return;
-        isize new_cap = (m_cap == 0) ? 8 : m_cap;
+        usize new_cap = (m_cap == 0) ? 8 : m_cap;
         while (new_cap < needed) {
             new_cap *= 2;
         }
         reallocate(new_cap);
     }
 
-    void reallocate(isize new_cap) {
+    void reallocate(usize new_cap) {
         if constexpr (IsTriviallyCopyable<T>) {
-            m_data = static_cast<T*>(m_alloc->realloc_bytes(
-                m_data, m_cap * static_cast<isize>(sizeof(T)), new_cap * static_cast<isize>(sizeof(T)),
-                static_cast<isize>(alignof(T))));
+            m_data = static_cast<T*>(
+                m_alloc->realloc_bytes(m_data, m_cap * sizeof(T), new_cap * sizeof(T), alignof(T)));
             m_cap = new_cap;
         } else {
             T* new_data = m_alloc->alloc_array<T>(new_cap);
-            for (isize i = 0; i < m_size; ++i) {
+            for (usize i = 0; i < m_size; ++i) {
                 ::new (new_data + i) T(keel::move(m_data[i]));
                 m_data[i].~T();
             }
@@ -290,8 +289,8 @@ private:
     }
 
     T* m_data = nullptr;
-    isize m_size = 0;
-    isize m_cap = 0;
+    usize m_size = 0;
+    usize m_cap = 0;
     Allocator* m_alloc = nullptr;
 };
 

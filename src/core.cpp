@@ -17,7 +17,7 @@ namespace detail {
     stderr_write(file ? file : "<unknown>");
     stderr_write(":");
     char line_buf[32];
-    const isize n = format_i64(line_buf, sizeof(line_buf), line);
+    const usize n = format_i64(line_buf, sizeof(line_buf), line);
     stderr_write(StringRef(line_buf, n));
     stderr_write("\n");
     stderr_flush();
