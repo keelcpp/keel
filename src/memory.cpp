@@ -155,14 +155,12 @@ Arena::Arena(usize reserve_size) noexcept {
     }
 #elif defined(__EMSCRIPTEN__)
     // On 32-bit WebAssembly, virtual memory reservation without commit is not available;
-    // allocate on demand starting with a modest initial buffer or reserve_size if small.
-    m_committed = min<usize>(m_reserved, 256 * 1024);
+    // allocate the full reserved arena block upfront so pointers remain stable within a frame.
+    m_committed = m_reserved;
     m_base = static_cast<u8*>(std::malloc(m_committed));
     if (!m_base) {
         m_committed = 0;
         m_reserved = 0;
-    } else {
-        m_reserved = m_committed;
     }
 #else
     void* p = mmap(nullptr, m_reserved, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -254,12 +252,13 @@ void* Arena::alloc(usize size, usize align) {
 
     if (new_offset > m_committed) {
         const usize target_commit = min(align_up(new_offset, kCommitGranularity), m_reserved);
-        const usize commit_bytes = target_commit - m_committed;
 #if defined(_WIN32)
+        const usize commit_bytes = target_commit - m_committed;
         if (!VirtualAlloc(m_base + m_committed, static_cast<SIZE_T>(commit_bytes), MEM_COMMIT, PAGE_READWRITE)) {
             handle_oom(size, align);
         }
 #elif !defined(__EMSCRIPTEN__)
+        const usize commit_bytes = target_commit - m_committed;
         if (mprotect(m_base + m_committed, commit_bytes, PROT_READ | PROT_WRITE) != 0) {
             handle_oom(size, align);
         }
@@ -290,12 +289,13 @@ bool Arena::try_extend(void* ptr, usize old_size, usize new_size) noexcept {
     }
     if (new_offset > m_committed) {
         const usize target_commit = min(align_up(new_offset, kCommitGranularity), m_reserved);
-        const usize commit_bytes = target_commit - m_committed;
 #if defined(_WIN32)
+        const usize commit_bytes = target_commit - m_committed;
         if (!VirtualAlloc(m_base + m_committed, static_cast<SIZE_T>(commit_bytes), MEM_COMMIT, PAGE_READWRITE)) {
             return false;
         }
 #elif !defined(__EMSCRIPTEN__)
+        const usize commit_bytes = target_commit - m_committed;
         if (mprotect(m_base + m_committed, commit_bytes, PROT_READ | PROT_WRITE) != 0) {
             return false;
         }
