@@ -407,7 +407,7 @@ int count_decimal_digits(u64 v) noexcept {
 }
 
 usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_val, int num_digits,
-                                i32 exp10) noexcept {
+                                i32 exp10, int max_fixed_exp = 16, bool uppercase = false) noexcept {
     char dig[24];
     for (int i = num_digits - 1; i >= 0; --i) {
         dig[i] = static_cast<char>('0' + (digits_val % 10ULL));
@@ -426,7 +426,7 @@ usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_
     if (negative) out[pos++] = '-';
 
     // Choose fixed vs scientific notation (matching std::to_chars shortest general format)
-    if (sci_exp >= -4 && sci_exp < 16) {
+    if (sci_exp >= -4 && sci_exp < max_fixed_exp) {
         if (exp10 >= 0) {
             for (int i = 0; i < num_digits; ++i) out[pos++] = dig[i];
             for (int i = 0; i < exp10; ++i) out[pos++] = '0';
@@ -447,7 +447,7 @@ usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_
             out[pos++] = '.';
             for (int i = 1; i < num_digits; ++i) out[pos++] = dig[i];
         }
-        out[pos++] = 'e';
+        out[pos++] = uppercase ? 'E' : 'e';
         if (sci_exp >= 0) {
             out[pos++] = '+';
         } else {
@@ -468,6 +468,65 @@ usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_
 }
 
 } // namespace
+
+void decompose_f64_shortest(f64 abs_val, u64 ieee_exp, u64 ieee_mant, u64& out_dec, i32& out_exp10) noexcept {
+    i32 bin_exp = (ieee_exp == 0) ? -1022 : (static_cast<i32>(ieee_exp) - 1023);
+    u64 sig = (ieee_exp == 0) ? ieee_mant : ((1ULL << 52) | ieee_mant);
+    const int lz = countl_zero(sig);
+    bin_exp -= (lz - 11);
+
+    const i32 approx_log10 = ((bin_exp * 78913) >> 18);
+    i32 exp10 = approx_log10 - 16;
+
+    const Fp128 v_fp{sig << lz, 0ULL, (ieee_exp == 0 ? -1074 : static_cast<i32>(ieee_exp) - 1075) + (63 - lz)};
+    const Fp128 scale = compute_pow10(-exp10);
+    const Fp128 scaled = fp128_mul(v_fp, scale);
+
+    u64 dec = 0;
+    if (scaled.exp2 >= 0 && scaled.exp2 <= 63) {
+        const int shift = 63 - scaled.exp2;
+        dec = (shift == 0) ? scaled.hi : (scaled.hi >> shift);
+        if (shift > 0 && ((scaled.hi >> (shift - 1)) & 1ULL) != 0) {
+            ++dec;
+        }
+    }
+
+    const u64 target_bits = f64_to_bits(abs_val);
+    if (f64_to_bits(mantissa_exp10_to_f64(dec, exp10, false, false)) != target_bits) {
+        for (int delta = 1; delta <= 4; ++delta) {
+            if (dec >= static_cast<u64>(delta) &&
+                f64_to_bits(mantissa_exp10_to_f64(dec - delta, exp10, false, false)) == target_bits) {
+                dec -= static_cast<u64>(delta);
+                break;
+            }
+            if (f64_to_bits(mantissa_exp10_to_f64(dec + delta, exp10, false, false)) == target_bits) {
+                dec += static_cast<u64>(delta);
+                break;
+            }
+        }
+    }
+
+    while (dec >= 10ULL) {
+        const u64 q = dec / 10ULL;
+        const u64 r = dec % 10ULL;
+        const u64 rounded = (r >= 5ULL) ? (q + 1ULL) : q;
+        if (f64_to_bits(mantissa_exp10_to_f64(rounded, exp10 + 1, false, false)) == target_bits) {
+            dec = rounded;
+            ++exp10;
+            continue;
+        }
+        const u64 alt = (r >= 5ULL) ? q : (q + 1ULL);
+        if (alt > 0 && f64_to_bits(mantissa_exp10_to_f64(alt, exp10 + 1, false, false)) == target_bits) {
+            dec = alt;
+            ++exp10;
+            continue;
+        }
+        break;
+    }
+
+    out_dec = dec;
+    out_exp10 = exp10;
+}
 
 usize format_f64(char* buf, usize cap, f64 value) noexcept {
     if (cap == 0) return 0;
@@ -494,64 +553,9 @@ usize format_f64(char* buf, usize cap, f64 value) noexcept {
     const f64 abs_val = negative ? -value : value;
 
     // Estimate base-10 exponent k such that abs_val * 10^(-k) is in [10^16, 10^17)
-    i32 bin_exp = (ieee_exp == 0) ? -1022 : (static_cast<i32>(ieee_exp) - 1023);
-    u64 sig = (ieee_exp == 0) ? ieee_mant : ((1ULL << 52) | ieee_mant);
-    const int lz = countl_zero(sig);
-    bin_exp -= (lz - 11);
-
-    // log10(2) ~= 78913 / 262144
-    const i32 approx_log10 = ((bin_exp * 78913) >> 18);
-    i32 exp10 = approx_log10 - 16;
-
-    // Scale `abs_val` into a 17-digit decimal integer `dec17` using our high-precision Fp128 multiplier
-    const Fp128 v_fp{sig << lz, 0ULL, (ieee_exp == 0 ? -1074 : static_cast<i32>(ieee_exp) - 1075) + (63 - lz)};
-    const Fp128 scale = compute_pow10(-exp10);
-    const Fp128 scaled = fp128_mul(v_fp, scale);
-
     u64 dec = 0;
-    if (scaled.exp2 >= 0 && scaled.exp2 <= 63) {
-        const int shift = 63 - scaled.exp2;
-        dec = (shift == 0) ? scaled.hi : (scaled.hi >> shift);
-        if (shift > 0 && ((scaled.hi >> (shift - 1)) & 1ULL) != 0) {
-            ++dec;
-        }
-    }
-
-    // Refine `dec` if needed so `mantissa_exp10_to_f64(dec, exp10)` equals `abs_val`
-    const u64 target_bits = f64_to_bits(abs_val);
-    if (f64_to_bits(mantissa_exp10_to_f64(dec, exp10, false, false)) != target_bits) {
-        for (int delta = 1; delta <= 4; ++delta) {
-            if (dec >= static_cast<u64>(delta) &&
-                f64_to_bits(mantissa_exp10_to_f64(dec - delta, exp10, false, false)) == target_bits) {
-                dec -= static_cast<u64>(delta);
-                break;
-            }
-            if (f64_to_bits(mantissa_exp10_to_f64(dec + delta, exp10, false, false)) == target_bits) {
-                dec += static_cast<u64>(delta);
-                break;
-            }
-        }
-    }
-
-    // Trim digits from `dec` while preserving exact IEEE-754 round-trip to find the shortest representation!
-    while (dec >= 10ULL) {
-        const u64 q = dec / 10ULL;
-        const u64 r = dec % 10ULL;
-        const u64 rounded = (r >= 5ULL) ? (q + 1ULL) : q;
-        if (f64_to_bits(mantissa_exp10_to_f64(rounded, exp10 + 1, false, false)) == target_bits) {
-            dec = rounded;
-            ++exp10;
-            continue;
-        }
-        const u64 alt = (r >= 5ULL) ? q : (q + 1ULL);
-        if (alt > 0 && f64_to_bits(mantissa_exp10_to_f64(alt, exp10 + 1, false, false)) == target_bits) {
-            dec = alt;
-            ++exp10;
-            continue;
-        }
-        break;
-    }
-
+    i32 exp10 = 0;
+    decompose_f64_shortest(abs_val, ieee_exp, ieee_mant, dec, exp10);
     const int num_digits = count_decimal_digits(dec);
     return emit_decimal_sci_or_fixed(buf, cap, negative, dec, num_digits, exp10);
 }
@@ -674,7 +678,7 @@ usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept 
 
     char tmp[64];
     usize pos = 0;
-    if (negative) tmp[pos++] = '-';
+    if (negative && rounded != 0) tmp[pos++] = '-';
     pos += format_u64(tmp + pos, sizeof(tmp) - pos, int_part, 10, false);
 
     if (precision > 0) {
@@ -690,6 +694,53 @@ usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept 
     const usize copy_len = min(pos, cap);
     mem_copy(buf, tmp, copy_len);
     return copy_len;
+}
+
+usize format_f64_general(char* buf, usize cap, f64 value, int precision, bool uppercase) noexcept {
+    if (cap == 0) return 0;
+    if (precision < 0) precision = 6;
+    if (precision == 0) precision = 1;
+    if (precision > 17) precision = 17;
+
+    const u64 bits = f64_to_bits(value);
+    const bool negative = (bits >> 63) != 0;
+    const u64 ieee_exp = (bits >> 52) & 0x7FFULL;
+    const u64 ieee_mant = bits & ((1ULL << 52) - 1ULL);
+
+    if (ieee_exp == 0x7FFULL) {
+        const StringRef s = (ieee_mant != 0)
+                                ? (uppercase ? StringRef("NAN") : StringRef("nan"))
+                                : (negative ? (uppercase ? StringRef("-INF") : StringRef("-inf"))
+                                            : (uppercase ? StringRef("INF") : StringRef("inf")));
+        const usize n = min(s.size(), cap);
+        mem_copy(buf, s.data(), n);
+        return n;
+    }
+
+    if (ieee_exp == 0 && ieee_mant == 0) {
+        buf[0] = '0';
+        return 1;
+    }
+
+    const f64 abs_val = negative ? -value : value;
+    u64 dec = 0;
+    i32 exp10 = 0;
+    decompose_f64_shortest(abs_val, ieee_exp, ieee_mant, dec, exp10);
+
+    int num_digits = count_decimal_digits(dec);
+    if (num_digits > precision) {
+        const int drop = num_digits - precision;
+        u64 div = 1ULL;
+        for (int i = 0; i < drop; ++i) div *= 10ULL;
+        const u64 q = dec / div;
+        const u64 r = dec % div;
+        const u64 half = div / 2ULL;
+        dec = (r > half || (r == half && (q & 1ULL) != 0)) ? (q + 1ULL) : q;
+        exp10 += drop;
+        num_digits = count_decimal_digits(dec);
+    }
+
+    return emit_decimal_sci_or_fixed(buf, cap, negative, dec, num_digits, exp10, precision, uppercase);
 }
 
 } // namespace keel

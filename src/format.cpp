@@ -97,7 +97,14 @@ void format_arg_into(
         break;
     }
     case 'g':
-    case 'G':
+    case 'G': {
+        const f64 v = (arg.kind == FormatArg::Kind::Signed)
+                          ? static_cast<f64>(arg.i_val)
+                          : ((arg.kind == FormatArg::Kind::Unsigned) ? static_cast<f64>(arg.u_val) : arg.f_val);
+        const usize n = format_f64_general(num_buf, sizeof(num_buf), v, precision, spec == 'G');
+        append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
+        break;
+    }
     case 'e':
     case 'E':
     default: {
@@ -134,11 +141,51 @@ void format_arg_into(
     }
 }
 
+bool is_printf_spec(char c) noexcept {
+    switch (c) {
+    case 'd':
+    case 'i':
+    case 'u':
+    case 'x':
+    case 'X':
+    case 'f':
+    case 'F':
+    case 'g':
+    case 'G':
+    case 'e':
+    case 'E':
+    case 's':
+    case 'S':
+    case 'c':
+    case 'p':
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool has_brace_placeholder(StringRef fmt) noexcept {
+    const usize len = fmt.size();
+    for (usize i = 0; i < len; ++i) {
+        if (fmt[i] == '{') {
+            if (i + 1 < len && fmt[i + 1] == '{') {
+                ++i;
+                continue;
+            }
+            for (usize j = i + 1; j < len; ++j) {
+                if (fmt[j] == '}') return true;
+            }
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
     usize arg_idx = 0;
     const usize len = fmt.size();
+    const bool brace_mode = has_brace_placeholder(fmt);
     for (usize i = 0; i < len; ++i) {
         const char ch = fmt[i];
         if (ch == '}') {
@@ -206,7 +253,7 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
             }
         }
 
-        if (ch != '%') {
+        if (ch != '%' || brace_mode) {
             out.push_back(ch);
             continue;
         }
@@ -216,41 +263,44 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
             continue;
         }
 
-        ++i;
+        usize p = i + 1;
         bool zero_pad = false;
         bool plus_sign = false;
-        while (i < len && (fmt[i] == '-' || fmt[i] == '+' || fmt[i] == ' ' || fmt[i] == '#' || fmt[i] == '0')) {
-            if (fmt[i] == '0') zero_pad = true;
-            if (fmt[i] == '+') plus_sign = true;
-            ++i;
+        while (p < len && (fmt[p] == '-' || fmt[p] == '+' || fmt[p] == ' ' || fmt[p] == '#' || fmt[p] == '0')) {
+            if (fmt[p] == '0') zero_pad = true;
+            if (fmt[p] == '+') plus_sign = true;
+            ++p;
         }
 
         int width = 0;
-        while (i < len && fmt[i] >= '0' && fmt[i] <= '9') {
-            width = width * 10 + (fmt[i] - '0');
-            ++i;
+        while (p < len && fmt[p] >= '0' && fmt[p] <= '9') {
+            width = width * 10 + (fmt[p] - '0');
+            ++p;
         }
 
         int precision = -1;
-        if (i < len && fmt[i] == '.') {
-            ++i;
+        if (p < len && fmt[p] == '.') {
+            ++p;
             precision = 0;
-            while (i < len && fmt[i] >= '0' && fmt[i] <= '9') {
-                precision = precision * 10 + (fmt[i] - '0');
-                ++i;
+            while (p < len && fmt[p] >= '0' && fmt[p] <= '9') {
+                precision = precision * 10 + (fmt[p] - '0');
+                ++p;
             }
         }
 
         // Skip optional length modifiers (`l`, `ll`, `z`, `h`, `hh`)
-        while (i < len && (fmt[i] == 'l' || fmt[i] == 'z' || fmt[i] == 'h')) {
-            ++i;
+        while (p < len && (fmt[p] == 'l' || fmt[p] == 'z' || fmt[p] == 'h')) {
+            ++p;
         }
 
-        if (i < len) {
-            const char spec = fmt[i];
+        if (p < len && is_printf_spec(fmt[p])) {
+            const char spec = fmt[p];
             if (arg_idx < args.size()) {
                 format_arg_into(out, spec, width, zero_pad, plus_sign, precision, args[arg_idx++]);
             }
+            i = p;
+        } else {
+            out.push_back('%');
         }
     }
 }
@@ -267,12 +317,11 @@ usize vformat_buf(char* buf, usize cap, StringRef fmt, ArrayRef<FormatArg> args)
 }
 
 StringRef vformat_arena(Arena& arena, StringRef fmt, ArrayRef<FormatArg> args) {
-    String out(arena.allocator());
+    Arena* conflict = &arena;
+    ArenaTemp scratch = get_scratch(&conflict, 1);
+    String out(scratch.allocator());
     vformat_into(out, fmt, args);
-    const usize len = out.size();
-    char* copy = static_cast<char*>(arena.alloc(len + 1, 1));
-    mem_copy(copy, out.c_str(), len + 1);
-    return StringRef(copy, len);
+    return arena.alloc_string(out.as_ref());
 }
 
 void vprint(bool to_stderr, bool newline, StringRef fmt, ArrayRef<FormatArg> args) noexcept {

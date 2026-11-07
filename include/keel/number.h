@@ -24,4 +24,8 @@ usize format_f32(char* buf, usize cap, f32 value) noexcept;
 // Fixed-precision (`%.Nf`) formatting of `value` into `buf`.
 usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept;
 
+// General (`%.Ng` / `{:g}`) formatting of `value` into `buf` with `precision` significant digits
+// and trailing zeros stripped.
+usize format_f64_general(char* buf, usize cap, f64 value, int precision = 6, bool uppercase = false) noexcept;
+
 } // namespace keel

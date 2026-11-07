@@ -581,7 +581,12 @@ void test_algo_and_rtree() {
     const auto fmt1 = format_inplace<64>("{:04d}-{:02d}-{:02d} {:.1f}", 2026, 11, 7, 12.34f);
     TEST_CHECK(fmt1.as_ref() == "2026-11-07 12.3");
     const auto fmt2 = format_inplace<64>("hex: {:04X}, str: {}", 0x2Au, "ok");
-    TEST_CHECK(fmt2.as_ref() == "hex: 002A, str: ok");
+    TEST_CHECK(fmt2.as_ref() == "hex: 002A, str: ok" && format_inplace<64>("{:.3G}", 12340.0).as_ref() == "1.23E+04");
+    const auto fmt_g1 = format_inplace<64>("{:g} %", 0.1 * 0.2);
+    TEST_CHECK(fmt_g1.as_ref() == "0.02 %");
+    const auto fmt_g2 = format_inplace<64>("{:g}", -2.0 + 3.0 * 0.2);
+    TEST_CHECK(fmt_g2.as_ref() == "-1.4");
+    TEST_CHECK(fmt2.as_ref() == "hex: 002A, str: ok" && format_inplace<64>("{:.3G}", 12340.0).as_ref() == "1.23E+04");
     constexpr u64 h_compile = fnv1a64_chars("hello", 5);
     TEST_CHECK(h_compile == fnv1a64_bytes("hello", 5));
 }
