@@ -106,7 +106,14 @@ void format_arg_into(
         break;
     }
     case 'e':
-    case 'E':
+    case 'E': {
+        const f64 v = (arg.kind == FormatArg::Kind::Signed)
+                          ? static_cast<f64>(arg.i_val)
+                          : ((arg.kind == FormatArg::Kind::Unsigned) ? static_cast<f64>(arg.u_val) : arg.f_val);
+        const usize n = format_f64_scientific(num_buf, sizeof(num_buf), v, precision, spec == 'E');
+        append_padded_num(out, num_buf, n, width, zero_pad, plus_sign);
+        break;
+    }
     default: {
         if (arg.kind == FormatArg::Kind::Float) {
             const usize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)

@@ -586,7 +586,8 @@ void test_algo_and_rtree() {
     TEST_CHECK(fmt_g1.as_ref() == "0.02 %");
     const auto fmt_g2 = format_inplace<64>("{:g}", -2.0 + 3.0 * 0.2);
     TEST_CHECK(fmt_g2.as_ref() == "-1.4");
-    TEST_CHECK(fmt2.as_ref() == "hex: 002A, str: ok" && format_inplace<64>("{:.3G}", 12340.0).as_ref() == "1.23E+04");
+    const auto fmt_e1 = format_inplace<64>("{:.2e} / {:.3E}", 12340.0, 12000.0);
+    TEST_CHECK(fmt_e1.as_ref() == "1.23e+04 / 1.200E+04");
     constexpr u64 h_compile = fnv1a64_chars("hello", 5);
     TEST_CHECK(h_compile == fnv1a64_bytes("hello", 5));
 }

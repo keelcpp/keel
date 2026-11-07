@@ -743,4 +743,98 @@ usize format_f64_general(char* buf, usize cap, f64 value, int precision, bool up
     return emit_decimal_sci_or_fixed(buf, cap, negative, dec, num_digits, exp10, precision, uppercase);
 }
 
+usize format_f64_scientific(char* buf, usize cap, f64 value, int precision, bool uppercase) noexcept {
+    if (cap == 0) return 0;
+    if (precision < 0) precision = 6;
+    if (precision > 16) precision = 16;
+
+    const u64 bits = f64_to_bits(value);
+    const bool negative = (bits >> 63) != 0;
+    const u64 ieee_exp = (bits >> 52) & 0x7FFULL;
+    const u64 ieee_mant = bits & ((1ULL << 52) - 1ULL);
+
+    if (ieee_exp == 0x7FFULL) {
+        const StringRef s = (ieee_mant != 0)
+                                ? (uppercase ? StringRef("NAN") : StringRef("nan"))
+                                : (negative ? (uppercase ? StringRef("-INF") : StringRef("-inf"))
+                                            : (uppercase ? StringRef("INF") : StringRef("inf")));
+        const usize n = min(s.size(), cap);
+        mem_copy(buf, s.data(), n);
+        return n;
+    }
+
+    char out[64];
+    usize pos = 0;
+
+    if (ieee_exp == 0 && ieee_mant == 0) {
+        out[pos++] = '0';
+        if (precision > 0) {
+            out[pos++] = '.';
+            for (int i = 0; i < precision; ++i) out[pos++] = '0';
+        }
+        out[pos++] = uppercase ? 'E' : 'e';
+        out[pos++] = '+';
+        out[pos++] = '0';
+        out[pos++] = '0';
+        const usize copy_len = min(pos, cap);
+        mem_copy(buf, out, copy_len);
+        return copy_len;
+    }
+
+    if (negative) out[pos++] = '-';
+
+    const f64 abs_val = negative ? -value : value;
+    u64 dec = 0;
+    i32 exp10 = 0;
+    decompose_f64_shortest(abs_val, ieee_exp, ieee_mant, dec, exp10);
+
+    const int sig_digits = precision + 1;
+    int num_digits = count_decimal_digits(dec);
+    if (num_digits > sig_digits) {
+        const int drop = num_digits - sig_digits;
+        u64 div = 1ULL;
+        for (int i = 0; i < drop; ++i) div *= 10ULL;
+        const u64 q = dec / div;
+        const u64 r = dec % div;
+        const u64 half = div / 2ULL;
+        dec = (r > half || (r == half && (q & 1ULL) != 0)) ? (q + 1ULL) : q;
+        exp10 += drop;
+        num_digits = count_decimal_digits(dec);
+        if (num_digits > sig_digits) {
+            dec /= 10ULL;
+            ++exp10;
+            num_digits = sig_digits;
+        }
+    }
+
+    char dig[24];
+    u64 tmp_dec = dec;
+    for (int i = num_digits - 1; i >= 0; --i) {
+        dig[i] = static_cast<char>('0' + (tmp_dec % 10ULL));
+        tmp_dec /= 10ULL;
+    }
+
+    const i32 sci_exp = exp10 + num_digits - 1;
+    out[pos++] = dig[0];
+    if (precision > 0) {
+        out[pos++] = '.';
+        for (int i = 1; i <= precision; ++i) {
+            out[pos++] = (i < num_digits) ? dig[i] : '0';
+        }
+    }
+    out[pos++] = uppercase ? 'E' : 'e';
+    out[pos++] = (sci_exp >= 0) ? '+' : '-';
+    const u32 abs_exp = static_cast<u32>(sci_exp >= 0 ? sci_exp : -sci_exp);
+    if (abs_exp < 10) {
+        out[pos++] = '0';
+        out[pos++] = static_cast<char>('0' + abs_exp);
+    } else {
+        pos += format_u64(out + pos, sizeof(out) - pos, abs_exp, 10, false);
+    }
+
+    const usize copy_len = min(pos, cap);
+    mem_copy(buf, out, copy_len);
+    return copy_len;
+}
+
 } // namespace keel

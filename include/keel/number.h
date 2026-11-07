@@ -28,4 +28,7 @@ usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept;
 // and trailing zeros stripped.
 usize format_f64_general(char* buf, usize cap, f64 value, int precision = 6, bool uppercase = false) noexcept;
 
+// Scientific (`%.Ne` / `{:e}`) formatting of `value` into `buf` with `precision` digits after the decimal point.
+usize format_f64_scientific(char* buf, usize cap, f64 value, int precision = 6, bool uppercase = false) noexcept;
+
 } // namespace keel
