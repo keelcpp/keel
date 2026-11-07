@@ -590,6 +590,36 @@ void test_algo_and_rtree() {
     TEST_CHECK(fmt_e1.as_ref() == "1.23e+04 / 1.200E+04");
     constexpr u64 h_compile = fnv1a64_chars("hello", 5);
     TEST_CHECK(h_compile == fnv1a64_bytes("hello", 5));
+
+    // Verify format_arena allocates exact size (zero intermediate reallocation waste in target arena)
+    // and avoids conflict when target arena is itself a thread-local scratch arena
+    {
+        Arena exact_arena;
+        const StringRef long_sv = format_arena(
+            exact_arena,
+            "Long string exceeding initial 15-byte String capacity: [0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ] {}",
+            42);
+        TEST_CHECK(exact_arena.used() == long_sv.size() + 1);
+
+        ArenaTemp scratch = get_scratch();
+        const usize before = scratch.arena().used();
+        const StringRef scratch_sv = format_arena(scratch.arena(), "Scratch-backed format: {} {:g}%", "ok", 12.5);
+        TEST_CHECK(scratch.arena().used() == before + scratch_sv.size() + 1);
+        TEST_CHECK(scratch_sv == "Scratch-backed format: ok 12.5%");
+
+        // Verify path_normalize, fs_current_dir, and fs_exe_path do not rewind caller's scratch arena
+        String norm_in_scratch = path_normalize("a/b/../c/./d/e/f", scratch.allocator());
+        TEST_CHECK(scratch.arena().used() > before + scratch_sv.size() + 1);
+        TEST_CHECK(norm_in_scratch.as_ref() == "a/c/d/e/f");
+
+        auto cwd_res = fs_current_dir(scratch.allocator());
+        TEST_CHECK(cwd_res.is_ok() && !cwd_res.value().empty());
+        auto exe_res = fs_exe_path(scratch.allocator());
+        TEST_CHECK(exe_res.is_ok() && !exe_res.value().empty());
+        // Earlier allocations in `scratch` must remain untouched
+        TEST_CHECK(norm_in_scratch.as_ref() == "a/c/d/e/f");
+        TEST_CHECK(scratch_sv == "Scratch-backed format: ok 12.5%");
+    }
 }
 
 } // namespace

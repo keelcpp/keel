@@ -394,4 +394,12 @@ ArenaTemp get_scratch(Arena* const* conflicts, usize conflict_count) noexcept {
     return pool.arenas[0].begin_temp();
 }
 
+ArenaTemp get_scratch(const Allocator* conflict_alloc) noexcept {
+    if (conflict_alloc && conflict_alloc->ctx) {
+        Arena* conflict = static_cast<Arena*>(conflict_alloc->ctx);
+        return get_scratch(&conflict, 1);
+    }
+    return get_scratch(nullptr, 0);
+}
+
 } // namespace keel

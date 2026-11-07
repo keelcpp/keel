@@ -180,6 +180,7 @@ inline Allocator* ArenaTemp::allocator() const noexcept {
 
 // Thread-local scratch arena acquisition with conflict avoidance (ping-pong between 2 thread-local arenas)
 [[nodiscard]] ArenaTemp get_scratch(Arena* const* conflicts = nullptr, usize conflict_count = 0) noexcept;
+[[nodiscard]] ArenaTemp get_scratch(const Allocator* conflict_alloc) noexcept;
 
 namespace detail {
 

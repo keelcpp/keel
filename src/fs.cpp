@@ -151,7 +151,7 @@ void path_normalize_into(String& out, StringRef path) {
         return;
     }
 
-    ArenaTemp scratch = get_scratch();
+    ArenaTemp scratch = get_scratch(out.allocator());
     SmallArray<StringRef, 32> parts(scratch.allocator());
 
     StringRef prefix{};
@@ -437,7 +437,7 @@ Result<String> fs_current_dir(Allocator* alloc) {
 #if defined(_WIN32)
     const DWORD needed = GetCurrentDirectoryW(0, nullptr);
     if (needed == 0) return detail::win32_error_to_keel(GetLastError());
-    ArenaTemp scratch = get_scratch();
+    ArenaTemp scratch = get_scratch(alloc);
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
     wbuf.reserve(static_cast<usize>(needed) + 1);
     const DWORD len = GetCurrentDirectoryW(needed, wbuf.data());
@@ -472,7 +472,7 @@ Result<String> fs_temp_dir(Allocator* alloc) {
 
 Result<String> fs_exe_path(Allocator* alloc) {
 #if defined(_WIN32)
-    ArenaTemp scratch = get_scratch();
+    ArenaTemp scratch = get_scratch(alloc);
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
     DWORD cap = 260;
     for (;;) {
@@ -489,7 +489,7 @@ Result<String> fs_exe_path(Allocator* alloc) {
 #elif defined(__APPLE__)
     uint32_t sz = 0;
     _NSGetExecutablePath(nullptr, &sz);
-    ArenaTemp scratch = get_scratch();
+    ArenaTemp scratch = get_scratch(alloc);
     String buf(scratch.allocator());
     buf.resize(static_cast<usize>(sz));
     if (_NSGetExecutablePath(buf.data(), &sz) != 0) {
@@ -526,17 +526,17 @@ Error fs_read_dir(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callbac
         return detail::win32_error_to_keel(err);
     }
 
-    String name_str(scratch.allocator());
-    String full_str(scratch.allocator());
     do {
         if (fdata.cFileName[0] == L'.' &&
             (fdata.cFileName[1] == L'\0' || (fdata.cFileName[1] == L'.' && fdata.cFileName[2] == L'\0'))) {
             continue;
         }
+        ArenaTemp iter_scratch = scratch.arena().begin_temp();
+        String name_str(iter_scratch.allocator());
+        String full_str(iter_scratch.allocator());
         usize wlen = 0;
         while (fdata.cFileName[wlen] != L'\0') ++wlen;
         detail::win32_wide_to_utf8_path(fdata.cFileName, wlen, name_str);
-        full_str.clear();
         path_join_into(full_str, dir_path, name_str);
 
         DirEntry entry{};
@@ -560,12 +560,12 @@ Error fs_read_dir(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callbac
         return detail::errno_to_keel(errno);
     }
 
-    String full_str(scratch.allocator());
     while (struct dirent* ent = ::readdir(dir)) {
         const StringRef name(ent->d_name);
         if (name == "." || name == "..") continue;
 
-        full_str.clear();
+        ArenaTemp iter_scratch = scratch.arena().begin_temp();
+        String full_str(iter_scratch.allocator());
         path_join_into(full_str, dir_path, name);
 
         DirEntry entry{};
