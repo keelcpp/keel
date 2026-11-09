@@ -27,15 +27,16 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | `keel/result.h` | `Result<T, E>`, `KEEL_TRY`, `KEEL_TRY_ASSIGN` |
 | `keel/optional.h` | Trivially-copyable `Optional<T>` and zero-size-overhead `SentinelOptional<T, Sentinel>` |
 | `keel/function_ref.h` | 16-byte non-owning `FunctionRef<R(Args...)>` |
-| `keel/function.h` | Move-only inline `Function<R(Args...), N>` with zero heap allocations |
+| `keel/function.h` | Move-only inline `FixedFunction<R(Args...), N>` with zero heap allocations |
 | `keel/array.h` | Move-only dynamic `Array<T>` (`push_back`, `remove_at`, `swap_remove`, `clone`) |
-| `keel/small_array.h` | `InplaceArray<T, N>` and small-buffer optimized `SmallArray<T, N>` |
+| `keel/small_array.h` | `FixedArray<T, N>` and small-buffer optimized `SmallArray<T, N>` |
+| `keel/ring.h` | `FixedRing<T, N>`, `SmallRing<T, N>`, and power-of-two circular `Ring<T>` (`Deque<T>`) |
 | `keel/hash_map.h` | Flat open-addressed `HashMap<K, V>` with 1-byte metadata tags & heterogeneous lookup |
 | `keel/hash_set.h` | Flat open-addressed `HashSet<K>` |
-| `keel/string.h` | Move-only null-terminated UTF-8 `String` (`String::from`, `c_str()`, string builder ops) |
+| `keel/string.h` | `FixedString<N>`, `SmallString<N>`, and move-only UTF-8 `String` (`String::from`, `c_str()`) |
 | `keel/utf8.h` | `utf8_validate`, `utf8_decode_next`, `utf8_encode`, `utf8_codepoint_count` |
 | `keel/number.h` | Locale-independent integer & shortest round-trip IEEE-754 float/double parsing & formatting |
-| `keel/format.h` | Type-safe printf-style `format`, `format_into`, `format_arena`, `format_buf`, `print`, `println` |
+| `keel/format.h` | Type-safe `format`, `format_small`, `format_fixed`, `format_into`, `format_arena`, `format_buf`, `print` |
 | `keel/fs.h` | UTF-8 path manipulation (`path_join`, `path_normalize`, etc.) and OS filesystem operations |
 | `keel/io.h` | Move-only `File` with sticky write errors and console I/O |
 | `keel/interop_std.h` | Opt-in conversions to `std::string`, `std::string_view`, `std::vector`, `std::span`, `std::optional` |

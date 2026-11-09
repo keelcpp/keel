@@ -51,7 +51,10 @@ struct FormatArg {
     constexpr FormatArg(StringRef s) noexcept : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
     FormatArg(const String& s) noexcept : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
     template <usize N>
-    constexpr FormatArg(const InplaceString<N>& s) noexcept
+    FormatArg(const SmallString<N>& s) noexcept
+        : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
+    template <usize N>
+    constexpr FormatArg(const FixedString<N>& s) noexcept
         : kind(Kind::StringRef), cstr_val(s.data()), str_len(s.size()) {}
 
     template <typename R>
@@ -70,7 +73,7 @@ struct FormatArg {
     constexpr FormatArg(decltype(nullptr)) noexcept : kind(Kind::Pointer), ptr_val(nullptr) {}
 };
 
-// Low-level type-erased printf-like formatter (`%d`, `%u`, `%x`, `%X`, `%f`, `%.2f`, `%g`, `%s`, `%S`, `%c`, `%p`, `%%`)
+// Low-level type-erased printf/brace formatter (`%d`, `%u`, `%x`, `%X`, `%f`, `%.2f`, `%g`, `%s`, `%S`, `%c`, `%p`, `{}`)
 void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args);
 usize vformat_buf(char* buf, usize cap, StringRef fmt, ArrayRef<FormatArg> args) noexcept;
 StringRef vformat_arena(Arena& arena, StringRef fmt, ArrayRef<FormatArg> args);
@@ -113,14 +116,14 @@ template <usize N, typename... Args>
 }
 
 template <usize N, typename... Args>
-void format_into(InplaceString<N>& out, StringRef fmt, const Args&... args) noexcept {
+void format_into(FixedString<N>& out, StringRef fmt, const Args&... args) noexcept {
     const usize len = format_buf(out.inline_buffer(), N, fmt, args...);
     out.set_inline_size(len);
 }
 
 template <usize N = 64, typename... Args>
-[[nodiscard]] InplaceString<N> format_inplace(StringRef fmt, const Args&... args) noexcept {
-    InplaceString<N> out;
+[[nodiscard]] FixedString<N> format_fixed(StringRef fmt, const Args&... args) noexcept {
+    FixedString<N> out;
     format_into(out, fmt, args...);
     return out;
 }
@@ -132,6 +135,20 @@ template <typename... Args> [[nodiscard]] StringRef format_arena(Arena& arena, S
         const FormatArg arg_array[] = {FormatArg(args)...};
         return vformat_arena(arena, fmt, ArrayRef<FormatArg>(arg_array, sizeof...(Args)));
     }
+}
+
+template <usize N, typename... Args>
+void format_into(SmallString<N>& out, StringRef fmt, const Args&... args) {
+    ArenaTemp scratch = get_scratch(out.allocator());
+    const StringRef sv = format_arena(scratch.arena(), fmt, args...);
+    out.append(sv);
+}
+
+template <usize N = 64, typename... Args>
+[[nodiscard]] SmallString<N> format_small(StringRef fmt, const Args&... args) {
+    SmallString<N> out;
+    format_into(out, fmt, args...);
+    return out;
 }
 
 void vprint(bool to_stderr, bool newline, StringRef fmt, ArrayRef<FormatArg> args) noexcept;

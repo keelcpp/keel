@@ -35,7 +35,11 @@ keel сознательно не выглядит как std: другой ст�
 | Значения перечислений | `PascalCase` в `enum class` | `ErrorCode::NotFound` |
 | Макросы | `UPPER_CASE` с префиксом | `KEEL_ASSERT`, `KEEL_TRY_ASSIGN` |
 
-**Пары «взгляд — владелец»:** `XRef` — невладеющий взгляд на `X`. `StringRef`/`String`, `ArrayRef<T>`/`Array<T>`, `FunctionRef<Sig>`/`Function<Sig, N>`. Где возможно, параметры помечаются `KEEL_LIFETIMEBOUND` (`[[clang::lifetimebound]]` / `[[msvc::lifetimebound]]`).
+**Уровни владения и размещения памяти (`*Ref` / `Fixed*` / `Small*` / `<Base>`):**
+- `*Ref` — невладеющий взгляд (`StringRef`, `ArrayRef<T>`, `MutArrayRef<T>`, `FunctionRef<Sig>`). Где возможно, параметры помечаются `KEEL_LIFETIMEBOUND` (`[[clang::lifetimebound]]` / `[[msvc::lifetimebound]]`).
+- `Fixed*<N>` — строго фиксированный буфер на стеке без единого обращения к аллокатору (`FixedString<N>`, `FixedArray<T, N>`, `FixedRing<T, N>`, `FixedFunction<Sig, N>`).
+- `Small*<N>` — инлайн-буфер на стеке до `N` элементов с автоматическим переходом в `Allocator*` при превышении `N` (`SmallString<N>`, `SmallArray<T, N>`, `SmallRing<T, N>`).
+- Базовое имя без префикса — динамический буфер в `Allocator*` (`String`, `Array<T>`, `Ring<T>`, `HashMap<K, V>`, `HashSet<K>`).
 
 **Глаголы методов:** если смысл операции такой же, как в std, — глагол из std; если другой — другой глагол.
 
@@ -89,9 +93,9 @@ keel сознательно не выглядит как std: другой ст�
 | core | типы `i8`…`u64`, `f32`/`f64`, `isize`; `KEEL_ASSERT`, `KEEL_TRY`, `KEEL_TRY_ASSIGN`; `move`/`forward`; трейты на встроенных функциях компилятора; битовые операции; хеш |  |  |
 | memory | `Allocator`, куча по умолчанию, обработчик нехватки памяти, `Arena`, scratch-арены | `Pool<T>` + `Handle` |  |
 | vocabulary | `Optional<T>` и вариант с сентинелом, `Result<T>`, `Error`, `StringRef`, `ArrayRef<T>`, `FunctionRef<Sig>` |  |  |
-| containers | `Array<T>`, `SmallArray<T, N>`, `InplaceArray<T, N>`, `HashMap<K, V>`, `HashSet<K>` | `RingBuffer<T>`, `BitArray` |  |
-| text | `String`, операции над `StringRef`, UTF-8, числа без локали, `Format`/`Print` |  |  |
-| functional |  | `Function<Sig, N>` (`N = 32` по умолчанию) |  |
+| containers | `Array<T>`, `SmallArray<T, N>`, `FixedArray<T, N>`, `HashMap<K, V>`, `HashSet<K>` | `Ring<T>`, `SmallRing<T, N>`, `FixedRing<T, N>` |  |
+| text | `String`, `SmallString<N>`, `FixedString<N>`, операции над `StringRef`, UTF-8, числа без локали, `Format`/`Print` |  |  |
+| functional |  | `FixedFunction<Sig, N>` (`N = 32` по умолчанию) |  |
 | fs | пути и операции |  | слежение за изменениями |
 | io | `File`, консоль |  |  |
 | algo |  | сортировка, бинарный поиск |  |

@@ -61,3 +61,15 @@ template <> struct std::hash<keel::String> {
         return static_cast<std::size_t>(keel::Hash<keel::String>{}(s));
     }
 };
+
+template <keel::usize N> struct std::hash<keel::SmallString<N>> {
+    std::size_t operator()(const keel::SmallString<N>& s) const noexcept {
+        return static_cast<std::size_t>(keel::Hash<keel::SmallString<N>>{}(s));
+    }
+};
+
+template <keel::usize N> struct std::hash<keel::FixedString<N>> {
+    std::size_t operator()(const keel::FixedString<N>& s) const noexcept {
+        return static_cast<std::size_t>(keel::Hash<keel::FixedString<N>>{}(s));
+    }
+};

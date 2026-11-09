@@ -4,23 +4,23 @@
 
 namespace keel {
 
-template <typename Sig, usize N = 32> class Function;
+template <typename Sig, usize N = 32> class FixedFunction;
 
 // Move-only owning callable with fixed inline buffer N bytes and zero heap allocations.
-template <typename R, typename... Args, usize N> class Function<R(Args...), N> {
-    static_assert(N >= sizeof(void*), "Function inline buffer must hold at least one pointer");
+template <typename R, typename... Args, usize N> class FixedFunction<R(Args...), N> {
+    static_assert(N >= sizeof(void*), "FixedFunction inline buffer must hold at least one pointer");
 
 public:
-    Function() noexcept = default;
-    Function(decltype(nullptr)) noexcept {}
+    FixedFunction() noexcept = default;
+    FixedFunction(decltype(nullptr)) noexcept {}
 
     template <typename F>
-        requires(!IsSame<RemoveCvRef<F>, Function>) && requires(RemoveCvRef<F>& f, Args&&... args) {
+        requires(!IsSame<RemoveCvRef<F>, FixedFunction>) && requires(RemoveCvRef<F>& f, Args&&... args) {
             { static_cast<R>(f(keel::forward<Args>(args)...)) };
         }
-    Function(F&& callable) noexcept {
+    FixedFunction(F&& callable) noexcept {
         using Decayed = RemoveCvRef<F>;
-        static_assert(sizeof(Decayed) <= N, "Callable capture exceeds Function<Sig, N> inline buffer size");
+        static_assert(sizeof(Decayed) <= N, "Callable capture exceeds FixedFunction<Sig, N> inline buffer size");
         static_assert(alignof(Decayed) <= alignof(std::max_align_t), "Callable alignment exceeds max_align_t");
         static_assert(IsNothrowMoveConstructible<Decayed>, "Callable must be noexcept move constructible");
         static_assert(IsNothrowDestructible<Decayed>, "Callable must be noexcept destructible");
@@ -29,12 +29,12 @@ public:
         m_ops = &ops_for<Decayed>();
     }
 
-    ~Function() noexcept { reset(); }
+    ~FixedFunction() noexcept { reset(); }
 
-    Function(const Function&) = delete;
-    Function& operator=(const Function&) = delete;
+    FixedFunction(const FixedFunction&) = delete;
+    FixedFunction& operator=(const FixedFunction&) = delete;
 
-    Function(Function&& other) noexcept {
+    FixedFunction(FixedFunction&& other) noexcept {
         if (other.m_ops) {
             other.m_ops->move_and_destroy(m_storage, other.m_storage);
             m_ops = other.m_ops;
@@ -42,7 +42,7 @@ public:
         }
     }
 
-    Function& operator=(Function&& other) noexcept {
+    FixedFunction& operator=(FixedFunction&& other) noexcept {
         if (this != &other) {
             reset();
             if (other.m_ops) {
@@ -54,7 +54,7 @@ public:
         return *this;
     }
 
-    Function& operator=(decltype(nullptr)) noexcept {
+    FixedFunction& operator=(decltype(nullptr)) noexcept {
         reset();
         return *this;
     }

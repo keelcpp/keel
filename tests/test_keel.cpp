@@ -187,42 +187,61 @@ void test_vocabulary() {
     TEST_CHECK(sp.found && sp.first == "hello" && sp.second == "world.txt");
     TEST_CHECK(StringRef("AbCd").equals_ignore_ascii_case("abcd"));
 
-    // InplaceString<N> (zero-heap, Rule-of-Zero hybrid static/inline string)
+    // FixedString<N> (zero-heap, Rule-of-Zero pure stack string) & SmallString<N> (SSO + Allocator fallback)
     {
-        static_assert(IsTriviallyCopyable<InplaceString<64>>);
-        constexpr const char* kLiteral = "Static Command";
-        constexpr InplaceString<64> s_lit(kLiteral);
-        TEST_CHECK(s_lit.is_static());
-        TEST_CHECK(s_lit.data() == kLiteral);
+        static_assert(IsTriviallyCopyable<FixedString<64>>);
+        constexpr FixedString<64> s_lit("Static Command");
         TEST_CHECK(s_lit.size() == 14);
         TEST_CHECK(s_lit == "Static Command");
 
-        InplaceString<64> s_inline(StringRef("Dynamic Value"));
-        TEST_CHECK(!s_inline.is_static());
-        TEST_CHECK(s_inline == "Dynamic Value");
-        TEST_CHECK(std::strcmp(s_inline.c_str(), "Dynamic Value") == 0);
+        FixedString<64> s_fixed(StringRef("Dynamic Value"));
+        TEST_CHECK(s_fixed == "Dynamic Value");
+        TEST_CHECK(std::strcmp(s_fixed.c_str(), "Dynamic Value") == 0);
 
         // Rule of Zero copy must not alias source inline buffer
-        InplaceString<64> s_copy = s_inline;
-        TEST_CHECK(s_copy.data() != s_inline.data());
-        s_inline = StringRef("Mutated");
+        FixedString<64> s_copy = s_fixed;
+        TEST_CHECK(s_copy.data() != s_fixed.data());
+        s_fixed = StringRef("Mutated");
         TEST_CHECK(s_copy == "Dynamic Value");
-        TEST_CHECK(s_inline == "Mutated");
+        TEST_CHECK(s_fixed == "Mutated");
 
-        InplaceString<32> s_fmt = format_inplace<32>("Ch %d: %.1f dB", 2, -6.5);
+        // Truncation at N - 1
+        FixedString<8> s_trunc("0123456789");
+        TEST_CHECK(s_trunc.size() == 7 && s_trunc.full() && s_trunc == "0123456");
+
+        FixedString<32> s_fmt = format_fixed<32>("Ch %d: %.1f dB", 2, -6.5);
         TEST_CHECK(s_fmt == "Ch 2: -6.5 dB");
+
+        // SmallString<N>: inline up to N - 1, spills to Allocator when size >= N
+        SmallString<16> sm("short");
+        TEST_CHECK(sm.is_inline() && sm.size() == 5 && sm == "short");
+        SmallString<16> sm_moved_inline = keel::move(sm);
+        TEST_CHECK(sm.empty() && sm_moved_inline.is_inline() && sm_moved_inline == "short");
+
+        // Self-aliasing append across inline-to-heap boundary
+        sm_moved_inline.append("_0123456789_overflow");
+        TEST_CHECK(!sm_moved_inline.is_inline());
+        TEST_CHECK(sm_moved_inline == "short_0123456789_overflow");
+        sm_moved_inline.append(sm_moved_inline.substr(0, 5));
+        TEST_CHECK(sm_moved_inline == "short_0123456789_overflowshort");
+
+        SmallString<16> sm_cloned = sm_moved_inline.clone();
+        TEST_CHECK(!sm_cloned.is_inline() && sm_cloned == sm_moved_inline);
+
+        SmallString<32> sm_fmt = format_small<32>("Small {}: {}", "ok", 42);
+        TEST_CHECK(sm_fmt.is_inline() && sm_fmt == "Small ok: 42");
     }
 
-    // FunctionRef & Function<Sig, N>
+    // FunctionRef & FixedFunction<Sig, N>
     int multiplier = 3;
     auto lam = [&](int v) { return v * multiplier; };
     FunctionRef<int(int)> fref(lam);
     TEST_CHECK(fref(7) == 21);
 
-    Function<int(int), 32> fn([multiplier](int v) noexcept { return v + multiplier; });
+    FixedFunction<int(int), 32> fn([multiplier](int v) noexcept { return v + multiplier; });
     TEST_CHECK(static_cast<bool>(fn));
     TEST_CHECK(fn(10) == 13);
-    Function<int(int), 32> fn_moved = keel::move(fn);
+    FixedFunction<int(int), 32> fn_moved = keel::move(fn);
     TEST_CHECK(!static_cast<bool>(fn));
     TEST_CHECK(fn_moved(10) == 13);
 }
@@ -250,7 +269,7 @@ void test_containers() {
     }
     TEST_CHECK(TrackedObj::live_count == 0);
 
-    // SmallArray & InplaceArray
+    // SmallArray & FixedArray
     SmallArray<int, 4> small;
     for (int i = 0; i < 4; ++i) small.push_back(i * 10);
     TEST_CHECK(small.is_inline());
@@ -260,6 +279,13 @@ void test_containers() {
     TEST_CHECK(small.size() == 5 && small[4] == 0);
     SmallArray<int, 4> small_copy = small.clone();
     TEST_CHECK(small_copy.size() == 5 && small_copy[3] == 30);
+
+    FixedArray<int, 4> fixed_arr;
+    TEST_CHECK(fixed_arr.try_push_back(10) && fixed_arr.try_push_back(20));
+    fixed_arr.push_back(30);
+    fixed_arr.push_back(40);
+    TEST_CHECK(fixed_arr.full() && !fixed_arr.try_push_back(50));
+    TEST_CHECK(fixed_arr.front() == 10 && fixed_arr.back() == 40);
 
     // HashMap & HashSet with heterogeneous StringRef lookup
     HashMap<String, int> map;
@@ -452,9 +478,13 @@ void test_std_interop() {
     std::string_view sv_from_str = k_str;
     TEST_CHECK(sv_from_str == "keel::String");
 
-    InplaceString<32> k_inp("keel::InplaceString");
+    FixedString<32> k_inp("keel::FixedString");
     std::string_view sv_from_inp = k_inp;
-    TEST_CHECK(sv_from_inp == "keel::InplaceString");
+    TEST_CHECK(sv_from_inp == "keel::FixedString");
+
+    SmallString<32> k_sm("keel::SmallString");
+    std::string_view sv_from_sm = k_sm;
+    TEST_CHECK(sv_from_sm == "keel::SmallString");
 
     std::string roundtrip = to_std_string(ref_from_std);
     TEST_CHECK(roundtrip == std_s);
@@ -551,8 +581,8 @@ void test_algo_and_rtree() {
     });
     TEST_CHECK(count3d == 1 && hit3d == (3 * 16 + 2 * 4 + 1));
 
-    // RingBuffer / Deque
-    RingBuffer<int> rb;
+    // Ring, SmallRing, FixedRing
+    Ring<int> rb;
     for (int i = 0; i < 20; ++i) {
         rb.push_back(i * 10);
     }
@@ -564,6 +594,23 @@ void test_algo_and_rtree() {
     rb.push_front(40);
     rb.push_front(30);
     TEST_CHECK(rb.size() == 17 && rb.front() == 30 && rb[1] == 40 && rb[2] == 50);
+
+    FixedRing<int, 3> fring;
+    fring.push_back_overwrite(1);
+    fring.push_back_overwrite(2);
+    fring.push_back_overwrite(3);
+    TEST_CHECK(fring.full() && fring.front() == 1 && fring.back() == 3);
+    fring.push_back_overwrite(4);
+    TEST_CHECK(fring.full() && fring.front() == 2 && fring[1] == 3 && fring.back() == 4);
+
+    SmallRing<int, 4> sring;
+    for (int i = 0; i < 4; ++i) sring.push_back(i + 1);
+    TEST_CHECK(sring.is_inline() && sring.size() == 4);
+    sring.pop_front();
+    sring.push_back(5);
+    TEST_CHECK(sring.is_inline() && sring.front() == 2 && sring.back() == 5);
+    sring.push_back(6);
+    TEST_CHECK(!sring.is_inline() && sring.size() == 5 && sring[0] == 2 && sring[4] == 6);
 
     // UTF-8 boundary, word navigation & case-insensitive search
     const StringRef text = "Привет, Мир!";
@@ -578,15 +625,15 @@ void test_algo_and_rtree() {
     TEST_CHECK(m_pos == 14 && m_len == 6);
 
     // Brace-style {} and zero-padded formatting + FNV-1a
-    const auto fmt1 = format_inplace<64>("{:04d}-{:02d}-{:02d} {:.1f}", 2026, 11, 7, 12.34f);
+    const auto fmt1 = format_fixed<64>("{:04d}-{:02d}-{:02d} {:.1f}", 2026, 11, 7, 12.34f);
     TEST_CHECK(fmt1.as_ref() == "2026-11-07 12.3");
-    const auto fmt2 = format_inplace<64>("hex: {:04X}, str: {}", 0x2Au, "ok");
-    TEST_CHECK(fmt2.as_ref() == "hex: 002A, str: ok" && format_inplace<64>("{:.3G}", 12340.0).as_ref() == "1.23E+04");
-    const auto fmt_g1 = format_inplace<64>("{:g} %", 0.1 * 0.2);
+    const auto fmt2 = format_fixed<64>("hex: {:04X}, str: {}", 0x2Au, "ok");
+    TEST_CHECK(fmt2.as_ref() == "hex: 002A, str: ok" && format_fixed<64>("{:.3G}", 12340.0).as_ref() == "1.23E+04");
+    const auto fmt_g1 = format_fixed<64>("{:g} %", 0.1 * 0.2);
     TEST_CHECK(fmt_g1.as_ref() == "0.02 %");
-    const auto fmt_g2 = format_inplace<64>("{:g}", -2.0 + 3.0 * 0.2);
+    const auto fmt_g2 = format_fixed<64>("{:g}", -2.0 + 3.0 * 0.2);
     TEST_CHECK(fmt_g2.as_ref() == "-1.4");
-    const auto fmt_e1 = format_inplace<64>("{:.2e} / {:.3E}", 12340.0, 12000.0);
+    const auto fmt_e1 = format_fixed<64>("{:.2e} / {:.3E}", 12340.0, 12000.0);
     TEST_CHECK(fmt_e1.as_ref() == "1.23e+04 / 1.200E+04");
     constexpr u64 h_compile = fnv1a64_chars("hello", 5);
     TEST_CHECK(h_compile == fnv1a64_bytes("hello", 5));

@@ -6,19 +6,19 @@
 namespace keel {
 
 // Fixed-capacity inline array with zero heap allocations.
-template <typename T, usize N> class InplaceArray {
-    static_assert(N > 0, "InplaceArray capacity N must be positive");
-    static_assert(IsNothrowMoveConstructible<T>, "InplaceArray<T, N> requires noexcept move constructor");
-    static_assert(IsNothrowDestructible<T>, "InplaceArray<T, N> requires noexcept destructor");
+template <typename T, usize N> class FixedArray {
+    static_assert(N > 0, "FixedArray capacity N must be positive");
+    static_assert(IsNothrowMoveConstructible<T>, "FixedArray<T, N> requires noexcept move constructor");
+    static_assert(IsNothrowDestructible<T>, "FixedArray<T, N> requires noexcept destructor");
 
 public:
-    InplaceArray() noexcept = default;
-    ~InplaceArray() noexcept { clear(); }
+    FixedArray() noexcept = default;
+    ~FixedArray() noexcept { clear(); }
 
-    InplaceArray(const InplaceArray&) = delete;
-    InplaceArray& operator=(const InplaceArray&) = delete;
+    FixedArray(const FixedArray&) = delete;
+    FixedArray& operator=(const FixedArray&) = delete;
 
-    InplaceArray(InplaceArray&& other) noexcept : m_size(other.m_size) {
+    FixedArray(FixedArray&& other) noexcept : m_size(other.m_size) {
         for (usize i = 0; i < m_size; ++i) {
             ::new (ptr_at(i)) T(keel::move(other[i]));
             if constexpr (!IsTriviallyDestructible<T>) other[i].~T();
@@ -26,7 +26,7 @@ public:
         other.m_size = 0;
     }
 
-    InplaceArray& operator=(InplaceArray&& other) noexcept {
+    FixedArray& operator=(FixedArray&& other) noexcept {
         if (this != &other) {
             clear();
             m_size = other.m_size;
@@ -39,8 +39,8 @@ public:
         return *this;
     }
 
-    [[nodiscard]] InplaceArray clone() const {
-        InplaceArray copy;
+    [[nodiscard]] FixedArray clone() const {
+        FixedArray copy;
         for (usize i = 0; i < m_size; ++i) {
             copy.push_back((*this)[i]);
         }
@@ -55,6 +55,7 @@ public:
     [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] static constexpr usize capacity() noexcept { return N; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
+    [[nodiscard]] bool full() const noexcept { return m_size == N; }
 
     [[nodiscard]] T* begin() noexcept { return data(); }
     [[nodiscard]] const T* begin() const noexcept { return data(); }
@@ -71,6 +72,26 @@ public:
         return data()[i];
     }
 
+    [[nodiscard]] T& front() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[0];
+    }
+
+    [[nodiscard]] const T& front() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[0];
+    }
+
+    [[nodiscard]] T& back() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[m_size - 1];
+    }
+
+    [[nodiscard]] const T& back() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[m_size - 1];
+    }
+
     template <typename... Args> T& emplace_back(Args&&... args) {
         KEEL_BOUNDS_ASSERT(m_size < N);
         T* slot = ::new (ptr_at(m_size)) T(keel::forward<Args>(args)...);
@@ -80,6 +101,18 @@ public:
 
     void push_back(const T& val) { emplace_back(val); }
     void push_back(T&& val) { emplace_back(keel::move(val)); }
+
+    [[nodiscard]] bool try_push_back(const T& val) {
+        if (m_size >= N) return false;
+        emplace_back(val);
+        return true;
+    }
+
+    [[nodiscard]] bool try_push_back(T&& val) {
+        if (m_size >= N) return false;
+        emplace_back(keel::move(val));
+        return true;
+    }
 
     void pop_back() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
