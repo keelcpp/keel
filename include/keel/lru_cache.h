@@ -22,7 +22,7 @@ class LruCache {
 public:
     explicit LruCache(Allocator* alloc = nullptr) noexcept : m_entries(alloc), m_map(alloc) {}
 
-    [[nodiscard]] V* get(const K& key) noexcept {
+    template <typename KeyLike> [[nodiscard]] V* get(const KeyLike& key) noexcept {
         const u32* idx_ptr = m_map.get(key);
         if (!idx_ptr) return nullptr;
         const u32 idx = *idx_ptr;
@@ -30,15 +30,35 @@ public:
         return &m_entries[idx].value;
     }
 
-    [[nodiscard]] const V* find(const K& key) noexcept { return get(key); }
+    template <typename KeyLike> [[nodiscard]] const V* find(const KeyLike& key) noexcept { return get(key); }
 
-    V& put(const K& key, V value) {
+    template <typename KeyLike> [[nodiscard]] const V* peek(const KeyLike& key) const noexcept {
+        const u32* idx_ptr = m_map.get(key);
+        return idx_ptr ? &m_entries[*idx_ptr].value : nullptr;
+    }
+
+    template <typename KeyLike> [[nodiscard]] bool contains(const KeyLike& key) const noexcept {
+        return m_map.contains(key);
+    }
+
+    V& put(K key, V value) {
         if (u32* idx_ptr = m_map.get(key)) {
             const u32 idx = *idx_ptr;
             m_entries[idx].value = keel::move(value);
             move_to_front(idx);
             return m_entries[idx].value;
         }
+
+        Allocator* alloc = m_map.allocator();
+        K entry_key = [&]() {
+            if constexpr (requires { key.clone(alloc); }) {
+                return key.clone(alloc);
+            } else if constexpr (requires { key.clone(); }) {
+                return key.clone();
+            } else {
+                return K(key);
+            }
+        }();
 
         u32 slot = kNil;
         if (m_entries.size() < Capacity) {
@@ -47,7 +67,7 @@ public:
             }
             slot = static_cast<u32>(m_entries.size());
             m_entries.push_back(Entry{
-                .key = key,
+                .key = keel::move(entry_key),
                 .value = keel::move(value),
                 .prev = kNil,
                 .next = kNil,
@@ -57,12 +77,12 @@ public:
             Entry& victim = m_entries[slot];
             (void)m_map.remove(victim.key);
             detach(slot);
-            victim.key = key;
+            victim.key = keel::move(entry_key);
             victim.value = keel::move(value);
         }
 
         attach_front(slot);
-        m_map.put(key, slot);
+        m_map.put(keel::move(key), slot);
         return m_entries[slot].value;
     }
 
@@ -76,6 +96,7 @@ public:
     [[nodiscard]] usize size() const noexcept { return m_map.size(); }
     [[nodiscard]] bool empty() const noexcept { return m_map.empty(); }
     [[nodiscard]] static constexpr usize capacity() noexcept { return Capacity; }
+    [[nodiscard]] Allocator* allocator() const noexcept { return m_map.allocator(); }
 
 private:
     void detach(u32 idx) noexcept {

@@ -149,19 +149,21 @@ public:
     }
 
     [[nodiscard]] HashMap clone(Allocator* alloc = nullptr) const {
-        HashMap copy(alloc ? alloc : m_alloc);
+        Allocator* dst_alloc = alloc ? alloc : m_alloc;
+        auto clone_item = [dst_alloc]<typename T>(const T& item) {
+            if constexpr (requires { item.clone(dst_alloc); }) {
+                return item.clone(dst_alloc);
+            } else if constexpr (requires { item.clone(); }) {
+                return item.clone();
+            } else {
+                return item;
+            }
+        };
+        HashMap copy(dst_alloc);
         copy.reserve(m_size);
         for (usize i = 0; i < m_cap; ++i) {
             if (is_occupied(m_ctrl[i])) {
-                if constexpr (requires(const K& k) { k.clone(); } && requires(const V& v) { v.clone(); }) {
-                    copy.put(m_keys[i].clone(copy.m_alloc), m_vals[i].clone(copy.m_alloc));
-                } else if constexpr (requires(const K& k) { k.clone(); }) {
-                    copy.put(m_keys[i].clone(copy.m_alloc), m_vals[i]);
-                } else if constexpr (requires(const V& v) { v.clone(); }) {
-                    copy.put(m_keys[i], m_vals[i].clone(copy.m_alloc));
-                } else {
-                    copy.put(m_keys[i], m_vals[i]);
-                }
+                copy.put(clone_item(m_keys[i]), clone_item(m_vals[i]));
             }
         }
         return copy;
@@ -170,6 +172,7 @@ public:
     [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] usize capacity() const noexcept { return m_cap; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
+    [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
 
     [[nodiscard]] Iterator begin() noexcept { return Iterator(m_ctrl, m_keys, m_vals, 0, m_cap); }
     [[nodiscard]] Iterator end() noexcept { return Iterator(m_ctrl, m_keys, m_vals, m_cap, m_cap); }
@@ -187,7 +190,9 @@ public:
 
     void reserve(usize min_items) {
         if (min_items == 0) return;
-        const usize needed_cap = static_cast<usize>(bit_ceil(static_cast<u64>((min_items * 8 + 6) / 7)));
+        const u64 min_u64 = static_cast<u64>(min_items);
+        const u64 raw_cap = (min_u64 > (~u64{0} - 6u) / 8u) ? (u64{1} << 62) : ((min_u64 * 8u + 6u) / 7u);
+        const usize needed_cap = static_cast<usize>(bit_ceil(raw_cap));
         if (needed_cap > m_cap) {
             rehash(keel::max<usize>(needed_cap, 8));
         }
@@ -244,18 +249,29 @@ public:
 
     // Returns reference to existing value or inserts `default_val` and returns reference to it.
     V& get_or_insert(const K& key, V default_val = V{}) {
+        if (m_size > 0) {
+            const usize existing = find_slot(key);
+            if (existing != kInvalidIndex) {
+                return m_vals[existing];
+            }
+        }
+        K owned_key = [&]() {
+            if constexpr (requires { key.clone(m_alloc); }) {
+                return key.clone(m_alloc);
+            } else if constexpr (requires { key.clone(); }) {
+                return key.clone();
+            } else {
+                return K(key);
+            }
+        }();
         ensure_for_insert();
-        const u64 h = HashFn{}(key);
+        const u64 h = HashFn{}(owned_key);
         const u8 tag = make_tag(h);
-        const usize idx = find_or_prepare_insert(key, h, tag);
+        const usize idx = find_or_prepare_insert(owned_key, h, tag);
         if (!is_occupied(m_ctrl[idx])) {
             if (m_ctrl[idx] == kCtrlDeleted) --m_tombstones;
             m_ctrl[idx] = tag;
-            if constexpr (requires(const K& k) { k.clone(); }) {
-                ::new (m_keys + idx) K(key.clone(m_alloc));
-            } else {
-                ::new (m_keys + idx) K(key);
-            }
+            ::new (m_keys + idx) K(keel::move(owned_key));
             ::new (m_vals + idx) V(keel::move(default_val));
             ++m_size;
         }
@@ -312,8 +328,8 @@ private:
     void ensure_for_insert() {
         if (m_cap == 0) {
             rehash(8);
-        } else if ((m_size + m_tombstones + 1) * 8 > m_cap * 7) {
-            const usize next_cap = (m_size * 2 >= m_cap) ? (m_cap * 2) : m_cap;
+        } else if ((m_size + m_tombstones + 1) > m_cap - (m_cap >> 3)) {
+            const usize next_cap = (m_size >= (m_cap >> 1)) ? (m_cap * 2) : m_cap;
             rehash(next_cap);
         }
     }

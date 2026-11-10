@@ -60,18 +60,18 @@ public:
     }
 
     template <typename... Args> [[nodiscard]] Handle<T> emplace(Args&&... args) {
-        if (m_free_head == kInvalidSlot) {
-            grow(m_cap == 0 ? 8 : m_cap * 2);
+        if (m_free_head != kInvalidSlot) [[likely]] {
+            const u32 idx = m_free_head;
+            Slot& s = m_slots[idx];
+            ::new (s.storage) T(keel::forward<Args>(args)...);
+            m_free_head = s.next_free;
+            s.next_free = kInvalidSlot;
+            s.alive = true;
+            if (s.generation == 0) s.generation = 1;
+            ++m_size;
+            return Handle<T>{idx, s.generation};
         }
-        const u32 idx = m_free_head;
-        Slot& s = m_slots[idx];
-        m_free_head = s.next_free;
-        s.next_free = kInvalidSlot;
-        ::new (s.storage) T(keel::forward<Args>(args)...);
-        s.alive = true;
-        if (s.generation == 0) s.generation = 1;
-        ++m_size;
-        return Handle<T>{idx, s.generation};
+        return emplace_slow(keel::forward<Args>(args)...);
     }
 
     [[nodiscard]] Handle<T> insert(T val) { return emplace(keel::move(val)); }
@@ -100,6 +100,7 @@ public:
 
     [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
+    [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
 
     void clear() noexcept {
         for (usize i = 0; i < m_cap; ++i) {
@@ -131,8 +132,16 @@ private:
         const T* ptr() const noexcept { return reinterpret_cast<const T*>(storage); }
     };
 
-    void grow(usize new_cap) {
+    template <typename... Args> [[nodiscard]] Handle<T> emplace_slow(Args&&... args) {
+        const usize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
         Slot* new_slots = m_alloc->alloc_array<Slot>(new_cap);
+        const u32 new_idx = static_cast<u32>(m_cap);
+        // Construct new element before relocating/destroying old slots so self-aliasing args remain valid
+        ::new (new_slots[new_idx].storage) T(keel::forward<Args>(args)...);
+        new_slots[new_idx].generation = 1;
+        new_slots[new_idx].next_free = kInvalidSlot;
+        new_slots[new_idx].alive = true;
+
         for (usize i = 0; i < m_cap; ++i) {
             new_slots[i].generation = m_slots[i].generation;
             new_slots[i].next_free = m_slots[i].next_free;
@@ -142,18 +151,20 @@ private:
                 m_slots[i].ptr()->~T();
             }
         }
-        for (usize i = m_cap; i < new_cap; ++i) {
+        for (usize i = m_cap + 1; i < new_cap; ++i) {
             new_slots[i].generation = 1;
             new_slots[i].next_free = kInvalidSlot;
             new_slots[i].alive = false;
         }
-        for (usize i = new_cap; i > m_cap; --i) {
+        for (usize i = new_cap; i > m_cap + 1; --i) {
             new_slots[i - 1].next_free = m_free_head;
             m_free_head = static_cast<u32>(i - 1);
         }
         if (m_slots) m_alloc->free_array(m_slots, m_cap);
         m_slots = new_slots;
         m_cap = new_cap;
+        ++m_size;
+        return Handle<T>{new_idx, 1u};
     }
 
     Slot* m_slots = nullptr;

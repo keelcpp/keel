@@ -11,20 +11,29 @@ concept ConvertibleTo = requires(From (*f)()) { static_cast<To>(f()); };
 
 [[nodiscard]] constexpr usize cstr_len(const char* s) noexcept {
     if (!s) return 0;
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_strlen(s);
+#else
     usize n = 0;
     while (s[n] != '\0') {
         ++n;
     }
     return n;
+#endif
 }
 
 [[nodiscard]] constexpr int char_cmp(const char* a, const char* b, usize n) noexcept {
+    if (n == 0) return 0;
+#if defined(__clang__) || defined(__GNUC__)
+    return __builtin_memcmp(a, b, n);
+#else
     for (usize i = 0; i < n; ++i) {
         const u8 ca = static_cast<u8>(a[i]);
         const u8 cb = static_cast<u8>(b[i]);
         if (ca != cb) return (ca < cb) ? -1 : 1;
     }
     return 0;
+#endif
 }
 
 [[nodiscard]] constexpr bool is_ascii_space(char c) noexcept {

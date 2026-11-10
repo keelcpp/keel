@@ -108,6 +108,7 @@ namespace keel {
 
 [[nodiscard]] constexpr u64 bit_ceil(u64 x) noexcept {
     if (x <= 1) return 1;
+    if (x > (u64{1} << 63)) return 0;
     return u64{1} << bit_width(x - 1);
 }
 

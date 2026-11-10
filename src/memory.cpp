@@ -86,9 +86,11 @@ void* sys_realloc(void* ctx, void* ptr, usize old_size, usize new_size, usize al
         return std::realloc(ptr, new_size);
     }
     void* new_ptr = sys_alloc(ctx, new_size, align);
-    if (new_ptr && old_size > 0) {
-        const usize copy_bytes = min(old_size, new_size);
-        std::memcpy(new_ptr, ptr, copy_bytes);
+    if (new_ptr) {
+        if (old_size > 0) {
+            const usize copy_bytes = min(old_size, new_size);
+            std::memcpy(new_ptr, ptr, copy_bytes);
+        }
         std::free(ptr);
     }
     return new_ptr;
@@ -115,7 +117,14 @@ constinit std::atomic<Allocator*> g_default_allocator{&g_system_allocator};
 
 constexpr usize kCommitGranularity = 64 * 1024; // Commit in 64 KB chunks
 
-usize align_up(usize val, usize align) noexcept { return (val + align - 1) & ~(align - 1); }
+bool checked_align_up(usize val, usize align, usize& out) noexcept {
+    const usize mask = align - 1;
+    if (val > (~usize{0}) - mask) [[unlikely]] {
+        return false;
+    }
+    out = (val + mask) & ~mask;
+    return true;
+}
 
 } // namespace
 
@@ -147,7 +156,10 @@ void set_default_allocator(Allocator* alloc) noexcept {
 Arena::Arena(usize reserve_size) noexcept {
     init_allocator();
     if (reserve_size == 0) reserve_size = kDefaultReserveSize;
-    m_reserved = align_up(reserve_size, kCommitGranularity);
+    if (!checked_align_up(reserve_size, kCommitGranularity, m_reserved)) {
+        m_reserved = 0;
+        return;
+    }
 #if defined(_WIN32)
     m_base = static_cast<u8*>(VirtualAlloc(nullptr, static_cast<SIZE_T>(m_reserved), MEM_RESERVE, PAGE_NOACCESS));
     if (!m_base) {
@@ -155,10 +167,13 @@ Arena::Arena(usize reserve_size) noexcept {
     }
 #elif defined(__EMSCRIPTEN__)
     // On 32-bit WebAssembly, virtual memory reservation without commit is not available;
-    // allocate the full reserved arena block upfront so pointers remain stable within a frame.
+    // allocate a page-aligned reserved arena block upfront so pointers and SIMD alignments remain valid.
     m_committed = m_reserved;
-    m_base = static_cast<u8*>(std::malloc(m_committed));
-    if (!m_base) {
+    void* aligned_ptr = nullptr;
+    if (posix_memalign(&aligned_ptr, 4096, m_committed) == 0) {
+        m_base = static_cast<u8*>(aligned_ptr);
+    } else {
+        m_base = nullptr;
         m_committed = 0;
         m_reserved = 0;
     }
@@ -227,21 +242,46 @@ void* Arena::alloc(usize size, usize align) {
     KEEL_ASSERT(align > 0 && (align & (align - 1)) == 0);
     if (size == 0) return nullptr;
 
-    const usize aligned_offset = align_up(m_offset, align);
-    const usize new_offset = aligned_offset + size;
+    usize aligned_addr = 0;
+    const usize base_addr = reinterpret_cast<usize>(m_base);
+    if (base_addr > (~usize{0}) - m_offset ||
+        !checked_align_up(base_addr + m_offset, align, aligned_addr)) [[unlikely]] {
+        handle_oom(size, align);
+    }
+    const usize aligned_offset = aligned_addr - base_addr;
+    if (size > (~usize{0}) - aligned_offset) [[unlikely]] {
+        handle_oom(size, align);
+    }
+    usize new_offset = aligned_offset + size;
     if (!m_base || new_offset > m_reserved) [[unlikely]] {
 #if defined(__EMSCRIPTEN__)
         // Grow linear buffer if still empty
         if (m_offset == 0) {
-            const usize next_cap = align_up(max(new_offset, m_reserved * 2), kCommitGranularity);
-            u8* next_base = static_cast<u8*>(std::realloc(m_base, next_cap));
-            if (next_base) {
-                m_base = next_base;
-                m_committed = next_cap;
-                m_reserved = next_cap;
-            } else {
+            usize req_cap = max(size + align, m_reserved * 2);
+            usize next_cap = 0;
+            if (!checked_align_up(req_cap, kCommitGranularity, next_cap)) {
                 handle_oom(size, align);
             }
+            void* next_ptr = nullptr;
+            if (posix_memalign(&next_ptr, 4096, next_cap) == 0) {
+                std::free(m_base);
+                m_base = static_cast<u8*>(next_ptr);
+                m_committed = next_cap;
+                m_reserved = next_cap;
+                const usize grown_base = reinterpret_cast<usize>(m_base);
+                usize grown_aligned = 0;
+                if (!checked_align_up(grown_base, align, grown_aligned)) {
+                    handle_oom(size, align);
+                }
+                const usize grown_offset = grown_aligned - grown_base;
+                if (size > m_reserved - grown_offset) {
+                    handle_oom(size, align);
+                }
+                m_offset = grown_offset + size;
+                m_last_alloc_end = m_offset;
+                return m_base + grown_offset;
+            }
+            handle_oom(size, align);
         } else {
             handle_oom(size, align);
         }
@@ -251,7 +291,11 @@ void* Arena::alloc(usize size, usize align) {
     }
 
     if (new_offset > m_committed) {
-        const usize target_commit = min(align_up(new_offset, kCommitGranularity), m_reserved);
+        usize aligned_commit = new_offset;
+        if (!checked_align_up(new_offset, kCommitGranularity, aligned_commit)) {
+            aligned_commit = m_reserved;
+        }
+        const usize target_commit = min(aligned_commit, m_reserved);
 #if defined(_WIN32)
         const usize commit_bytes = target_commit - m_committed;
         if (!VirtualAlloc(m_base + m_committed, static_cast<SIZE_T>(commit_bytes), MEM_COMMIT, PAGE_READWRITE)) {
@@ -283,12 +327,19 @@ bool Arena::try_extend(void* ptr, usize old_size, usize new_size) noexcept {
         return true;
     }
     const usize extra = new_size - old_size;
+    if (extra > (~usize{0}) - m_offset) {
+        return false;
+    }
     const usize new_offset = m_offset + extra;
     if (new_offset > m_reserved) {
         return false;
     }
     if (new_offset > m_committed) {
-        const usize target_commit = min(align_up(new_offset, kCommitGranularity), m_reserved);
+        usize aligned_commit = new_offset;
+        if (!checked_align_up(new_offset, kCommitGranularity, aligned_commit)) {
+            aligned_commit = m_reserved;
+        }
+        const usize target_commit = min(aligned_commit, m_reserved);
 #if defined(_WIN32)
         const usize commit_bytes = target_commit - m_committed;
         if (!VirtualAlloc(m_base + m_committed, static_cast<SIZE_T>(commit_bytes), MEM_COMMIT, PAGE_READWRITE)) {
@@ -391,6 +442,7 @@ ArenaTemp get_scratch(Arena* const* conflicts, usize conflict_count) noexcept {
             return candidate->begin_temp();
         }
     }
+    KEEL_ASSERT(false && "all thread-local scratch arenas are in conflict");
     return pool.arenas[0].begin_temp();
 }
 

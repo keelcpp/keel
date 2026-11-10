@@ -6,6 +6,7 @@
 #include "keel/bits.h"
 #include "keel/core.h"
 #include "keel/ref.h"
+#include "keel/small_array.h"
 
 namespace keel {
 
@@ -116,7 +117,7 @@ template <typename CoordT = f32, usize Dim = 2> struct RTreeBox {
 
     [[nodiscard]] constexpr bool intersects(const RTreeBox& other) const noexcept {
         for (usize d = 0; d < Dim; ++d) {
-            if (min[d] >= other.max[d] || max[d] <= other.min[d]) return false;
+            if (min[d] > other.max[d] || max[d] < other.min[d]) return false;
         }
         return true;
     }
@@ -291,12 +292,13 @@ public:
     template <typename Fn> void query_box(const Box& query, Fn&& on_hit) const {
         if (m_nodes.empty()) return;
 
-        u32 stack[128]{};
-        usize sp = 0;
-        stack[sp++] = m_root_index;
+        SmallArray<u32, 128> stack(m_nodes.allocator());
+        stack.push_back(m_root_index);
 
-        while (sp > 0) {
-            const Node& node = m_nodes[stack[--sp]];
+        while (!stack.empty()) {
+            const u32 node_idx = stack.back();
+            stack.pop_back();
+            const Node& node = m_nodes[node_idx];
             if (!node.bounds.intersects(query)) {
                 continue;
             }
@@ -310,9 +312,7 @@ public:
                 }
             } else {
                 for (u32 i = node.first_child; i < end; ++i) {
-                    if (sp < 128) {
-                        stack[sp++] = i;
-                    }
+                    stack.push_back(i);
                 }
             }
         }
@@ -327,12 +327,13 @@ public:
     void query_point(const CoordT (&pt)[Dim], Fn&& on_hit) const {
         if (m_nodes.empty()) return;
 
-        u32 stack[128]{};
-        usize sp = 0;
-        stack[sp++] = m_root_index;
+        SmallArray<u32, 128> stack(m_nodes.allocator());
+        stack.push_back(m_root_index);
 
-        while (sp > 0) {
-            const Node& node = m_nodes[stack[--sp]];
+        while (!stack.empty()) {
+            const u32 node_idx = stack.back();
+            stack.pop_back();
+            const Node& node = m_nodes[node_idx];
             if (!node.bounds.contains_point(pt)) {
                 continue;
             }
@@ -346,9 +347,7 @@ public:
                 }
             } else {
                 for (u32 i = node.first_child; i < end; ++i) {
-                    if (sp < 128) {
-                        stack[sp++] = i;
-                    }
+                    stack.push_back(i);
                 }
             }
         }

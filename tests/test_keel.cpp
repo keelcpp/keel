@@ -117,6 +117,7 @@ void test_arena_and_memory() {
     TEST_CHECK(pool.size() == 2);
     TEST_CHECK(TrackedObj::live_count == 2);
     TEST_CHECK(pool.get(h_a) != nullptr && pool.get(h_a)->value == 42);
+    TEST_CHECK(pool.get(h_b) != nullptr && pool.get(h_b)->value == 99);
     TEST_CHECK(pool.remove(h_a));
     TEST_CHECK(!pool.is_valid(h_a));
     TEST_CHECK(pool.get(h_a) == nullptr);
@@ -669,6 +670,145 @@ void test_algo_and_rtree() {
     }
 }
 
+void test_review_regressions() {
+    // 1. bit_ceil overflow safety (no shift-by-64 UB)
+    TEST_CHECK(bit_ceil((u64{1} << 63) + 1ULL) == 0ULL);
+    TEST_CHECK(bit_ceil(u64{1} << 63) == (u64{1} << 63));
+
+    // 2. format_f64_fixed large magnitudes (1e15), -0.0, carry propagation, and rounding
+    TEST_CHECK(format_fixed<64>("%.6f", 1e15).as_ref() == "1000000000000000.000000");
+    TEST_CHECK(format_fixed<64>("%.2f", -0.0).as_ref() == "-0.00");
+    TEST_CHECK(format_fixed<64>("%.2f", 9.999).as_ref() == "10.00");
+    TEST_CHECK(format_fixed<64>("%.2f", 0.009).as_ref() == "0.01");
+    TEST_CHECK(format_fixed<64>("%.2f", -0.0001).as_ref() == "-0.00");
+
+    // 3. Arena high alignment & ArenaTemp destructor rewind
+    {
+        Arena arena(256 * 1024);
+        void* p1 = arena.alloc(3, 1);
+        void* p64 = arena.alloc(64, 64);
+        void* p256 = arena.alloc(128, 256);
+        (void)p1;
+        TEST_CHECK((reinterpret_cast<usize>(p64) & 63u) == 0);
+        TEST_CHECK((reinterpret_cast<usize>(p256) & 255u) == 0);
+
+        TrackedObj::live_count = 0;
+        {
+            ArenaTemp tmp = arena.begin_temp();
+            TrackedObj* o1 = arena.create<TrackedObj>(10);
+            MutArrayRef<TrackedObj> arr = arena.create_slice<TrackedObj>(3);
+            TEST_CHECK(o1->value == 10 && arr.size() == 3);
+            TEST_CHECK(TrackedObj::live_count == 4);
+        }
+        TEST_CHECK(TrackedObj::live_count == 0);
+    }
+
+    // 4. Self-aliasing on reallocation across Array, SmallArray, Ring, SmallRing, HashMap, Pool
+    {
+        Array<int> arr;
+        for (int i = 0; i < 8; ++i) arr.push_back(i + 10);
+        arr.emplace_back(arr[0]); // triggers capacity 8 -> 16 reallocation while reading arr[0]
+        TEST_CHECK(arr.size() == 9 && arr[8] == 10);
+        arr.append(arr); // self-append across reallocation
+        TEST_CHECK(arr.size() == 18 && arr[9] == 10 && arr[17] == 10);
+        arr.resize(40, arr[2]);
+        TEST_CHECK(arr.size() == 40 && arr[39] == 12);
+
+        SmallArray<int, 4> sarr;
+        for (int i = 0; i < 4; ++i) sarr.push_back(i + 1);
+        sarr.append(sarr); // inline -> heap self-append
+        TEST_CHECK(sarr.size() == 8 && sarr[0] == 1 && sarr[4] == 1 && sarr[7] == 4);
+        sarr.resize(20, sarr[3]);
+        TEST_CHECK(sarr.size() == 20 && sarr[19] == 4);
+
+        SmallRing<int, 2> sring;
+        sring.push_back(11);
+        sring.push_back(22);
+        sring.emplace_back(sring[0]); // inline -> heap self-aliasing emplace_back
+        sring.emplace_front(sring.back());
+        TEST_CHECK(sring.size() == 4 && sring.front() == 11 && sring.back() == 11);
+
+        Ring<int> ring;
+        for (int i = 0; i < 8; ++i) ring.push_back(i + 100);
+        ring.emplace_back(ring[0]); // 8 -> 16 grow reading ring[0]
+        TEST_CHECK(ring.size() == 9 && ring.back() == 100);
+
+        Pool<int> pool;
+        Handle<int> first_h{};
+        for (int i = 0; i < 8; ++i) {
+            Handle<int> h = pool.emplace(i + 50);
+            if (i == 0) first_h = h;
+        }
+        Handle<int> aliased_h = pool.emplace(*pool.get(first_h)); // 8 -> 16 grow reading slot 0
+        TEST_CHECK(pool.get(aliased_h) != nullptr && *pool.get(aliased_h) == 50);
+    }
+
+    // 5. HashMap::clone with 0-arg .clone() value (FixedArray), move-only keel::sort, and move-only LruCache
+    {
+        HashMap<int, FixedArray<int, 4>> fmap;
+        FixedArray<int, 4> fa;
+        fa.push_back(7);
+        fa.push_back(9);
+        fmap.put(1, keel::move(fa));
+        auto fmap_copy = fmap.clone();
+        const auto* got = fmap_copy.get(1);
+        TEST_CHECK(got != nullptr && got->size() == 2 && (*got)[0] == 7 && (*got)[1] == 9);
+
+        Array<String> words;
+        const char* raw[] = {"delta", "alpha", "charlie", "bravo", "echo", "foxtrot", "golf", "hotel", "india",
+                             "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo"};
+        for (const char* w : raw) words.push_back(String::from(w));
+        keel::sort(words, [](const String& a, const String& b) { return a.as_ref() < b.as_ref(); });
+        TEST_CHECK(words[0] == "alpha" && words[1] == "bravo" && words[words.size() - 1] == "romeo");
+
+        LruCache<String, int, 3> lru;
+        lru.put(String::from("one"), 1);
+        lru.put(String::from("two"), 2);
+        lru.put(String::from("three"), 3);
+        TEST_CHECK(lru.get(StringRef("one")) != nullptr && *lru.get(StringRef("one")) == 1);
+        lru.put(String::from("four"), 4); // evicts "two"
+        TEST_CHECK(!lru.contains(StringRef("two")));
+        TEST_CHECK(lru.peek(StringRef("one")) != nullptr && *lru.peek(StringRef("four")) == 4);
+    }
+
+    // 6. RTree degenerate zero-thickness point/segment boxes & high NodeCap traversal
+    {
+        RTree<u32, f32, 2, 64> rtree;
+        Array<RTreeItem<u32, f32, 2>> items;
+        // Zero-thickness point at (5, 5) and horizontal segment (0, 10)-(10, 10)
+        items.push_back({100u, RTreeBox<f32, 2>::from_xywh(5.0f, 5.0f, 0.0f, 0.0f)});
+        items.push_back({101u, RTreeBox<f32, 2>::from_xywh(0.0f, 10.0f, 10.0f, 0.0f)});
+        for (u32 i = 0; i < 600; ++i) {
+            const f32 x = static_cast<f32>(i % 30);
+            const f32 y = static_cast<f32>(i / 30);
+            items.push_back({i + 1000u, RTreeBox<f32, 2>::from_xywh(x, y, 0.5f, 0.5f)});
+        }
+        rtree.build(items);
+        Array<u32> hits;
+        rtree.query_box(RTreeBox<f32, 2>::from_xywh(5.0f, 5.0f, 0.0f, 0.0f), hits);
+        bool found_point = false;
+        for (u32 id : hits) {
+            if (id == 100u) found_point = true;
+        }
+        TEST_CHECK(found_point);
+
+        rtree.query_box(RTreeBox<f32, 2>::from_xywh(-10.0f, -10.0f, 110.0f, 110.0f), hits);
+        TEST_CHECK(hits.size() == items.size());
+    }
+
+    // 7. Hybrid printf/brace formatter edge cases: JSON braces with printf, alignment, positional indices, format_into append
+    {
+        TEST_CHECK(format("{ \"id\": %d, \"ok\": %s }", 42, true) == "{ \"id\": 42, \"ok\": true }");
+        TEST_CHECK(format("{1} -> {0:.2f}", 3.5, "gain") == "gain -> 3.50");
+        TEST_CHECK(format("[{:>8.1f}] [{:<6}] [{:*^6}]", 12.34, "abc", "hi") == "[    12.3] [abc   ] [**hi**]");
+
+        FixedString<32> fs("A=");
+        format_into(fs, "{}", 10);
+        format_into(fs, ", B={}", 20);
+        TEST_CHECK(fs == "A=10, B=20");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -680,6 +820,7 @@ int main() {
     test_fs_and_io();
     test_std_interop();
     test_algo_and_rtree();
+    test_review_regressions();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

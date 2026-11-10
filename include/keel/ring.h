@@ -374,64 +374,30 @@ public:
     }
 
     template <typename... Args> T& emplace_back(Args&&... args) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow();
+        if (m_size < m_cap) [[likely]] {
+            const usize tail = phys_index(m_size);
+            T* slot = ::new (buf_ptr() + tail) T(keel::forward<Args>(args)...);
+            ++m_size;
+            return *slot;
         }
-        const usize tail = phys_index(m_size);
-        T* slot = ::new (buf_ptr() + tail) T(keel::forward<Args>(args)...);
-        ++m_size;
-        return *slot;
+        return emplace_back_slow(keel::forward<Args>(args)...);
     }
 
-    void push_back(const T& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            const T* cur = buf_ptr();
-            if (&val >= cur && &val < cur + m_cap) {
-                T copy(val);
-                grow();
-                ::new (buf_ptr() + phys_index(m_size)) T(keel::move(copy));
-                ++m_size;
-                return;
-            }
-            grow();
-        }
-        ::new (buf_ptr() + phys_index(m_size)) T(val);
-        ++m_size;
-    }
-
+    void push_back(const T& val) { emplace_back(val); }
     void push_back(T&& val) { emplace_back(keel::move(val)); }
 
     template <typename... Args> T& emplace_front(Args&&... args) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow();
+        if (m_size < m_cap) [[likely]] {
+            const usize new_head = (m_head == 0) ? (m_cap - 1) : (m_head - 1);
+            T* slot = ::new (buf_ptr() + new_head) T(keel::forward<Args>(args)...);
+            m_head = new_head;
+            ++m_size;
+            return *slot;
         }
-        const usize new_head = (m_head == 0) ? (m_cap - 1) : (m_head - 1);
-        T* slot = ::new (buf_ptr() + new_head) T(keel::forward<Args>(args)...);
-        m_head = new_head;
-        ++m_size;
-        return *slot;
+        return emplace_front_slow(keel::forward<Args>(args)...);
     }
 
-    void push_front(const T& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            const T* cur = buf_ptr();
-            if (&val >= cur && &val < cur + m_cap) {
-                T copy(val);
-                grow();
-                const usize new_head = (m_head == 0) ? (m_cap - 1) : (m_head - 1);
-                ::new (buf_ptr() + new_head) T(keel::move(copy));
-                m_head = new_head;
-                ++m_size;
-                return;
-            }
-            grow();
-        }
-        const usize new_head = (m_head == 0) ? (m_cap - 1) : (m_head - 1);
-        ::new (buf_ptr() + new_head) T(val);
-        m_head = new_head;
-        ++m_size;
-    }
-
+    void push_front(const T& val) { emplace_front(val); }
     void push_front(T&& val) { emplace_front(keel::move(val)); }
 
     void pop_front() noexcept {
@@ -504,10 +470,50 @@ private:
         }
     }
 
-    void grow() {
+    template <typename... Args> T& emplace_back_slow(Args&&... args) {
         const usize min_next = keel::max<usize>(m_cap * 2, 8);
         const usize new_cap = static_cast<usize>(bit_ceil(static_cast<u64>(min_next)));
-        reallocate(new_cap);
+        T* new_data = m_alloc->alloc_array<T>(new_cap);
+        T* slot = ::new (new_data + m_size) T(keel::forward<Args>(args)...);
+        T* cur = buf_ptr();
+        for (usize i = 0; i < m_size; ++i) {
+            const usize old_idx = phys_index(i);
+            ::new (new_data + i) T(keel::move(cur[old_idx]));
+            if constexpr (!IsTriviallyDestructible<T>) {
+                cur[old_idx].~T();
+            }
+        }
+        if (m_heap) {
+            m_alloc->free_array(m_heap, m_cap);
+        }
+        m_heap = new_data;
+        m_head = 0;
+        m_cap = new_cap;
+        ++m_size;
+        return *slot;
+    }
+
+    template <typename... Args> T& emplace_front_slow(Args&&... args) {
+        const usize min_next = keel::max<usize>(m_cap * 2, 8);
+        const usize new_cap = static_cast<usize>(bit_ceil(static_cast<u64>(min_next)));
+        T* new_data = m_alloc->alloc_array<T>(new_cap);
+        T* slot = ::new (new_data) T(keel::forward<Args>(args)...);
+        T* cur = buf_ptr();
+        for (usize i = 0; i < m_size; ++i) {
+            const usize old_idx = phys_index(i);
+            ::new (new_data + i + 1) T(keel::move(cur[old_idx]));
+            if constexpr (!IsTriviallyDestructible<T>) {
+                cur[old_idx].~T();
+            }
+        }
+        if (m_heap) {
+            m_alloc->free_array(m_heap, m_cap);
+        }
+        m_heap = new_data;
+        m_head = 0;
+        m_cap = new_cap;
+        ++m_size;
+        return *slot;
     }
 
     void reallocate(usize new_cap) {
@@ -666,77 +672,31 @@ public:
     }
 
     template <typename... Args> T& emplace_back(Args&&... args) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow();
+        if (m_size < m_cap) [[likely]] {
+            const usize tail = phys_index(m_size);
+            T* slot = ::new (m_data + tail) T(keel::forward<Args>(args)...);
+            ++m_size;
+            return *slot;
         }
-        const usize tail = phys_index(m_size);
-        T* slot = ::new (m_data + tail) T(keel::forward<Args>(args)...);
-        ++m_size;
-        return *slot;
+        return emplace_back_slow(keel::forward<Args>(args)...);
     }
 
-    void push_back(const T& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            if (m_data && &val >= m_data && &val < m_data + m_cap) {
-                T copy(val);
-                grow();
-                ::new (m_data + phys_index(m_size)) T(keel::move(copy));
-                ++m_size;
-                return;
-            }
-            grow();
-        }
-        ::new (m_data + phys_index(m_size)) T(val);
-        ++m_size;
-    }
-
-    void push_back(T&& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow();
-        }
-        ::new (m_data + phys_index(m_size)) T(keel::move(val));
-        ++m_size;
-    }
+    void push_back(const T& val) { emplace_back(val); }
+    void push_back(T&& val) { emplace_back(keel::move(val)); }
 
     template <typename... Args> T& emplace_front(Args&&... args) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow();
+        if (m_size < m_cap) [[likely]] {
+            const usize new_head = (m_head - 1) & (m_cap - 1);
+            T* slot = ::new (m_data + new_head) T(keel::forward<Args>(args)...);
+            m_head = new_head;
+            ++m_size;
+            return *slot;
         }
-        const usize new_head = (m_head - 1) & (m_cap - 1);
-        T* slot = ::new (m_data + new_head) T(keel::forward<Args>(args)...);
-        m_head = new_head;
-        ++m_size;
-        return *slot;
+        return emplace_front_slow(keel::forward<Args>(args)...);
     }
 
-    void push_front(const T& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            if (m_data && &val >= m_data && &val < m_data + m_cap) {
-                T copy(val);
-                grow();
-                const usize new_head = (m_head - 1) & (m_cap - 1);
-                ::new (m_data + new_head) T(keel::move(copy));
-                m_head = new_head;
-                ++m_size;
-                return;
-            }
-            grow();
-        }
-        const usize new_head = (m_head - 1) & (m_cap - 1);
-        ::new (m_data + new_head) T(val);
-        m_head = new_head;
-        ++m_size;
-    }
-
-    void push_front(T&& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow();
-        }
-        const usize new_head = (m_head - 1) & (m_cap - 1);
-        ::new (m_data + new_head) T(keel::move(val));
-        m_head = new_head;
-        ++m_size;
-    }
+    void push_front(const T& val) { emplace_front(val); }
+    void push_front(T&& val) { emplace_front(keel::move(val)); }
 
     void pop_front() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
@@ -780,9 +740,46 @@ private:
         return (m_head + logical) & (m_cap - 1);
     }
 
-    void grow() {
+    template <typename... Args> T& emplace_back_slow(Args&&... args) {
         const usize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
-        reallocate(new_cap);
+        T* new_data = m_alloc->alloc_array<T>(new_cap);
+        T* slot = ::new (new_data + m_size) T(keel::forward<Args>(args)...);
+        for (usize i = 0; i < m_size; ++i) {
+            const usize old_idx = phys_index(i);
+            ::new (new_data + i) T(keel::move(m_data[old_idx]));
+            if constexpr (!IsTriviallyDestructible<T>) {
+                m_data[old_idx].~T();
+            }
+        }
+        if (m_data) {
+            m_alloc->free_array(m_data, m_cap);
+        }
+        m_data = new_data;
+        m_head = 0;
+        m_cap = new_cap;
+        ++m_size;
+        return *slot;
+    }
+
+    template <typename... Args> T& emplace_front_slow(Args&&... args) {
+        const usize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
+        T* new_data = m_alloc->alloc_array<T>(new_cap);
+        T* slot = ::new (new_data) T(keel::forward<Args>(args)...);
+        for (usize i = 0; i < m_size; ++i) {
+            const usize old_idx = phys_index(i);
+            ::new (new_data + i + 1) T(keel::move(m_data[old_idx]));
+            if constexpr (!IsTriviallyDestructible<T>) {
+                m_data[old_idx].~T();
+            }
+        }
+        if (m_data) {
+            m_alloc->free_array(m_data, m_cap);
+        }
+        m_data = new_data;
+        m_head = 0;
+        m_cap = new_cap;
+        ++m_size;
+        return *slot;
     }
 
     void reallocate(usize new_cap) {

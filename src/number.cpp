@@ -114,12 +114,6 @@ u32 f32_to_bits(f32 v) noexcept {
     return bits;
 }
 
-f32 bits_to_f32(u32 bits) noexcept {
-    f32 v = 0.0f;
-    std::memcpy(&v, &bits, sizeof(v));
-    return v;
-}
-
 f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated) noexcept {
     if (mantissa == 0) {
         return negative ? -0.0 : 0.0;
@@ -663,32 +657,85 @@ usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept 
         return n;
     }
 
-    f64 abs_val = negative ? -value : value;
+    char tmp[64];
+    usize pos = 0;
+
+    if (ieee_exp == 0 && ieee_mant == 0) {
+        if (negative) tmp[pos++] = '-';
+        tmp[pos++] = '0';
+        if (precision > 0) {
+            tmp[pos++] = '.';
+            for (int i = 0; i < precision; ++i) tmp[pos++] = '0';
+        }
+        const usize copy_len = min(pos, cap);
+        mem_copy(buf, tmp, copy_len);
+        return copy_len;
+    }
+
+    const f64 abs_val = negative ? -value : value;
     if (abs_val > 1e18) {
         return format_f64(buf, cap, value);
     }
 
-    u64 scale = 1ULL;
-    for (int i = 0; i < precision; ++i) scale *= 10ULL;
+    u64 dec = 0;
+    i32 exp10 = 0;
+    decompose_f64_shortest(abs_val, ieee_exp, ieee_mant, dec, exp10);
 
-    const f64 scaled = abs_val * static_cast<f64>(scale);
-    u64 rounded = static_cast<u64>(scaled + 0.5);
-    const u64 int_part = rounded / scale;
-    const u64 frac_part = rounded % scale;
-
-    char tmp[64];
-    usize pos = 0;
-    if (negative && rounded != 0) tmp[pos++] = '-';
-    pos += format_u64(tmp + pos, sizeof(tmp) - pos, int_part, 10, false);
-
-    if (precision > 0) {
-        tmp[pos++] = '.';
-        u64 f = frac_part;
-        for (int i = precision - 1; i >= 0; --i) {
-            tmp[pos + static_cast<usize>(i)] = static_cast<char>('0' + (f % 10ULL));
-            f /= 10ULL;
+    int num_digits = count_decimal_digits(dec);
+    i32 shift = exp10 + precision;
+    if (shift < 0) {
+        const int drop = -shift;
+        if (drop > num_digits) {
+            dec = 0;
+            num_digits = 0;
+        } else {
+            u64 div = 1ULL;
+            for (int i = 0; i < drop; ++i) div *= 10ULL;
+            const u64 q = dec / div;
+            const u64 rem = dec % div;
+            const u64 half = div / 2ULL;
+            dec = (rem >= half) ? (q + 1ULL) : q;
+            num_digits = (dec == 0) ? 0 : count_decimal_digits(dec);
         }
-        pos += static_cast<usize>(precision);
+        shift = 0;
+    }
+
+    char digits[24];
+    usize d_len = 0;
+    if (dec > 0) {
+        d_len = format_u64(digits, sizeof(digits), dec, 10, false);
+    }
+    const usize trailing_zeros = static_cast<usize>(shift);
+    const usize total_digits = d_len + trailing_zeros;
+    const usize prec_u = static_cast<usize>(precision);
+
+    if (negative) tmp[pos++] = '-';
+
+    auto digit_at = [&](usize idx) noexcept -> char {
+        return (idx < d_len) ? digits[idx] : '0';
+    };
+
+    if (total_digits == 0) {
+        tmp[pos++] = '0';
+        if (prec_u > 0) {
+            tmp[pos++] = '.';
+            for (usize i = 0; i < prec_u; ++i) tmp[pos++] = '0';
+        }
+    } else if (total_digits <= prec_u) {
+        tmp[pos++] = '0';
+        if (prec_u > 0) {
+            tmp[pos++] = '.';
+            const usize lead_zeros = prec_u - total_digits;
+            for (usize i = 0; i < lead_zeros; ++i) tmp[pos++] = '0';
+            for (usize i = 0; i < total_digits; ++i) tmp[pos++] = digit_at(i);
+        }
+    } else {
+        const usize int_digits = total_digits - prec_u;
+        for (usize i = 0; i < int_digits; ++i) tmp[pos++] = digit_at(i);
+        if (prec_u > 0) {
+            tmp[pos++] = '.';
+            for (usize i = 0; i < prec_u; ++i) tmp[pos++] = digit_at(int_digits + i);
+        }
     }
 
     const usize copy_len = min(pos, cap);

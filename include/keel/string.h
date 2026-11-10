@@ -71,7 +71,7 @@ public:
     }
 
     [[nodiscard]] const char* c_str() const noexcept { return m_data ? m_data : ""; }
-    [[nodiscard]] char* data() noexcept { return m_data ? m_data : const_cast<char*>(""); }
+    [[nodiscard]] char* data() noexcept { return m_data; }
     [[nodiscard]] const char* data() const noexcept { return c_str(); }
 
     [[nodiscard]] usize size() const noexcept { return m_size; }

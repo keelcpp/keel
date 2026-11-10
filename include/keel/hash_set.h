@@ -93,12 +93,15 @@ public:
     }
 
     [[nodiscard]] HashSet clone(Allocator* alloc = nullptr) const {
-        HashSet copy(alloc ? alloc : m_alloc);
+        Allocator* dst_alloc = alloc ? alloc : m_alloc;
+        HashSet copy(dst_alloc);
         copy.reserve(m_size);
         for (usize i = 0; i < m_cap; ++i) {
             if (is_occupied(m_ctrl[i])) {
-                if constexpr (requires(const K& k) { k.clone(); }) {
-                    copy.insert(m_keys[i].clone(copy.m_alloc));
+                if constexpr (requires { m_keys[i].clone(dst_alloc); }) {
+                    copy.insert(m_keys[i].clone(dst_alloc));
+                } else if constexpr (requires { m_keys[i].clone(); }) {
+                    copy.insert(m_keys[i].clone());
                 } else {
                     copy.insert(m_keys[i]);
                 }
@@ -110,6 +113,7 @@ public:
     [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] usize capacity() const noexcept { return m_cap; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
+    [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
 
     [[nodiscard]] ConstIterator begin() const noexcept { return ConstIterator(m_ctrl, m_keys, 0, m_cap); }
     [[nodiscard]] ConstIterator end() const noexcept { return ConstIterator(m_ctrl, m_keys, m_cap, m_cap); }
@@ -125,7 +129,9 @@ public:
 
     void reserve(usize min_items) {
         if (min_items == 0) return;
-        const usize needed_cap = static_cast<usize>(bit_ceil(static_cast<u64>((min_items * 8 + 6) / 7)));
+        const u64 min_u64 = static_cast<u64>(min_items);
+        const u64 raw_cap = (min_u64 > (~u64{0} - 6u) / 8u) ? (u64{1} << 62) : ((min_u64 * 8u + 6u) / 7u);
+        const usize needed_cap = static_cast<usize>(bit_ceil(raw_cap));
         if (needed_cap > m_cap) {
             rehash(keel::max<usize>(needed_cap, 8));
         }
@@ -192,8 +198,8 @@ private:
     void ensure_for_insert() {
         if (m_cap == 0) {
             rehash(8);
-        } else if ((m_size + m_tombstones + 1) * 8 > m_cap * 7) {
-            const usize next_cap = (m_size * 2 >= m_cap) ? (m_cap * 2) : m_cap;
+        } else if ((m_size + m_tombstones + 1) > m_cap - (m_cap >> 3)) {
+            const usize next_cap = (m_size >= (m_cap >> 1)) ? (m_cap * 2) : m_cap;
             rehash(next_cap);
         }
     }

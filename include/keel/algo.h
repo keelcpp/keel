@@ -53,14 +53,19 @@ constexpr void sort(T* data, usize count, LessFn less = LessFn{}) noexcept {
             if (less(data[hi], data[lo])) keel::swap(data[hi], data[lo]);
             if (less(data[hi], data[mid])) keel::swap(data[hi], data[mid]);
 
-            const T pivot = data[mid];
+            isize pivot_idx = mid;
             isize i = lo;
             isize j = hi;
             while (true) {
-                while (less(data[i], pivot)) ++i;
-                while (less(pivot, data[j])) --j;
+                while (less(data[i], data[pivot_idx])) ++i;
+                while (less(data[pivot_idx], data[j])) --j;
                 if (i >= j) break;
                 keel::swap(data[i], data[j]);
+                if (pivot_idx == i) {
+                    pivot_idx = j;
+                } else if (pivot_idx == j) {
+                    pivot_idx = i;
+                }
                 ++i;
                 --j;
             }

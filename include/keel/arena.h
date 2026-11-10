@@ -64,6 +64,9 @@ public:
 
     template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
+        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+            handle_oom(~usize{0}, alignof(T));
+        }
         return static_cast<T*>(alloc(count * sizeof(T), alignof(T)));
     }
 
@@ -357,7 +360,11 @@ public:
     void reserve(usize new_cap) {
         if (new_cap <= static_cast<usize>(m_cap)) return;
         KEEL_ASSERT(m_arena != nullptr);
+        KEEL_ASSERT(new_cap <= 0xFFFFFFFFu);
         if (!m_arena) return;
+        if (new_cap > 0xFFFFFFFFu || new_cap > (~usize{0}) / sizeof(T)) [[unlikely]] {
+            handle_oom(~usize{0}, alignof(T));
+        }
 
         const usize old_bytes = sizeof(T) * static_cast<usize>(m_cap);
         const usize new_bytes = sizeof(T) * new_cap;
@@ -382,6 +389,10 @@ public:
     }
 
     void resize(usize new_size) {
+        KEEL_ASSERT(new_size <= 0xFFFFFFFFu);
+        if (new_size > 0xFFFFFFFFu) [[unlikely]] {
+            handle_oom(~usize{0}, alignof(T));
+        }
         const u32 target = static_cast<u32>(new_size);
         if (target < m_size) {
             if constexpr (!IsTriviallyDestructible<T>) {
@@ -422,6 +433,9 @@ public:
 private:
     template <typename... Args> T& emplace_back_slow(Args&&... args) {
         KEEL_ASSERT(m_arena != nullptr);
+        if (m_cap > 0x7FFFFFFFu) [[unlikely]] {
+            handle_oom(~usize{0}, alignof(T));
+        }
         const u32 next_cap = (m_cap == 0) ? 16u : (m_cap * 2u);
         const usize old_bytes = sizeof(T) * static_cast<usize>(m_cap);
         const usize new_bytes = sizeof(T) * static_cast<usize>(next_cap);

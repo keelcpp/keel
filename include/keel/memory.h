@@ -51,6 +51,9 @@ struct Allocator {
 
     template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
+        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+            handle_oom(~usize{0}, alignof(T));
+        }
         return static_cast<T*>(alloc_bytes(count * sizeof(T), alignof(T)));
     }
 

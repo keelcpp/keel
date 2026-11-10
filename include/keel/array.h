@@ -160,6 +160,15 @@ public:
             }
             m_size = new_size;
         } else if (new_size > m_size) {
+            if (new_size > m_cap && m_data && &fill_value >= m_data && &fill_value < m_data + m_size) {
+                T fill_copy(fill_value);
+                ensure_capacity(new_size);
+                for (usize i = m_size; i < new_size; ++i) {
+                    ::new (m_data + i) T(fill_copy);
+                }
+                m_size = new_size;
+                return;
+            }
             ensure_capacity(new_size);
             for (usize i = m_size; i < new_size; ++i) {
                 ::new (m_data + i) T(fill_value);
@@ -169,37 +178,16 @@ public:
     }
 
     template <typename... Args> T& emplace_back(Args&&... args) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow_for_one();
+        if (m_size < m_cap) [[likely]] {
+            T* slot = ::new (m_data + m_size) T(keel::forward<Args>(args)...);
+            ++m_size;
+            return *slot;
         }
-        T* slot = ::new (m_data + m_size) T(keel::forward<Args>(args)...);
-        ++m_size;
-        return *slot;
+        return emplace_back_slow(keel::forward<Args>(args)...);
     }
 
-    void push_back(const T& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            // Handle self-aliasing if val points inside m_data
-            if (&val >= m_data && &val < m_data + m_size) {
-                T copy(val);
-                grow_for_one();
-                ::new (m_data + m_size) T(keel::move(copy));
-                ++m_size;
-                return;
-            }
-            grow_for_one();
-        }
-        ::new (m_data + m_size) T(val);
-        ++m_size;
-    }
-
-    void push_back(T&& val) {
-        if (m_size == m_cap) [[unlikely]] {
-            grow_for_one();
-        }
-        ::new (m_data + m_size) T(keel::move(val));
-        ++m_size;
-    }
+    void push_back(const T& val) { emplace_back(val); }
+    void push_back(T&& val) { emplace_back(keel::move(val)); }
 
     void pop_back() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
@@ -212,6 +200,19 @@ public:
     void append(ArrayRef<T> items) {
         const usize count = items.size();
         if (count == 0) return;
+        if (m_data && items.data() >= m_data && items.data() < m_data + m_size) {
+            const usize offset = static_cast<usize>(items.data() - m_data);
+            ensure_capacity(m_size + count);
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(m_data + m_size, m_data + offset, count * sizeof(T));
+            } else {
+                for (usize i = 0; i < count; ++i) {
+                    ::new (m_data + m_size + i) T(m_data[offset + i]);
+                }
+            }
+            m_size += count;
+            return;
+        }
         ensure_capacity(m_size + count);
         if constexpr (IsTriviallyCopyable<T>) {
             mem_copy(m_data + m_size, items.data(), count * sizeof(T));
@@ -255,9 +256,28 @@ public:
     }
 
 private:
-    void grow_for_one() {
+    template <typename... Args> T& emplace_back_slow(Args&&... args) {
         const usize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
-        reallocate(new_cap);
+        T* new_data = m_alloc->alloc_array<T>(new_cap);
+        // Construct the new element before relocating/destroying existing elements so self-aliasing args stay valid
+        T* slot = ::new (new_data + m_size) T(keel::forward<Args>(args)...);
+        if (m_size > 0 && m_data) {
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(new_data, m_data, m_size * sizeof(T));
+            } else {
+                for (usize i = 0; i < m_size; ++i) {
+                    ::new (new_data + i) T(keel::move(m_data[i]));
+                    m_data[i].~T();
+                }
+            }
+        }
+        if (m_data) {
+            m_alloc->free_array(m_data, m_cap);
+        }
+        m_data = new_data;
+        m_cap = new_cap;
+        ++m_size;
+        return *slot;
     }
 
     void ensure_capacity(usize needed) {

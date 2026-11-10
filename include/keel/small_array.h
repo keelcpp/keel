@@ -160,6 +160,7 @@ private:
 // Never stores a self-referential pointer to its inline buffer (`m_heap == nullptr` when inline).
 template <typename T, usize N> class SmallArray {
     static_assert(N > 0, "SmallArray inline capacity N must be positive");
+    static_assert(IsNothrowMoveConstructible<T>, "SmallArray<T, N> requires noexcept move constructor");
     static_assert(IsNothrowDestructible<T>, "SmallArray<T, N> requires noexcept destructor");
 
 public:
@@ -307,6 +308,17 @@ public:
             }
             m_size = new_size;
         } else if (new_size > m_size) {
+            const T* old_cur = data();
+            if (new_size > m_cap && &fill_value >= old_cur && &fill_value < old_cur + m_size) {
+                T fill_copy(fill_value);
+                reserve(new_size);
+                T* cur = data();
+                for (usize i = m_size; i < new_size; ++i) {
+                    ::new (cur + i) T(fill_copy);
+                }
+                m_size = new_size;
+                return;
+            }
             reserve(new_size);
             T* cur = data();
             for (usize i = m_size; i < new_size; ++i) {
@@ -317,6 +329,18 @@ public:
     }
 
     void assign(usize count, const T& fill_value) {
+        const T* old_cur = data();
+        if (&fill_value >= old_cur && &fill_value < old_cur + m_size) {
+            T fill_copy(fill_value);
+            clear();
+            reserve(count);
+            T* cur = data();
+            for (usize i = 0; i < count; ++i) {
+                ::new (cur + i) T(fill_copy);
+            }
+            m_size = count;
+            return;
+        }
         clear();
         reserve(count);
         T* cur = data();
@@ -363,12 +387,15 @@ public:
         if (count == 0) return;
         const T* cur = data();
         if (items.data() >= cur && items.data() < cur + m_size) {
-            SmallArray tmp(m_alloc);
-            tmp.append(items);
+            const usize offset = static_cast<usize>(items.data() - cur);
             reserve(m_size + count);
             T* dst = data();
-            for (usize i = 0; i < count; ++i) {
-                ::new (dst + m_size + i) T(keel::move(tmp[i]));
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(dst + m_size, dst + offset, count * sizeof(T));
+            } else {
+                for (usize i = 0; i < count; ++i) {
+                    ::new (dst + m_size + i) T(dst[offset + i]);
+                }
             }
             m_size += count;
             return;

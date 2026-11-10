@@ -117,8 +117,10 @@ template <usize N, typename... Args>
 
 template <usize N, typename... Args>
 void format_into(FixedString<N>& out, StringRef fmt, const Args&... args) noexcept {
-    const usize len = format_buf(out.inline_buffer(), N, fmt, args...);
-    out.set_inline_size(len);
+    const usize cur = out.size();
+    if (cur >= N - 1) return;
+    const usize len = format_buf(out.inline_buffer() + cur, N - cur, fmt, args...);
+    out.set_inline_size(cur + len);
 }
 
 template <usize N = 64, typename... Args>
