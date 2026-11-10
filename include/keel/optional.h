@@ -15,7 +15,9 @@ public:
     constexpr Optional() noexcept : m_dummy(0), m_has_value(false) {}
     constexpr Optional(NullOptT) noexcept : m_dummy(0), m_has_value(false) {}
 
-    constexpr Optional(const T& val) : m_value(val), m_has_value(true) {}
+    constexpr Optional(const T& val)
+        requires IsConstructible<T, const T&>
+        : m_value(val), m_has_value(true) {}
     constexpr Optional(T&& val) noexcept : m_value(keel::move(val)), m_has_value(true) {}
 
     constexpr ~Optional() noexcept
@@ -30,12 +32,15 @@ public:
 
     constexpr Optional(const Optional&) = default;
     constexpr Optional(const Optional& other)
-        requires(!IsTriviallyCopyable<T>)
+        requires(!IsTriviallyCopyable<T> && IsConstructible<T, const T&>)
         : m_dummy(0), m_has_value(other.m_has_value) {
         if (m_has_value) {
             ::new (&m_value) T(other.m_value);
         }
     }
+    Optional(const Optional&)
+        requires(!IsConstructible<T, const T&>)
+    = delete;
 
     constexpr Optional(Optional&&) noexcept = default;
     constexpr Optional(Optional&& other) noexcept
@@ -49,7 +54,7 @@ public:
 
     constexpr Optional& operator=(const Optional&) = default;
     constexpr Optional& operator=(const Optional& other)
-        requires(!IsTriviallyCopyable<T>)
+        requires(!IsTriviallyCopyable<T> && IsConstructible<T, const T&>)
     {
         if (this != &other) {
             if (m_has_value && other.m_has_value) {
@@ -61,6 +66,18 @@ public:
             }
         }
         return *this;
+    }
+    Optional& operator=(const Optional&)
+        requires(!IsConstructible<T, const T&>)
+    = delete;
+
+    [[nodiscard]] constexpr Optional clone() const {
+        if (!m_has_value) return kNullOpt;
+        if constexpr (requires { m_value.clone(); }) {
+            return Optional(m_value.clone());
+        } else {
+            return Optional(m_value);
+        }
     }
 
     constexpr Optional& operator=(Optional&&) noexcept = default;

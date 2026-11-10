@@ -13,6 +13,15 @@ template <typename T, usize N> class FixedArray {
 
 public:
     FixedArray() noexcept = default;
+
+    explicit FixedArray(usize count) { resize(count); }
+
+    FixedArray(usize count, const T& fill_value) { assign(count, fill_value); }
+
+    explicit FixedArray(ArrayRef<T> items) { append(items); }
+
+    [[nodiscard]] static FixedArray from(ArrayRef<T> items) { return FixedArray(items); }
+
     ~FixedArray() noexcept { clear(); }
 
     FixedArray(const FixedArray&) = delete;
@@ -42,18 +51,24 @@ public:
     [[nodiscard]] FixedArray clone() const {
         FixedArray copy;
         for (usize i = 0; i < m_size; ++i) {
-            copy.push_back((*this)[i]);
+            copy.push_back(detail::clone_value_inline((*this)[i]));
         }
         return copy;
     }
 
     [[nodiscard]] operator ArrayRef<T>() const noexcept { return ArrayRef<T>(data(), m_size); }
     [[nodiscard]] operator MutArrayRef<T>() noexcept { return MutArrayRef<T>(data(), m_size); }
+    [[nodiscard]] ArrayRef<T> as_ref() const noexcept { return ArrayRef<T>(data(), m_size); }
+    [[nodiscard]] MutArrayRef<T> as_mut_ref() noexcept { return MutArrayRef<T>(data(), m_size); }
+    [[nodiscard]] ArrayRef<T> slice(usize offset, usize count = kInvalidIndex) const noexcept {
+        return as_ref().slice(offset, count);
+    }
 
     [[nodiscard]] T* data() noexcept { return reinterpret_cast<T*>(m_storage); }
     [[nodiscard]] const T* data() const noexcept { return reinterpret_cast<const T*>(m_storage); }
     [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] static constexpr usize capacity() noexcept { return N; }
+    [[nodiscard]] static constexpr usize inline_capacity() noexcept { return N; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] bool full() const noexcept { return m_size == N; }
 
@@ -92,6 +107,77 @@ public:
         return data()[m_size - 1];
     }
 
+    void resize(usize new_size) {
+        KEEL_BOUNDS_ASSERT(new_size <= N);
+        if (new_size < m_size) {
+            if constexpr (!IsTriviallyDestructible<T>) {
+                for (usize i = m_size; i > new_size; --i) {
+                    ptr_at(i - 1)->~T();
+                }
+            }
+            m_size = new_size;
+        } else if (new_size > m_size) {
+            for (usize i = m_size; i < new_size; ++i) {
+                ::new (ptr_at(i)) T{};
+            }
+            m_size = new_size;
+        }
+    }
+
+    void resize(usize new_size, const T& fill_value) {
+        KEEL_BOUNDS_ASSERT(new_size <= N);
+        if (new_size < m_size) {
+            if constexpr (!IsTriviallyDestructible<T>) {
+                for (usize i = m_size; i > new_size; --i) {
+                    ptr_at(i - 1)->~T();
+                }
+            }
+            m_size = new_size;
+        } else if (new_size > m_size) {
+            for (usize i = m_size; i < new_size; ++i) {
+                ::new (ptr_at(i)) T(fill_value);
+            }
+            m_size = new_size;
+        }
+    }
+
+    void assign(usize count, const T& fill_value) {
+        KEEL_BOUNDS_ASSERT(count <= N);
+        const T* cur = data();
+        if (&fill_value >= cur && &fill_value < cur + m_size) {
+            T fill_copy(fill_value);
+            clear();
+            for (usize i = 0; i < count; ++i) {
+                ::new (ptr_at(i)) T(fill_copy);
+            }
+            m_size = count;
+            return;
+        }
+        clear();
+        for (usize i = 0; i < count; ++i) {
+            ::new (ptr_at(i)) T(fill_value);
+        }
+        m_size = count;
+    }
+
+    void assign(ArrayRef<T> items) {
+        KEEL_BOUNDS_ASSERT(items.size() <= N);
+        const T* cur = data();
+        if (items.data() >= cur && items.data() < cur + m_size) {
+            FixedArray tmp(items);
+            *this = keel::move(tmp);
+            return;
+        }
+        clear();
+        append(items);
+    }
+
+    [[nodiscard]] bool try_assign(ArrayRef<T> items) {
+        if (items.size() > N) return false;
+        assign(items);
+        return true;
+    }
+
     template <typename... Args> T& emplace_back(Args&&... args) {
         KEEL_BOUNDS_ASSERT(m_size < N);
         T* slot = ::new (ptr_at(m_size)) T(keel::forward<Args>(args)...);
@@ -99,18 +185,48 @@ public:
         return *slot;
     }
 
-    void push_back(const T& val) { emplace_back(val); }
-    void push_back(T&& val) { emplace_back(keel::move(val)); }
-
-    [[nodiscard]] bool try_push_back(const T& val) {
+    template <typename... Args> [[nodiscard]] bool try_emplace_back(Args&&... args) {
         if (m_size >= N) return false;
-        emplace_back(val);
+        emplace_back(keel::forward<Args>(args)...);
         return true;
     }
 
-    [[nodiscard]] bool try_push_back(T&& val) {
-        if (m_size >= N) return false;
-        emplace_back(keel::move(val));
+    void push_back(const T& val) { emplace_back(val); }
+    void push_back(T&& val) { emplace_back(keel::move(val)); }
+
+    [[nodiscard]] bool try_push_back(const T& val) { return try_emplace_back(val); }
+    [[nodiscard]] bool try_push_back(T&& val) { return try_emplace_back(keel::move(val)); }
+
+    void append(ArrayRef<T> items) {
+        const usize count = items.size();
+        if (count == 0) return;
+        KEEL_BOUNDS_ASSERT(m_size + count <= N);
+        T* dst = data();
+        if (items.data() >= dst && items.data() < dst + m_size) {
+            const usize offset = static_cast<usize>(items.data() - dst);
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(dst + m_size, dst + offset, count * sizeof(T));
+            } else {
+                for (usize i = 0; i < count; ++i) {
+                    ::new (dst + m_size + i) T(dst[offset + i]);
+                }
+            }
+            m_size += count;
+            return;
+        }
+        if constexpr (IsTriviallyCopyable<T>) {
+            mem_copy(dst + m_size, items.data(), count * sizeof(T));
+        } else {
+            for (usize i = 0; i < count; ++i) {
+                ::new (dst + m_size + i) T(items[i]);
+            }
+        }
+        m_size += count;
+    }
+
+    [[nodiscard]] bool try_append(ArrayRef<T> items) {
+        if (items.size() > N - m_size) return false;
+        append(items);
         return true;
     }
 
@@ -124,8 +240,8 @@ public:
 
     void clear() noexcept {
         if constexpr (!IsTriviallyDestructible<T>) {
-            for (usize i = 0; i < m_size; ++i) {
-                ptr_at(i)->~T();
+            for (usize i = m_size; i > 0; --i) {
+                ptr_at(i - 1)->~T();
             }
         }
         m_size = 0;
@@ -147,6 +263,22 @@ public:
             (*this)[i] = keel::move((*this)[m_size - 1]);
         }
         pop_back();
+    }
+
+    [[nodiscard]] friend bool operator==(const FixedArray& a, const FixedArray& b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        return a.as_ref() == b.as_ref();
+    }
+
+    [[nodiscard]] friend bool operator==(const FixedArray& a, ArrayRef<T> b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        return a.as_ref() == b;
     }
 
 private:
@@ -182,6 +314,16 @@ public:
         append(items);
     }
 
+    [[nodiscard]] static SmallArray with_capacity(usize cap, Allocator* alloc = nullptr) {
+        SmallArray arr(alloc);
+        arr.reserve(cap);
+        return arr;
+    }
+
+    [[nodiscard]] static SmallArray from(ArrayRef<T> items, Allocator* alloc = nullptr) {
+        return SmallArray(items, alloc);
+    }
+
     ~SmallArray() noexcept {
         clear();
         if (m_heap) {
@@ -211,18 +353,36 @@ public:
     }
 
     [[nodiscard]] SmallArray clone(Allocator* alloc = nullptr) const {
-        SmallArray copy(alloc ? alloc : m_alloc);
-        copy.append(ArrayRef<T>(data(), m_size));
+        Allocator* dst_alloc = alloc ? alloc : m_alloc;
+        SmallArray copy(dst_alloc);
+        if (m_size > 0) {
+            copy.reserve(m_size);
+            const T* src = data();
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(copy.data(), src, m_size * sizeof(T));
+                copy.m_size = m_size;
+            } else {
+                for (usize i = 0; i < m_size; ++i) {
+                    copy.push_back(detail::clone_value(src[i], dst_alloc));
+                }
+            }
+        }
         return copy;
     }
 
     [[nodiscard]] operator ArrayRef<T>() const noexcept { return ArrayRef<T>(data(), m_size); }
     [[nodiscard]] operator MutArrayRef<T>() noexcept { return MutArrayRef<T>(data(), m_size); }
+    [[nodiscard]] ArrayRef<T> as_ref() const noexcept { return ArrayRef<T>(data(), m_size); }
+    [[nodiscard]] MutArrayRef<T> as_mut_ref() noexcept { return MutArrayRef<T>(data(), m_size); }
+    [[nodiscard]] ArrayRef<T> slice(usize offset, usize count = kInvalidIndex) const noexcept {
+        return as_ref().slice(offset, count);
+    }
 
     [[nodiscard]] T* data() noexcept { return m_heap ? m_heap : inline_ptr(); }
     [[nodiscard]] const T* data() const noexcept { return m_heap ? m_heap : inline_ptr(); }
     [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] usize capacity() const noexcept { return m_cap; }
+    [[nodiscard]] static constexpr usize inline_capacity() noexcept { return N; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] bool is_inline() const noexcept { return m_heap == nullptr; }
     [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
@@ -267,6 +427,18 @@ public:
         usize new_cap = m_cap;
         while (new_cap < min_cap) new_cap *= 2;
         reallocate(new_cap);
+    }
+
+    void shrink_to_fit() {
+        if (is_inline()) return;
+        if (m_size <= N) {
+            relocate_elements(inline_ptr(), m_heap, m_size);
+            m_alloc->free_array(m_heap, m_cap);
+            m_heap = nullptr;
+            m_cap = N;
+        } else if (m_cap > m_size) {
+            reallocate(m_size);
+        }
     }
 
     void clear() noexcept {
@@ -430,6 +602,22 @@ public:
             cur[i] = keel::move(cur[m_size - 1]);
         }
         pop_back();
+    }
+
+    [[nodiscard]] friend bool operator==(const SmallArray& a, const SmallArray& b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        return a.as_ref() == b.as_ref();
+    }
+
+    [[nodiscard]] friend bool operator==(const SmallArray& a, ArrayRef<T> b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        return a.as_ref() == b;
     }
 
 private:

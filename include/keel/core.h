@@ -117,6 +117,54 @@ template <bool B, typename T, typename F> using Conditional = typename detail::C
 template <typename T, typename U> inline constexpr bool IsSame = false;
 template <typename T> inline constexpr bool IsSame<T, T> = true;
 
+template <typename T> inline constexpr bool IsConst = false;
+template <typename T> inline constexpr bool IsConst<const T> = true;
+
+template <typename T> inline constexpr bool IsReference = false;
+template <typename T> inline constexpr bool IsReference<T&> = true;
+template <typename T> inline constexpr bool IsReference<T&&> = true;
+
+template <typename T> inline constexpr bool IsPointer = false;
+template <typename T> inline constexpr bool IsPointer<T*> = true;
+template <typename T> inline constexpr bool IsPointer<T* const> = true;
+template <typename T> inline constexpr bool IsPointer<T* volatile> = true;
+template <typename T> inline constexpr bool IsPointer<T* const volatile> = true;
+
+namespace detail {
+template <typename T> struct RemovePtr {
+    using Type = T;
+};
+template <typename T> struct RemovePtr<T*> {
+    using Type = T;
+};
+} // namespace detail
+
+template <typename T> using RemovePointer = typename detail::RemovePtr<RemoveCv<T>>::Type;
+template <typename T> inline constexpr bool IsFunction = !IsConst<const T> && !IsReference<T>;
+
+namespace detail {
+template <typename U, bool IsFn = IsFunction<U>> struct DecayImpl {
+    using Type = typename RemoveCv<U>::Type;
+};
+template <typename U> struct DecayImpl<U, true> {
+    using Type = U*;
+};
+template <typename V> struct DecayImpl<V[], false> {
+    using Type = V*;
+};
+template <typename V, usize M> struct DecayImpl<V[M], false> {
+    using Type = V*;
+};
+template <typename V> struct DecayImpl<const V[], false> {
+    using Type = const V*;
+};
+template <typename V, usize M> struct DecayImpl<const V[M], false> {
+    using Type = const V*;
+};
+} // namespace detail
+
+template <typename T> using Decay = typename detail::DecayImpl<RemoveReference<T>>::Type;
+
 template <typename T> inline constexpr bool IsTriviallyCopyable = __is_trivially_copyable(T);
 #if defined(__clang__) || defined(_MSC_VER) || (defined(__GNUC__) && __GNUC__ >= 11)
 template <typename T> inline constexpr bool IsTriviallyDestructible = __is_trivially_destructible(T);

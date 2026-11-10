@@ -5,18 +5,47 @@
 
 namespace keel {
 
+namespace detail {
+[[nodiscard]] constexpr usize clamp_utf8_truncation(const char* s, usize total_len, usize max_bytes) noexcept {
+    if (total_len <= max_bytes || max_bytes == 0) return keel::min(total_len, max_bytes);
+    const u8 next_byte = static_cast<u8>(s[max_bytes]);
+    if ((next_byte & 0xC0u) != 0x80u) {
+        return max_bytes;
+    }
+    for (usize back = 1; back <= 3 && back <= max_bytes; ++back) {
+        const u8 c = static_cast<u8>(s[max_bytes - back]);
+        if ((c & 0xC0u) == 0x80u) {
+            continue;
+        }
+        if (c >= 0xC2u && c <= 0xF4u) {
+            const usize seq_len = (c < 0xE0u) ? 2u : ((c < 0xF0u) ? 3u : 4u);
+            if (back < seq_len) {
+                return max_bytes - back;
+            }
+        }
+        break;
+    }
+    return max_bytes;
+}
+} // namespace detail
+
 // Move-only UTF-8 string without SSO. Always null-terminated via c_str().
 class String {
 public:
     explicit String(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
-    static String from(StringRef str, Allocator* alloc = nullptr) {
-        String s(alloc);
-        s.append(str);
-        return s;
+    explicit String(StringRef str, Allocator* alloc = nullptr)
+        : m_alloc(alloc ? alloc : default_allocator()) {
+        append(str);
     }
 
-    static String with_capacity(usize cap, Allocator* alloc = nullptr) {
+    explicit String(const char* cstr, Allocator* alloc = nullptr) : String(StringRef(cstr), alloc) {}
+
+    [[nodiscard]] static String from(StringRef str, Allocator* alloc = nullptr) {
+        return String(str, alloc);
+    }
+
+    [[nodiscard]] static String with_capacity(usize cap, Allocator* alloc = nullptr) {
         String s(alloc);
         s.reserve(cap);
         return s;
@@ -95,6 +124,26 @@ public:
         return m_data[i];
     }
 
+    [[nodiscard]] char& front() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[0];
+    }
+
+    [[nodiscard]] char front() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[0];
+    }
+
+    [[nodiscard]] char& back() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
+    [[nodiscard]] char back() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
     void reserve(usize min_cap) {
         if (min_cap <= m_cap) return;
         usize new_cap = (m_cap == 0) ? 15 : m_cap;
@@ -102,6 +151,18 @@ public:
             new_cap = new_cap * 2 + 1;
         }
         reallocate(new_cap);
+    }
+
+    void shrink_to_fit() {
+        if (m_cap > m_size) {
+            if (m_size == 0) {
+                m_alloc->free_bytes(m_data, m_cap + 1, 1);
+                m_data = nullptr;
+                m_cap = 0;
+            } else {
+                reallocate(m_size);
+            }
+        }
     }
 
     void clear() noexcept {
@@ -118,6 +179,21 @@ public:
         }
         m_size = new_size;
         if (m_data) m_data[m_size] = '\0';
+    }
+
+    void assign(StringRef str) {
+        if (m_data && str.data() >= m_data && str.data() <= m_data + m_size) {
+            const usize offset = static_cast<usize>(str.data() - m_data);
+            const usize n = str.size();
+            if (n > 0 && offset > 0) {
+                mem_move(m_data, m_data + offset, n);
+            }
+            m_size = n;
+            m_data[m_size] = '\0';
+            return;
+        }
+        clear();
+        append(str);
     }
 
     void push_back(char c) {
@@ -166,6 +242,19 @@ public:
     [[nodiscard]] StringRef substr(usize offset, usize count = StringRef::npos) const noexcept {
         return as_ref().substr(offset, count);
     }
+    [[nodiscard]] bool starts_with(StringRef prefix) const noexcept { return as_ref().starts_with(prefix); }
+    [[nodiscard]] bool starts_with(char c) const noexcept { return as_ref().starts_with(c); }
+    [[nodiscard]] bool ends_with(StringRef suffix) const noexcept { return as_ref().ends_with(suffix); }
+    [[nodiscard]] bool ends_with(char c) const noexcept { return as_ref().ends_with(c); }
+    [[nodiscard]] bool contains(StringRef needle) const noexcept { return as_ref().contains(needle); }
+    [[nodiscard]] bool contains(char c) const noexcept { return as_ref().contains(c); }
+    [[nodiscard]] usize find(StringRef needle, usize from = 0) const noexcept { return as_ref().find(needle, from); }
+    [[nodiscard]] usize find(char c, usize from = 0) const noexcept { return as_ref().find(c, from); }
+    [[nodiscard]] usize rfind(StringRef needle) const noexcept { return as_ref().rfind(needle); }
+    [[nodiscard]] usize rfind(char c) const noexcept { return as_ref().rfind(c); }
+    [[nodiscard]] StringRef trim() const noexcept { return as_ref().trim(); }
+    [[nodiscard]] StringRef trim_left() const noexcept { return as_ref().trim_left(); }
+    [[nodiscard]] StringRef trim_right() const noexcept { return as_ref().trim_right(); }
 
     [[nodiscard]] friend bool operator==(const String& a, const String& b) noexcept {
         return a.as_ref() == b.as_ref();
@@ -178,6 +267,10 @@ public:
     [[nodiscard]] friend bool operator!=(const String& a, const String& b) noexcept { return !(a == b); }
     [[nodiscard]] friend bool operator!=(const String& a, StringRef b) noexcept { return !(a == b); }
     [[nodiscard]] friend bool operator!=(const String& a, const char* b) noexcept { return !(a == b); }
+    [[nodiscard]] friend bool operator<(const String& a, const String& b) noexcept { return a.as_ref() < b.as_ref(); }
+    [[nodiscard]] friend bool operator<=(const String& a, const String& b) noexcept { return a.as_ref() <= b.as_ref(); }
+    [[nodiscard]] friend bool operator>(const String& a, const String& b) noexcept { return a.as_ref() > b.as_ref(); }
+    [[nodiscard]] friend bool operator>=(const String& a, const String& b) noexcept { return a.as_ref() >= b.as_ref(); }
 
 private:
     void reallocate(usize new_cap) {
@@ -224,14 +317,13 @@ public:
         append(str);
     }
 
-    explicit SmallString(const char* cstr, Allocator* alloc = nullptr)
-        : SmallString(StringRef(cstr), alloc) {}
+    explicit SmallString(const char* cstr, Allocator* alloc = nullptr) : SmallString(StringRef(cstr), alloc) {}
 
-    static SmallString from(StringRef str, Allocator* alloc = nullptr) {
+    [[nodiscard]] static SmallString from(StringRef str, Allocator* alloc = nullptr) {
         return SmallString(str, alloc);
     }
 
-    static SmallString with_capacity(usize cap, Allocator* alloc = nullptr) {
+    [[nodiscard]] static SmallString with_capacity(usize cap, Allocator* alloc = nullptr) {
         SmallString s(alloc);
         s.reserve(cap);
         return s;
@@ -246,8 +338,7 @@ public:
     SmallString(const SmallString&) = delete;
     SmallString& operator=(const SmallString&) = delete;
 
-    SmallString(SmallString&& other) noexcept
-        : m_heap(nullptr), m_size(0), m_cap(N - 1), m_alloc(other.m_alloc) {
+    SmallString(SmallString&& other) noexcept : m_heap(nullptr), m_size(0), m_cap(N - 1), m_alloc(other.m_alloc) {
         move_from(other);
     }
 
@@ -309,6 +400,26 @@ public:
         return data()[i];
     }
 
+    [[nodiscard]] char& front() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[0];
+    }
+
+    [[nodiscard]] char front() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[0];
+    }
+
+    [[nodiscard]] char& back() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[m_size - 1];
+    }
+
+    [[nodiscard]] char back() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return data()[m_size - 1];
+    }
+
     void reserve(usize min_cap) {
         if (min_cap <= m_cap) return;
         usize new_cap = m_cap;
@@ -316,6 +427,21 @@ public:
             new_cap = new_cap * 2 + 1;
         }
         reallocate(new_cap);
+    }
+
+    void shrink_to_fit() {
+        if (is_inline()) return;
+        if (m_size <= N - 1) {
+            if (m_size > 0) {
+                mem_copy(m_inline, m_heap, m_size);
+            }
+            m_inline[m_size] = '\0';
+            m_alloc->free_bytes(m_heap, m_cap + 1, 1);
+            m_heap = nullptr;
+            m_cap = N - 1;
+        } else if (m_cap > m_size) {
+            reallocate(m_size);
+        }
     }
 
     void clear() noexcept {
@@ -401,6 +527,19 @@ public:
     [[nodiscard]] StringRef substr(usize offset, usize count = StringRef::npos) const noexcept {
         return as_ref().substr(offset, count);
     }
+    [[nodiscard]] bool starts_with(StringRef prefix) const noexcept { return as_ref().starts_with(prefix); }
+    [[nodiscard]] bool starts_with(char c) const noexcept { return as_ref().starts_with(c); }
+    [[nodiscard]] bool ends_with(StringRef suffix) const noexcept { return as_ref().ends_with(suffix); }
+    [[nodiscard]] bool ends_with(char c) const noexcept { return as_ref().ends_with(c); }
+    [[nodiscard]] bool contains(StringRef needle) const noexcept { return as_ref().contains(needle); }
+    [[nodiscard]] bool contains(char c) const noexcept { return as_ref().contains(c); }
+    [[nodiscard]] usize find(StringRef needle, usize from = 0) const noexcept { return as_ref().find(needle, from); }
+    [[nodiscard]] usize find(char c, usize from = 0) const noexcept { return as_ref().find(c, from); }
+    [[nodiscard]] usize rfind(StringRef needle) const noexcept { return as_ref().rfind(needle); }
+    [[nodiscard]] usize rfind(char c) const noexcept { return as_ref().rfind(c); }
+    [[nodiscard]] StringRef trim() const noexcept { return as_ref().trim(); }
+    [[nodiscard]] StringRef trim_left() const noexcept { return as_ref().trim_left(); }
+    [[nodiscard]] StringRef trim_right() const noexcept { return as_ref().trim_right(); }
 
     [[nodiscard]] friend bool operator==(const SmallString& a, const SmallString& b) noexcept {
         return a.as_ref() == b.as_ref();
@@ -413,6 +552,18 @@ public:
     [[nodiscard]] friend bool operator!=(const SmallString& a, const SmallString& b) noexcept { return !(a == b); }
     [[nodiscard]] friend bool operator!=(const SmallString& a, StringRef b) noexcept { return !(a == b); }
     [[nodiscard]] friend bool operator!=(const SmallString& a, const char* b) noexcept { return !(a == b); }
+    [[nodiscard]] friend bool operator<(const SmallString& a, const SmallString& b) noexcept {
+        return a.as_ref() < b.as_ref();
+    }
+    [[nodiscard]] friend bool operator<=(const SmallString& a, const SmallString& b) noexcept {
+        return a.as_ref() <= b.as_ref();
+    }
+    [[nodiscard]] friend bool operator>(const SmallString& a, const SmallString& b) noexcept {
+        return a.as_ref() > b.as_ref();
+    }
+    [[nodiscard]] friend bool operator>=(const SmallString& a, const SmallString& b) noexcept {
+        return a.as_ref() >= b.as_ref();
+    }
 
 private:
     void move_from(SmallString& other) noexcept {
@@ -468,27 +619,24 @@ template <usize N> struct Equal<SmallString<N>> {
     [[nodiscard]] bool operator()(const SmallString<N>& a, const SmallString<N>& b) const noexcept {
         return a.as_ref() == b.as_ref();
     }
-    [[nodiscard]] bool operator()(const SmallString<N>& a, StringRef b) const noexcept {
-        return a.as_ref() == b;
-    }
-    [[nodiscard]] bool operator()(const SmallString<N>& a, const char* b) const noexcept {
-        return a == b;
-    }
+    [[nodiscard]] bool operator()(const SmallString<N>& a, StringRef b) const noexcept { return a.as_ref() == b; }
+    [[nodiscard]] bool operator()(const SmallString<N>& a, const char* b) const noexcept { return a == b; }
 };
 
 // Pure stack-allocated fixed-capacity UTF-8 string (Rule of Zero, trivially copyable, zero heap allocations).
-// Stores up to N - 1 characters (+ '\0') directly inside `m_buf[N]`; excess characters are safely truncated.
+// Stores up to N - 1 bytes (+ '\0') directly inside `m_buf[N]`; truncating methods (`assign`/`append`) clamp safely
+// at UTF-8 codepoint boundaries, while `try_assign`/`try_append`/`try_push_back` reject overflow explicitly.
 template <usize N = 64> class FixedString {
-    static_assert(N > 1, "FixedString capacity N must be greater than 1");
+    static_assert(N > 1, "FixedString buffer size N must be greater than 1");
 
 public:
     constexpr FixedString() noexcept = default;
 
-    constexpr FixedString(const char* cstr) noexcept { set(StringRef(cstr)); }
+    constexpr FixedString(const char* cstr) noexcept { assign(StringRef(cstr)); }
 
-    constexpr FixedString(const char* str, usize len) noexcept { set(StringRef(str, len)); }
+    constexpr FixedString(const char* str, usize len) noexcept { assign(StringRef(str, len)); }
 
-    constexpr FixedString(StringRef ref) noexcept { set(ref); }
+    constexpr FixedString(StringRef ref) noexcept { assign(ref); }
 
     template <typename R>
         requires(!IsSame<RemoveCvRef<R>, FixedString>) && (!IsSame<RemoveCvRef<R>, StringRef>) &&
@@ -498,16 +646,18 @@ public:
                     { r.size() };
                 }
     constexpr FixedString(const R& range) noexcept {
-        set(StringRef(range.data(), static_cast<usize>(range.size())));
+        assign(StringRef(range.data(), static_cast<usize>(range.size())));
     }
 
+    [[nodiscard]] static constexpr FixedString from(StringRef ref) noexcept { return FixedString(ref); }
+
     constexpr FixedString& operator=(const char* cstr) noexcept {
-        set(StringRef(cstr));
+        assign(StringRef(cstr));
         return *this;
     }
 
     constexpr FixedString& operator=(StringRef ref) noexcept {
-        set(ref);
+        assign(ref);
         return *this;
     }
 
@@ -519,12 +669,12 @@ public:
                     { r.size() };
                 }
     constexpr FixedString& operator=(const R& range) noexcept {
-        set(StringRef(range.data(), static_cast<usize>(range.size())));
+        assign(StringRef(range.data(), static_cast<usize>(range.size())));
         return *this;
     }
 
-    constexpr void set(StringRef ref) noexcept {
-        const usize clamped = keel::min<usize>(ref.size(), N - 1);
+    constexpr void assign(StringRef ref) noexcept {
+        const usize clamped = detail::clamp_utf8_truncation(ref.data(), ref.size(), N - 1);
         m_size = static_cast<u32>(clamped);
         if (__builtin_is_constant_evaluated()) {
             for (u32 i = 0; i < m_size; ++i) {
@@ -534,6 +684,14 @@ public:
             mem_move(m_buf, ref.data(), static_cast<usize>(m_size));
         }
         m_buf[m_size] = '\0';
+    }
+
+    constexpr void set(StringRef ref) noexcept { assign(ref); }
+
+    [[nodiscard]] constexpr bool try_assign(StringRef ref) noexcept {
+        if (ref.size() > N - 1) return false;
+        assign(ref);
+        return true;
     }
 
     constexpr void clear() noexcept {
@@ -548,6 +706,13 @@ public:
         }
     }
 
+    [[nodiscard]] constexpr bool try_push_back(char c) noexcept {
+        if (static_cast<usize>(m_size) >= N - 1) return false;
+        m_buf[m_size++] = c;
+        m_buf[m_size] = '\0';
+        return true;
+    }
+
     constexpr void pop_back() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
         --m_size;
@@ -556,7 +721,7 @@ public:
 
     constexpr void append(StringRef ref) noexcept {
         const usize avail = (N - 1) - static_cast<usize>(m_size);
-        const usize to_copy = keel::min<usize>(ref.size(), avail);
+        const usize to_copy = detail::clamp_utf8_truncation(ref.data(), ref.size(), avail);
         if (to_copy == 0) return;
         if (__builtin_is_constant_evaluated()) {
             for (usize i = 0; i < to_copy; ++i) {
@@ -569,6 +734,13 @@ public:
         m_buf[m_size] = '\0';
     }
 
+    [[nodiscard]] constexpr bool try_append(StringRef ref) noexcept {
+        const usize avail = (N - 1) - static_cast<usize>(m_size);
+        if (ref.size() > avail) return false;
+        append(ref);
+        return true;
+    }
+
     constexpr void resize(usize new_size, char fill = '\0') noexcept {
         const u32 target = static_cast<u32>(keel::min<usize>(new_size, N - 1));
         if (target > m_size) {
@@ -579,6 +751,22 @@ public:
         m_size = target;
         m_buf[m_size] = '\0';
     }
+
+    constexpr void remove_at(usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        const usize tail = static_cast<usize>(m_size) - i - 1;
+        if (__builtin_is_constant_evaluated()) {
+            for (usize k = 0; k < tail; ++k) {
+                m_buf[i + k] = m_buf[i + k + 1];
+            }
+        } else if (tail > 0) {
+            mem_move(m_buf + i, m_buf + i + 1, tail);
+        }
+        --m_size;
+        m_buf[m_size] = '\0';
+    }
+
+    constexpr void erase(usize i) noexcept { remove_at(i); }
 
     [[nodiscard]] constexpr char* inline_buffer() noexcept { return m_buf; }
 
@@ -615,6 +803,8 @@ public:
     [[nodiscard]] constexpr bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] constexpr bool full() const noexcept { return static_cast<usize>(m_size) == N - 1; }
     [[nodiscard]] static constexpr usize capacity() noexcept { return N - 1; }
+    [[nodiscard]] static constexpr usize max_size() noexcept { return N - 1; }
+    [[nodiscard]] static constexpr usize buffer_size() noexcept { return N; }
 
     [[nodiscard]] constexpr char* begin() noexcept { return m_buf; }
     [[nodiscard]] constexpr const char* begin() const noexcept { return m_buf; }
@@ -631,9 +821,44 @@ public:
         return m_buf[i];
     }
 
+    [[nodiscard]] constexpr char& front() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_buf[0];
+    }
+
+    [[nodiscard]] constexpr char front() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_buf[0];
+    }
+
+    [[nodiscard]] constexpr char& back() noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_buf[m_size - 1];
+    }
+
+    [[nodiscard]] constexpr char back() const noexcept {
+        KEEL_BOUNDS_ASSERT(m_size > 0);
+        return m_buf[m_size - 1];
+    }
+
     [[nodiscard]] constexpr StringRef substr(usize offset, usize count = StringRef::npos) const noexcept {
         return as_ref().substr(offset, count);
     }
+    [[nodiscard]] constexpr bool starts_with(StringRef prefix) const noexcept { return as_ref().starts_with(prefix); }
+    [[nodiscard]] constexpr bool starts_with(char c) const noexcept { return as_ref().starts_with(c); }
+    [[nodiscard]] constexpr bool ends_with(StringRef suffix) const noexcept { return as_ref().ends_with(suffix); }
+    [[nodiscard]] constexpr bool ends_with(char c) const noexcept { return as_ref().ends_with(c); }
+    [[nodiscard]] constexpr bool contains(StringRef needle) const noexcept { return as_ref().contains(needle); }
+    [[nodiscard]] constexpr bool contains(char c) const noexcept { return as_ref().contains(c); }
+    [[nodiscard]] constexpr usize find(StringRef needle, usize from = 0) const noexcept {
+        return as_ref().find(needle, from);
+    }
+    [[nodiscard]] constexpr usize find(char c, usize from = 0) const noexcept { return as_ref().find(c, from); }
+    [[nodiscard]] constexpr usize rfind(StringRef needle) const noexcept { return as_ref().rfind(needle); }
+    [[nodiscard]] constexpr usize rfind(char c) const noexcept { return as_ref().rfind(c); }
+    [[nodiscard]] constexpr StringRef trim() const noexcept { return as_ref().trim(); }
+    [[nodiscard]] constexpr StringRef trim_left() const noexcept { return as_ref().trim_left(); }
+    [[nodiscard]] constexpr StringRef trim_right() const noexcept { return as_ref().trim_right(); }
 
     [[nodiscard]] constexpr bool operator==(const FixedString& other) const noexcept {
         return as_ref() == other.as_ref();
@@ -654,6 +879,19 @@ public:
         return as_ref() == StringRef(other.data(), static_cast<usize>(other.size()));
     }
 
+    [[nodiscard]] friend constexpr bool operator<(const FixedString& a, const FixedString& b) noexcept {
+        return a.as_ref() < b.as_ref();
+    }
+    [[nodiscard]] friend constexpr bool operator<=(const FixedString& a, const FixedString& b) noexcept {
+        return a.as_ref() <= b.as_ref();
+    }
+    [[nodiscard]] friend constexpr bool operator>(const FixedString& a, const FixedString& b) noexcept {
+        return a.as_ref() > b.as_ref();
+    }
+    [[nodiscard]] friend constexpr bool operator>=(const FixedString& a, const FixedString& b) noexcept {
+        return a.as_ref() >= b.as_ref();
+    }
+
 private:
     u32 m_size = 0;
     char m_buf[N]{};
@@ -671,12 +909,8 @@ template <usize N> struct Equal<FixedString<N>> {
     [[nodiscard]] bool operator()(const FixedString<N>& a, const FixedString<N>& b) const noexcept {
         return a.as_ref() == b.as_ref();
     }
-    [[nodiscard]] bool operator()(const FixedString<N>& a, StringRef b) const noexcept {
-        return a.as_ref() == b;
-    }
-    [[nodiscard]] bool operator()(const FixedString<N>& a, const char* b) const noexcept {
-        return a == b;
-    }
+    [[nodiscard]] bool operator()(const FixedString<N>& a, StringRef b) const noexcept { return a.as_ref() == b; }
+    [[nodiscard]] bool operator()(const FixedString<N>& a, const char* b) const noexcept { return a == b; }
 };
 
 } // namespace keel

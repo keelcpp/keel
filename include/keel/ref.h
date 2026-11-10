@@ -1,6 +1,7 @@
 #pragma once
 
 #include "keel/core.h"
+#include "keel/function_ref.h"
 #include "keel/hash.h"
 
 namespace keel {
@@ -288,6 +289,26 @@ public:
         const usize rem = m_size - offset;
         const usize len = (count > rem) ? rem : count;
         return ArrayRef<T>(m_data + offset, len);
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(ArrayRef a, ArrayRef b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        if (a.m_size != b.m_size) return false;
+        for (usize i = 0; i < a.m_size; ++i) {
+            if (!(a.m_data[i] == b.m_data[i])) return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] friend constexpr bool operator!=(ArrayRef a, ArrayRef b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        return !(a == b);
     }
 
 private:

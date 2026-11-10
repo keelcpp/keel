@@ -2,6 +2,7 @@
 
 #include "keel/bits.h"
 #include "keel/memory.h"
+#include "keel/ref.h"
 
 namespace keel {
 
@@ -61,6 +62,16 @@ public:
     using ConstIterator = detail::RingIterator<FixedRing, T, true>;
 
     FixedRing() noexcept = default;
+
+    explicit FixedRing(ArrayRef<T> items) {
+        KEEL_BOUNDS_ASSERT(items.size() <= N);
+        for (usize i = 0; i < items.size(); ++i) {
+            push_back(items[i]);
+        }
+    }
+
+    [[nodiscard]] static FixedRing from(ArrayRef<T> items) { return FixedRing(items); }
+
     ~FixedRing() noexcept { clear(); }
 
     FixedRing(const FixedRing&) = delete;
@@ -95,13 +106,14 @@ public:
     [[nodiscard]] FixedRing clone() const {
         FixedRing copy;
         for (usize i = 0; i < m_size; ++i) {
-            copy.push_back((*this)[i]);
+            copy.push_back(detail::clone_value_inline((*this)[i]));
         }
         return copy;
     }
 
     [[nodiscard]] usize size() const noexcept { return m_size; }
     [[nodiscard]] static constexpr usize capacity() noexcept { return N; }
+    [[nodiscard]] static constexpr usize inline_capacity() noexcept { return N; }
     [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
     [[nodiscard]] bool full() const noexcept { return m_size == N; }
 
@@ -158,20 +170,17 @@ public:
         return *slot;
     }
 
+    template <typename... Args> [[nodiscard]] bool try_emplace_back(Args&&... args) {
+        if (m_size >= N) return false;
+        emplace_back(keel::forward<Args>(args)...);
+        return true;
+    }
+
     void push_back(const T& val) { emplace_back(val); }
     void push_back(T&& val) { emplace_back(keel::move(val)); }
 
-    [[nodiscard]] bool try_push_back(const T& val) {
-        if (m_size >= N) return false;
-        emplace_back(val);
-        return true;
-    }
-
-    [[nodiscard]] bool try_push_back(T&& val) {
-        if (m_size >= N) return false;
-        emplace_back(keel::move(val));
-        return true;
-    }
+    [[nodiscard]] bool try_push_back(const T& val) { return try_emplace_back(val); }
+    [[nodiscard]] bool try_push_back(T&& val) { return try_emplace_back(keel::move(val)); }
 
     // Appends to the back, overwriting the oldest (front) element when full.
     void push_back_overwrite(T val) {
@@ -190,8 +199,25 @@ public:
         return *slot;
     }
 
+    template <typename... Args> [[nodiscard]] bool try_emplace_front(Args&&... args) {
+        if (m_size >= N) return false;
+        emplace_front(keel::forward<Args>(args)...);
+        return true;
+    }
+
     void push_front(const T& val) { emplace_front(val); }
     void push_front(T&& val) { emplace_front(keel::move(val)); }
+
+    [[nodiscard]] bool try_push_front(const T& val) { return try_emplace_front(val); }
+    [[nodiscard]] bool try_push_front(T&& val) { return try_emplace_front(keel::move(val)); }
+
+    // Prepends to the front, overwriting the oldest (back) element when full.
+    void push_front_overwrite(T val) {
+        if (m_size == N) {
+            pop_back();
+        }
+        emplace_front(keel::move(val));
+    }
 
     void pop_front() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
@@ -276,6 +302,23 @@ public:
     explicit SmallRing(Allocator* alloc = nullptr) noexcept
         : m_heap(nullptr), m_head(0), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {}
 
+    explicit SmallRing(ArrayRef<T> items, Allocator* alloc = nullptr) : SmallRing(alloc) {
+        reserve(items.size());
+        for (usize i = 0; i < items.size(); ++i) {
+            push_back(items[i]);
+        }
+    }
+
+    [[nodiscard]] static SmallRing with_capacity(usize cap, Allocator* alloc = nullptr) {
+        SmallRing rb(alloc);
+        rb.reserve(cap);
+        return rb;
+    }
+
+    [[nodiscard]] static SmallRing from(ArrayRef<T> items, Allocator* alloc = nullptr) {
+        return SmallRing(items, alloc);
+    }
+
     ~SmallRing() noexcept {
         clear();
         if (m_heap) {
@@ -306,10 +349,11 @@ public:
     }
 
     [[nodiscard]] SmallRing clone(Allocator* alloc = nullptr) const {
-        SmallRing copy(alloc ? alloc : m_alloc);
+        Allocator* dst_alloc = alloc ? alloc : m_alloc;
+        SmallRing copy(dst_alloc);
         copy.reserve(m_size);
         for (usize i = 0; i < m_size; ++i) {
-            copy.push_back((*this)[i]);
+            copy.push_back(detail::clone_value((*this)[i], dst_alloc));
         }
         return copy;
     }
@@ -371,6 +415,29 @@ public:
         if (min_cap <= m_cap) return;
         const usize pow2 = static_cast<usize>(bit_ceil(static_cast<u64>(min_cap < 8 ? 8 : min_cap)));
         reallocate(pow2);
+    }
+
+    void shrink_to_fit() {
+        if (is_inline()) return;
+        if (m_size <= N) {
+            T* dst = inline_ptr();
+            for (usize i = 0; i < m_size; ++i) {
+                const usize old_idx = phys_index(i);
+                ::new (dst + i) T(keel::move(m_heap[old_idx]));
+                if constexpr (!IsTriviallyDestructible<T>) {
+                    m_heap[old_idx].~T();
+                }
+            }
+            m_alloc->free_array(m_heap, m_cap);
+            m_heap = nullptr;
+            m_head = 0;
+            m_cap = N;
+        } else {
+            const usize target_cap = static_cast<usize>(bit_ceil(static_cast<u64>(m_size < 8 ? 8 : m_size)));
+            if (target_cap < m_cap) {
+                reallocate(target_cap);
+            }
+        }
     }
 
     template <typename... Args> T& emplace_back(Args&&... args) {
@@ -554,11 +621,20 @@ public:
 
     explicit Ring(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
-    static Ring with_capacity(usize cap, Allocator* alloc = nullptr) {
+    explicit Ring(ArrayRef<T> items, Allocator* alloc = nullptr) : Ring(alloc) {
+        reserve(items.size());
+        for (usize i = 0; i < items.size(); ++i) {
+            push_back(items[i]);
+        }
+    }
+
+    [[nodiscard]] static Ring with_capacity(usize cap, Allocator* alloc = nullptr) {
         Ring rb(alloc);
         rb.reserve(cap);
         return rb;
     }
+
+    [[nodiscard]] static Ring from(ArrayRef<T> items, Allocator* alloc = nullptr) { return Ring(items, alloc); }
 
     ~Ring() noexcept { reset(); }
 
@@ -594,14 +670,13 @@ public:
     }
 
     [[nodiscard]] Ring clone(Allocator* alloc = nullptr) const {
-        Ring copy(alloc ? alloc : m_alloc);
+        Allocator* dst_alloc = alloc ? alloc : m_alloc;
+        Ring copy(dst_alloc);
         if (m_size > 0) {
             copy.reserve(m_size);
             for (usize i = 0; i < m_size; ++i) {
-                ::new (copy.m_data + i) T((*this)[i]);
+                copy.push_back(detail::clone_value((*this)[i], dst_alloc));
             }
-            copy.m_head = 0;
-            copy.m_size = m_size;
         }
         return copy;
     }
@@ -669,6 +744,21 @@ public:
         if (min_cap <= m_cap) return;
         const usize pow2 = static_cast<usize>(bit_ceil(static_cast<u64>(min_cap < 8 ? 8 : min_cap)));
         reallocate(pow2);
+    }
+
+    void shrink_to_fit() {
+        if (!m_data) return;
+        if (m_size == 0) {
+            m_alloc->free_array(m_data, m_cap);
+            m_data = nullptr;
+            m_head = 0;
+            m_cap = 0;
+            return;
+        }
+        const usize target_cap = static_cast<usize>(bit_ceil(static_cast<u64>(m_size < 8 ? 8 : m_size)));
+        if (target_cap < m_cap) {
+            reallocate(target_cap);
+        }
     }
 
     template <typename... Args> T& emplace_back(Args&&... args) {

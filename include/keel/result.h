@@ -6,7 +6,9 @@ namespace keel {
 
 template <typename T, typename E = Error> class [[nodiscard]] Result {
 public:
-    constexpr Result(const T& val) : m_value(val), m_has_value(true) {}
+    constexpr Result(const T& val)
+        requires IsConstructible<T, const T&>
+        : m_value(val), m_has_value(true) {}
     constexpr Result(T&& val) noexcept : m_value(keel::move(val)), m_has_value(true) {}
 
     constexpr Result(const E& err) noexcept : m_error(err), m_has_value(false) { KEEL_ASSERT(!err.is_ok()); }
@@ -30,7 +32,8 @@ public:
 
     constexpr Result(const Result&) = default;
     constexpr Result(const Result& other)
-        requires(!(IsTriviallyCopyable<T> && IsTriviallyCopyable<E>))
+        requires(!(IsTriviallyCopyable<T> && IsTriviallyCopyable<E>) &&
+                 IsConstructible<T, const T&> && IsConstructible<E, const E&>)
         : m_has_value(other.m_has_value) {
         if (m_has_value) {
             ::new (&m_value) T(other.m_value);
@@ -38,6 +41,9 @@ public:
             ::new (&m_error) E(other.m_error);
         }
     }
+    Result(const Result&)
+        requires(!(IsConstructible<T, const T&> && IsConstructible<E, const E&>))
+    = delete;
 
     constexpr Result(Result&&) noexcept = default;
     constexpr Result(Result&& other) noexcept
@@ -52,7 +58,8 @@ public:
 
     constexpr Result& operator=(const Result&) = default;
     constexpr Result& operator=(const Result& other)
-        requires(!(IsTriviallyCopyable<T> && IsTriviallyCopyable<E>))
+        requires(!(IsTriviallyCopyable<T> && IsTriviallyCopyable<E>) &&
+                 IsConstructible<T, const T&> && IsConstructible<E, const E&>)
     {
         if (this != &other) {
             destroy();
@@ -65,6 +72,9 @@ public:
         }
         return *this;
     }
+    Result& operator=(const Result&)
+        requires(!(IsConstructible<T, const T&> && IsConstructible<E, const E&>))
+    = delete;
 
     constexpr Result& operator=(Result&&) noexcept = default;
     constexpr Result& operator=(Result&& other) noexcept

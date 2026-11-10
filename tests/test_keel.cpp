@@ -809,6 +809,174 @@ void test_review_regressions() {
     }
 }
 
+constexpr int constexpr_triple(int x) noexcept { return x * 3; }
+
+int plain_increment(int x) { return x + 1; }
+
+void test_four_tier_symmetry_and_purity() {
+    // 1. Move-only invariants on ArenaArray<T>, Optional<String>, and Result<String>
+    static_assert(IsTriviallyDestructible<ArenaArray<int>>);
+    static_assert(!IsConstructible<ArenaArray<int>, const ArenaArray<int>&>);
+    static_assert(!IsConstructible<Optional<String>, const Optional<String>&>);
+    static_assert(!IsConstructible<Result<String>, const Result<String>&>);
+    static_assert(IsTriviallyCopyable<Optional<int>>);
+    static_assert(IsTriviallyCopyable<Result<int>>);
+
+    // 2. Complete 4-tier Function family: FunctionRef, FixedFunction, SmallFunction, Function
+    {
+        constexpr FunctionRef<int(int)> c_ref(&constexpr_triple);
+        static_assert(c_ref(7) == 21);
+        TEST_CHECK(c_ref(9) == 27);
+
+        // Free function & noexcept function pointer by lvalue (must not dangle or warn under -Wpedantic)
+        auto make_fn_ref = [](int (*fp)(int) noexcept) -> FunctionRef<int(int)> {
+            return FunctionRef<int(int)>(fp);
+        };
+        FunctionRef<int(int)> nx_ref = make_fn_ref(&constexpr_triple);
+        TEST_CHECK(nx_ref && nx_ref(5) == 15);
+        FunctionRef<int(int)> null_fp_ref = make_fn_ref(nullptr);
+        TEST_CHECK(!null_fp_ref && null_fp_ref == nullptr);
+
+        FunctionRef<int(int)> direct_free_ref(plain_increment);
+        TEST_CHECK(direct_free_ref(41) == 42);
+
+        // Empty owning Functions passed to FunctionRef become empty FunctionRef
+        Function<int(int)> empty_dyn;
+        SmallFunction<int(int), 16> empty_small;
+        FixedFunction<int(int), 16> empty_fixed;
+        TEST_CHECK(FunctionRef<int(int)>(empty_dyn).empty());
+        TEST_CHECK(FunctionRef<int(int)>(empty_small).empty());
+        TEST_CHECK(FunctionRef<int(int)>(empty_fixed).empty());
+
+        // Move-only String capture in FixedFunction, SmallFunction, and Function
+        FixedFunction<usize(), 64> f_fixed([s = String("fixed_move_only")]() noexcept { return s.size(); });
+        TEST_CHECK(f_fixed() == 15);
+
+        Arena fn_arena(256 * 1024);
+        const usize mark0 = fn_arena.used();
+        SmallFunction<int(int), 16> f_small([bias = 10](int x) noexcept { return x + bias; }, fn_arena.allocator());
+        TEST_CHECK(f_small.is_inline() && fn_arena.used() == mark0);
+        TEST_CHECK(f_small(5) == 15);
+
+        // Spill SmallFunction (> 16 bytes) into fn_arena, preserving custom allocator across assignment!
+        struct BigCapture {
+            u64 a = 10, b = 20, c = 30, d = 40;
+            int operator()(int x) const noexcept { return static_cast<int>(a + b + c + d) + x; }
+        };
+        f_small = BigCapture{};
+        TEST_CHECK(!f_small.is_inline() && fn_arena.used() > mark0);
+        TEST_CHECK(f_small(7) == 107);
+        SmallFunction<int(int), 16> f_small_moved = keel::move(f_small);
+        TEST_CHECK(f_small.empty() && !f_small_moved.is_inline() && f_small_moved(3) == 103);
+
+        // Over-aligned capture in SmallFunction automatically spills with proper alignment
+        struct alignas(64) OverAlignedCallable {
+            int v = 99;
+            int operator()() const noexcept {
+                return ((reinterpret_cast<usize>(this) & 63u) == 0) ? v : -1;
+            }
+        };
+        SmallFunction<int(), 64> f_aligned(OverAlignedCallable{}, fn_arena.allocator());
+        TEST_CHECK(!f_aligned.is_inline() && f_aligned() == 99);
+
+        // Pure 3-pointer Function<Sig> backed by Arena
+        const usize mark_dyn = fn_arena.used();
+        Function<StringRef()> f_dyn(fn_arena.allocator());
+        TEST_CHECK(f_dyn.empty() && fn_arena.used() == mark_dyn);
+        f_dyn = [msg = String("arena_fn", fn_arena.allocator())]() noexcept -> StringRef { return msg.as_ref(); };
+        TEST_CHECK(!f_dyn.empty() && fn_arena.used() > mark_dyn && f_dyn() == "arena_fn");
+    }
+
+    // 3. String / SmallString / FixedString symmetry & UTF-8 codepoint-safe clamping
+    {
+        String s("  alpha_beta  ");
+        TEST_CHECK(s.trim() == "alpha_beta");
+        s.assign(s.trim()); // self-aliasing assign!
+        TEST_CHECK(s == "alpha_beta" && s.front() == 'a' && s.back() == 'a');
+        TEST_CHECK(s.starts_with("alpha") && s.ends_with("beta") && s.contains('_'));
+        s.reserve(128);
+        s.shrink_to_fit();
+        TEST_CHECK(s.capacity() == s.size() && s == "alpha_beta");
+
+        SmallString<16> sm("0123456789abcdef_heap");
+        TEST_CHECK(!sm.is_inline());
+        sm.assign("tiny");
+        sm.shrink_to_fit();
+        TEST_CHECK(sm.is_inline() && sm == "tiny" && sm.front() == 't' && sm.back() == 'y');
+
+        // UTF-8 safe truncation on FixedString & format_fixed
+        // "Привет" is 6 * 2 = 12 bytes; buffer_size = 6 => max_size = 5 bytes => clamps cleanly to 4 bytes ("Пр")
+        FixedString<6> fs_cyr("Привет");
+        TEST_CHECK(fs_cyr.size() == 4 && fs_cyr == "Пр" && utf8_validate(fs_cyr.as_ref()));
+
+        // "Hi🚀" is 2 + 4 = 6 bytes; buffer_size = 6 => max_size = 5 bytes => clamps cleanly to 2 bytes ("Hi")
+        FixedString<6> fs_emoji("Hi🚀");
+        TEST_CHECK(fs_emoji.size() == 2 && fs_emoji == "Hi" && utf8_validate(fs_emoji.as_ref()));
+        FixedString<7> fs_emoji_fit("Hi🚀");
+        TEST_CHECK(fs_emoji_fit.size() == 6 && fs_emoji_fit == "Hi🚀");
+
+        FixedString<6> fmt_utf8 = format_fixed<6>("Hi🚀");
+        TEST_CHECK(fmt_utf8 == "Hi" && utf8_validate(fmt_utf8.as_ref()));
+
+        // Explicit non-truncating try_* API on FixedString
+        FixedString<8> fs_try;
+        TEST_CHECK(fs_try.try_assign("12345"));
+        TEST_CHECK(!fs_try.try_append("678")); // 5 + 3 > 7 -> rejected without partial mutation!
+        TEST_CHECK(fs_try == "12345");
+        TEST_CHECK(fs_try.try_append("67") && fs_try.full() && !fs_try.try_push_back('8'));
+    }
+
+    // 4. Nested move-only .clone() & shrink_to_fit across Array, SmallArray, FixedArray, Ring, ArenaArray, Optional
+    {
+        Array<String> names;
+        names.push_back(String("charlie"));
+        names.push_back(String("alpha"));
+        names.push_back(String("bravo"));
+        keel::sort(names); // Uses String::operator< directly!
+        Array<String> names_copy = names.clone();
+        TEST_CHECK(names_copy.size() == 3 && names_copy[0] == "alpha" && names_copy[2] == "charlie");
+
+        SmallArray<String, 2> s_names;
+        s_names.push_back(String("one"));
+        s_names.push_back(String("two"));
+        s_names.push_back(String("three"));
+        TEST_CHECK(!s_names.is_inline());
+        SmallArray<String, 2> s_names_copy = s_names.clone();
+        TEST_CHECK(s_names_copy.size() == 3 && s_names_copy[2] == "three");
+        s_names.pop_back();
+        s_names.shrink_to_fit();
+        TEST_CHECK(s_names.is_inline() && s_names.size() == 2 && s_names[1] == "two");
+
+        const int init_vals[] = {10, 20, 30};
+        FixedArray<int, 4> fa = FixedArray<int, 4>::from(init_vals);
+        TEST_CHECK(fa.size() == 3 && !fa.try_append(init_vals) && fa.try_emplace_back(40) && fa.full());
+
+        SmallRing<String, 2> sr;
+        sr.push_back(String("r1"));
+        sr.push_back(String("r2"));
+        sr.push_back(String("r3"));
+        TEST_CHECK(!sr.is_inline());
+        SmallRing<String, 2> sr_copy = sr.clone();
+        TEST_CHECK(sr_copy.size() == 3 && sr_copy.front() == "r1" && sr_copy.back() == "r3");
+        sr.pop_front();
+        sr.shrink_to_fit();
+        TEST_CHECK(sr.is_inline() && sr.size() == 2 && sr.front() == "r2" && sr.back() == "r3");
+
+        Arena a1(256 * 1024);
+        Arena a2(256 * 1024);
+        ArenaArray<String> aa(a1);
+        aa.push_back(String("arena_s1", a1.allocator()));
+        aa.push_back(String("arena_s2", a1.allocator()));
+        ArenaArray<String> aa_cloned = aa.clone(&a2);
+        TEST_CHECK(aa_cloned.size() == 2 && aa_cloned[0] == "arena_s1" && aa_cloned[1] == "arena_s2");
+        TEST_CHECK(aa_cloned[0].allocator() == a2.allocator());
+
+        Optional<String> opt_s(String("opt_owned"));
+        Optional<String> opt_s_clone = opt_s.clone();
+        TEST_CHECK(opt_s_clone.has_value() && *opt_s_clone == "opt_owned");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -821,6 +989,7 @@ int main() {
     test_std_interop();
     test_algo_and_rtree();
     test_review_regressions();
+    test_four_tier_symmetry_and_purity();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

@@ -20,20 +20,23 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | `keel/bits.h` | `countl_zero`, `countr_zero`, `popcount`, `bit_width`, `bit_ceil`, `bit_floor`, `rotl`, `rotr`, `byteswap` |
 | `keel/hash.h` | Fast 64-bit `hash_bytes`, `hash_u64`, `hash_combine`, `Hash<T>`, `Equal<T>` |
 | `keel/memory.h` | `Allocator`, `default_allocator`, `set_oom_handler`, raw memory primitives |
-| `keel/arena.h` | Virtual-memory `Arena` (with in-place top `realloc`), `ArenaTemp`, thread-local `get_scratch` |
+| `keel/arena.h` | Virtual-memory `Arena` (with in-place top `realloc`), `ArenaTemp`, `ArenaArray<T>`, thread-local `get_scratch` |
 | `keel/pool.h` | Generational slot `Pool<T>` and 64-bit `Handle<T>` |
-| `keel/ref.h` | Non-owning `StringRef`, `ArrayRef<T>`, `MutArrayRef<T>` (accept `std` ranges without `#include`s) |
+| `keel/ref.h` | Non-owning `StringRef`, `ArrayRef<T>`, `MutArrayRef<T>`, `FunctionRef<Sig>` (accept `std` ranges without `#include`s) |
 | `keel/error.h` | Value-type `Error`, `ErrorCode`, `ParseError`, `error_message` |
 | `keel/result.h` | `Result<T, E>`, `KEEL_TRY`, `KEEL_TRY_ASSIGN` |
 | `keel/optional.h` | Trivially-copyable `Optional<T>` and zero-size-overhead `SentinelOptional<T, Sentinel>` |
-| `keel/function_ref.h` | 16-byte non-owning `FunctionRef<R(Args...)>` |
-| `keel/function.h` | Move-only inline `FixedFunction<R(Args...), N>` with zero heap allocations |
-| `keel/array.h` | Move-only dynamic `Array<T>` (`push_back`, `remove_at`, `swap_remove`, `clone`) |
-| `keel/small_array.h` | `FixedArray<T, N>` and small-buffer optimized `SmallArray<T, N>` |
+| `keel/function_ref.h` | Standalone 2-pointer non-owning `FunctionRef<R(Args...)>` |
+| `keel/function.h` | Move-only `FixedFunction<Sig, N>`, `SmallFunction<Sig, N>`, and `Allocator*`-backed `Function<Sig>` |
+| `keel/array.h` | `FixedArray<T, N>`, `SmallArray<T, N>`, and dynamic `Array<T>` (`push_back`, `remove_at`, `swap_remove`, `clone`) |
+| `keel/small_array.h` | Standalone `FixedArray<T, N>` and small-buffer optimized `SmallArray<T, N>` |
 | `keel/ring.h` | `FixedRing<T, N>`, `SmallRing<T, N>`, and power-of-two circular `Ring<T>` (`Deque<T>`) |
 | `keel/hash_map.h` | Flat open-addressed `HashMap<K, V>` with 1-byte metadata tags & heterogeneous lookup |
 | `keel/hash_set.h` | Flat open-addressed `HashSet<K>` |
-| `keel/string.h` | `FixedString<N>`, `SmallString<N>`, and move-only UTF-8 `String` (`String::from`, `c_str()`) |
+| `keel/lru_cache.h` | Fixed-capacity intrusive-index `LruCache<K, V, Capacity>` with heterogeneous lookup |
+| `keel/rtree.h` | Flat STR-packed 2D/3D spatial `RTree<Id, Coord, Dim, NodeCap>` |
+| `keel/algo.h` | Move-only hybrid introsort (`sort`), `binary_search`, `lower_bound`, `upper_bound` |
+| `keel/string.h` | `FixedString<N>`, `SmallString<N>`, and move-only UTF-8 `String` (`from`, `assign`, `c_str()`) |
 | `keel/utf8.h` | `utf8_validate`, `utf8_decode_next`, `utf8_encode`, `utf8_codepoint_count` |
 | `keel/number.h` | Locale-independent integer & shortest round-trip IEEE-754 float/double parsing & formatting |
 | `keel/format.h` | Type-safe `format`, `format_small`, `format_fixed`, `format_into`, `format_arena`, `format_buf`, `print` |

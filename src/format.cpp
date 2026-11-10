@@ -434,8 +434,10 @@ usize vformat_buf(char* buf, usize cap, StringRef fmt, ArrayRef<FormatArg> args)
     ArenaTemp scratch = get_scratch();
     String tmp(scratch.allocator());
     vformat_into(tmp, fmt, args);
-    const usize copy_len = min(tmp.size(), cap - 1);
-    mem_copy(buf, tmp.data(), copy_len);
+    const usize copy_len = detail::clamp_utf8_truncation(tmp.data(), tmp.size(), cap - 1);
+    if (copy_len > 0) {
+        mem_copy(buf, tmp.data(), copy_len);
+    }
     buf[copy_len] = '\0';
     return copy_len;
 }

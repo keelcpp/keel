@@ -2,7 +2,6 @@
 #include "keel/arena.h"
 #include "keel/io.h"
 
-#include <atomic>
 #include <cstdlib>
 #include <cstring>
 
@@ -47,8 +46,36 @@ int mem_cmp(const void* a, const void* b, usize bytes) noexcept {
 
 namespace {
 
-constinit std::atomic<OomHandler> g_oom_handler{nullptr};
-constinit std::atomic<void*> g_oom_user_data{nullptr};
+template <typename T> struct AtomicSlot {
+    T m_val;
+
+    [[nodiscard]] T load_acquire() const noexcept {
+#if defined(__clang__) || defined(__GNUC__)
+        return __atomic_load_n(&m_val, __ATOMIC_ACQUIRE);
+#elif defined(_WIN32)
+        T v = *static_cast<const volatile T*>(&m_val);
+        MemoryBarrier();
+        return v;
+#else
+        return m_val;
+#endif
+    }
+
+    void store_release(T v) noexcept {
+#if defined(__clang__) || defined(__GNUC__)
+        __atomic_store_n(&m_val, v, __ATOMIC_RELEASE);
+#elif defined(_WIN32)
+        MemoryBarrier();
+        *static_cast<volatile T*>(&m_val) = v;
+        MemoryBarrier();
+#else
+        m_val = v;
+#endif
+    }
+};
+
+constinit AtomicSlot<OomHandler> g_oom_handler{nullptr};
+constinit AtomicSlot<void*> g_oom_user_data{nullptr};
 
 void* sys_alloc(void*, usize size, usize align) noexcept {
     if (size == 0) return nullptr;
@@ -113,7 +140,7 @@ constinit Allocator g_system_allocator{
     .ctx = nullptr,
 };
 
-constinit std::atomic<Allocator*> g_default_allocator{&g_system_allocator};
+constinit AtomicSlot<Allocator*> g_default_allocator{&g_system_allocator};
 
 constexpr usize kCommitGranularity = 64 * 1024; // Commit in 64 KB chunks
 
@@ -129,24 +156,24 @@ bool checked_align_up(usize val, usize align, usize& out) noexcept {
 } // namespace
 
 void set_oom_handler(OomHandler handler, void* user_data) noexcept {
-    g_oom_user_data.store(user_data, std::memory_order_release);
-    g_oom_handler.store(handler, std::memory_order_release);
+    g_oom_user_data.store_release(user_data);
+    g_oom_handler.store_release(handler);
 }
 
 [[noreturn]] void handle_oom(usize size, usize align) {
-    OomHandler handler = g_oom_handler.load(std::memory_order_acquire);
+    OomHandler handler = g_oom_handler.load_acquire();
     if (handler) {
-        handler(size, align, g_oom_user_data.load(std::memory_order_acquire));
+        handler(size, align, g_oom_user_data.load_acquire());
     }
     stderr_write("keel: out of memory\n");
     stderr_flush();
     std::abort();
 }
 
-Allocator* default_allocator() noexcept { return g_default_allocator.load(std::memory_order_acquire); }
+Allocator* default_allocator() noexcept { return g_default_allocator.load_acquire(); }
 
 void set_default_allocator(Allocator* alloc) noexcept {
-    g_default_allocator.store(alloc ? alloc : &g_system_allocator, std::memory_order_release);
+    g_default_allocator.store_release(alloc ? alloc : &g_system_allocator);
 }
 
 // ============================================================================

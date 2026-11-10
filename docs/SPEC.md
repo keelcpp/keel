@@ -36,10 +36,10 @@ keel сознательно не выглядит как std: другой ст�
 | Макросы | `UPPER_CASE` с префиксом | `KEEL_ASSERT`, `KEEL_TRY_ASSIGN` |
 
 **Уровни владения и размещения памяти (`*Ref` / `Fixed*` / `Small*` / `<Base>`):**
-- `*Ref` — невладеющий взгляд (`StringRef`, `ArrayRef<T>`, `MutArrayRef<T>`, `FunctionRef<Sig>`). Где возможно, параметры помечаются `KEEL_LIFETIMEBOUND` (`[[clang::lifetimebound]]` / `[[msvc::lifetimebound]]`).
+- `*Ref` — невладеющий взгляд (`StringRef`, `ArrayRef<T>`, `MutArrayRef<T>`, `FunctionRef<Sig>` в `keel/ref.h`). Где возможно, параметры помечаются `KEEL_LIFETIMEBOUND` (`[[clang::lifetimebound]]` / `[[msvc::lifetimebound]]`).
 - `Fixed*<N>` — строго фиксированный буфер на стеке без единого обращения к аллокатору (`FixedString<N>`, `FixedArray<T, N>`, `FixedRing<T, N>`, `FixedFunction<Sig, N>`).
-- `Small*<N>` — инлайн-буфер на стеке до `N` элементов с автоматическим переходом в `Allocator*` при превышении `N` (`SmallString<N>`, `SmallArray<T, N>`, `SmallRing<T, N>`).
-- Базовое имя без префикса — динамический буфер в `Allocator*` (`String`, `Array<T>`, `Ring<T>`, `HashMap<K, V>`, `HashSet<K>`).
+- `Small*<N>` — инлайн-буфер на стеке до `N` элементов/байт с автоматическим переходом в `Allocator*` при превышении `N` (`SmallString<N>`, `SmallArray<T, N>`, `SmallRing<T, N>`, `SmallFunction<Sig, N>`). Никогда не хранит указатель внутрь собственного стекового буфера (`is_inline()`).
+- Базовое имя без префикса — динамический буфер в `Allocator*` без накладных расходов на SBO (`String`, `Array<T>`, `Ring<T>`, `Function<Sig>`, `HashMap<K, V>`, `HashSet<K>`).
 
 **Глаголы методов:** если смысл операции такой же, как в std, — глагол из std; если другой — другой глагол.
 
@@ -80,9 +80,9 @@ keel сознательно не выглядит как std: другой ст�
 - **`Allocator`** — интерфейс из указателей на `alloc(ctx, size, align)` / `realloc(ctx, ptr, old_size, new_size, align)` / `free(ctx, ptr, size, align)` и контекста `void* ctx`. Контейнеры хранят `Allocator*` в рантайме, поэтому тип контейнера от аллокатора не зависит. Куча по умолчанию глобальная и переопределяемая.
 - **`Arena`** — резерв виртуальной памяти (на 64-битных ОС; линейный чанковый режим на `wasm32` / Emscripten), коммит по мере роста, сброс целиком, временные скоупы (`ArenaTemp`). Scratch-арены на поток (`get_scratch`).
 - **`Pool<T>` с генерационными хендлами** заменяет разделяемое владение: «слабая ссылка» — проверка поколения.
-- **Только перемещение.** Неявного копирования нет; копия — явный `clone()`.
+- **Только перемещение.** Неявного копирования у владеющих контейнеров нет (включая `ArenaArray<T>`); копия — явный `clone()` (рекурсивно поддерживающий вложенные move-only контейнеры). Исключение — тривиально копируемая стековая строка `FixedString<N>` (Rule of Zero).
 - **После перемещения объект гарантированно пуст.**
-- **Размеры и индексы знаковые:** `isize` (`std::ptrdiff_t`: 64 бита на 64-битных платформах, 32 бита на `wasm32`). `size()` возвращает `isize`.
+- **Размеры и индексы:** `usize` (`std::size_t`) для размеров, ёмкостей и индексов с явным сентинелом `kInvalidIndex` (`~usize{0}`), что обеспечивает нулевой интероп со стандартными диапазонами (`data()`/`size()`); `isize` (`std::ptrdiff_t`) для знаковых смещений и разностей.
 - **Стабильность указателей** у `Array`, `SmallArray` и `HashMap` не гарантируется; это указано в документации каждого типа.
 - **Потокобезопасность:** контейнеры не потокобезопасны; аллокатор по умолчанию потокобезопасен.
 
@@ -93,9 +93,9 @@ keel сознательно не выглядит как std: другой ст�
 | core | типы `i8`…`u64`, `f32`/`f64`, `isize`; `KEEL_ASSERT`, `KEEL_TRY`, `KEEL_TRY_ASSIGN`; `move`/`forward`; трейты на встроенных функциях компилятора; битовые операции; хеш |  |  |
 | memory | `Allocator`, куча по умолчанию, обработчик нехватки памяти, `Arena`, scratch-арены | `Pool<T>` + `Handle` |  |
 | vocabulary | `Optional<T>` и вариант с сентинелом, `Result<T>`, `Error`, `StringRef`, `ArrayRef<T>`, `FunctionRef<Sig>` |  |  |
-| containers | `Array<T>`, `SmallArray<T, N>`, `FixedArray<T, N>`, `HashMap<K, V>`, `HashSet<K>` | `Ring<T>`, `SmallRing<T, N>`, `FixedRing<T, N>` |  |
+| containers | `Array<T>`, `SmallArray<T, N>`, `FixedArray<T, N>`, `HashMap<K, V>`, `HashSet<K>` | `Ring<T>`, `SmallRing<T, N>`, `FixedRing<T, N>`, `LruCache<K, V, Cap>`, `RTree` |  |
 | text | `String`, `SmallString<N>`, `FixedString<N>`, операции над `StringRef`, UTF-8, числа без локали, `Format`/`Print` |  |  |
-| functional |  | `FixedFunction<Sig, N>` (`N = 32` по умолчанию) |  |
+| functional | `FunctionRef<Sig>` | `FixedFunction<Sig, N>`, `SmallFunction<Sig, N>` (`N = 32`), `Function<Sig>` |  |
 | fs | пути и операции |  | слежение за изменениями |
 | io | `File`, консоль |  |  |
 | algo |  | сортировка, бинарный поиск |  |

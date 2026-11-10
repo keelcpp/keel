@@ -89,4 +89,24 @@ inline void mem_zero(void* dst, usize bytes) noexcept { mem_set(dst, 0, bytes); 
     return bytes == 0 || mem_cmp(a, b, bytes) == 0;
 }
 
+namespace detail {
+template <typename T> [[nodiscard]] T clone_value(const T& item, Allocator* dst_alloc) {
+    if constexpr (requires { item.clone(dst_alloc); }) {
+        return item.clone(dst_alloc);
+    } else if constexpr (requires { item.clone(); }) {
+        return item.clone();
+    } else {
+        return T(item);
+    }
+}
+
+template <typename T> [[nodiscard]] T clone_value_inline(const T& item) {
+    if constexpr (requires { item.clone(); }) {
+        return item.clone();
+    } else {
+        return T(item);
+    }
+}
+} // namespace detail
+
 } // namespace keel

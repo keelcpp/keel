@@ -216,10 +216,13 @@ template <typename T> struct ArenaArrayBase<T, false> {
 
 } // namespace detail
 
-// Arena-backed contiguous dynamic array.
+// Arena-backed move-only contiguous dynamic array.
 // Trivially destructible when `T` is trivially destructible, and expands in-place via `Arena::try_extend`
 // when growing at the tip of the arena.
 template <typename T> class ArenaArray : private detail::ArenaArrayBase<T> {
+    static_assert(IsNothrowMoveConstructible<T>, "ArenaArray<T> requires noexcept move constructor");
+    static_assert(IsNothrowDestructible<T>, "ArenaArray<T> requires noexcept destructor");
+
     using Base = detail::ArenaArrayBase<T>;
     using Base::m_arena;
     using Base::m_cap;
@@ -241,48 +244,22 @@ public:
         }
     }
 
-    ArenaArray(const ArenaArray& other) : Base(other.m_arena) {
-        if (other.m_size > 0 && m_arena) {
-            reserve(other.m_size);
-            if constexpr (IsTriviallyCopyable<T>) {
-                mem_copy(m_data, other.m_data, sizeof(T) * other.m_size);
-            } else {
-                for (u32 i = 0; i < other.m_size; ++i) {
-                    ::new (m_data + i) T(other.m_data[i]);
-                }
-            }
-            m_size = other.m_size;
-        }
+    [[nodiscard]] static ArenaArray from(Arena& arena, ArrayRef<T> items) {
+        ArenaArray arr(arena, items.size());
+        arr.append(items);
+        return arr;
     }
 
-    ArenaArray(ArenaArray&& other) noexcept : Base(other.m_arena) {
+    ArenaArray(const ArenaArray&) = delete;
+    ArenaArray& operator=(const ArenaArray&) = delete;
+
+    constexpr ArenaArray(ArenaArray&& other) noexcept : Base(other.m_arena) {
         m_data = other.m_data;
         m_size = other.m_size;
         m_cap = other.m_cap;
         other.m_data = nullptr;
         other.m_size = 0;
         other.m_cap = 0;
-    }
-
-    ArenaArray& operator=(const ArenaArray& other) {
-        if (this != &other) {
-            clear();
-            if (!m_arena) {
-                m_arena = other.m_arena;
-            }
-            if (other.m_size > 0 && m_arena) {
-                reserve(other.m_size);
-                if constexpr (IsTriviallyCopyable<T>) {
-                    mem_copy(m_data, other.m_data, sizeof(T) * other.m_size);
-                } else {
-                    for (u32 i = 0; i < other.m_size; ++i) {
-                        ::new (m_data + i) T(other.m_data[i]);
-                    }
-                }
-                m_size = other.m_size;
-            }
-        }
-        return *this;
     }
 
     ArenaArray& operator=(ArenaArray&& other) noexcept {
@@ -300,6 +277,25 @@ public:
     }
 
     ~ArenaArray() noexcept = default;
+
+    [[nodiscard]] ArenaArray clone(Arena* dst_arena = nullptr) const {
+        Arena* target = dst_arena ? dst_arena : m_arena;
+        ArenaArray copy(target);
+        if (m_size > 0) {
+            KEEL_ASSERT(target != nullptr);
+            copy.reserve(m_size);
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(copy.m_data, m_data, sizeof(T) * m_size);
+                copy.m_size = m_size;
+            } else {
+                Allocator* dst_alloc = target->allocator();
+                for (u32 i = 0; i < m_size; ++i) {
+                    copy.push_back(detail::clone_value(m_data[i], dst_alloc));
+                }
+            }
+        }
+        return copy;
+    }
 
     constexpr void bind_arena(Arena& arena) noexcept { m_arena = &arena; }
     [[nodiscard]] constexpr Arena* arena() const noexcept { return m_arena; }
@@ -347,6 +343,11 @@ public:
 
     [[nodiscard]] constexpr operator ArrayRef<T>() const noexcept { return ArrayRef<T>(m_data, m_size); }
     [[nodiscard]] constexpr operator MutArrayRef<T>() noexcept { return MutArrayRef<T>(m_data, m_size); }
+    [[nodiscard]] constexpr ArrayRef<T> as_ref() const noexcept { return ArrayRef<T>(m_data, m_size); }
+    [[nodiscard]] constexpr MutArrayRef<T> as_mut_ref() noexcept { return MutArrayRef<T>(m_data, m_size); }
+    [[nodiscard]] constexpr ArrayRef<T> slice(usize offset, usize count = kInvalidIndex) const noexcept {
+        return as_ref().slice(offset, count);
+    }
 
     void clear() noexcept {
         if constexpr (!IsTriviallyDestructible<T>) {
@@ -422,12 +423,109 @@ public:
     void push_back(const T& value) { emplace_back(value); }
     void push_back(T&& value) { emplace_back(keel::move(value)); }
 
+    void append(ArrayRef<T> items) {
+        const usize count = items.size();
+        if (count == 0) return;
+        if (m_data && items.data() >= m_data && items.data() < m_data + m_size) {
+            const usize offset = static_cast<usize>(items.data() - m_data);
+            reserve(static_cast<usize>(m_size) + count);
+            if constexpr (IsTriviallyCopyable<T>) {
+                mem_copy(m_data + m_size, m_data + offset, count * sizeof(T));
+            } else {
+                for (usize i = 0; i < count; ++i) {
+                    ::new (m_data + m_size + i) T(m_data[offset + i]);
+                }
+            }
+            m_size += static_cast<u32>(count);
+            return;
+        }
+        reserve(static_cast<usize>(m_size) + count);
+        if constexpr (IsTriviallyCopyable<T>) {
+            mem_copy(m_data + m_size, items.data(), count * sizeof(T));
+        } else {
+            for (usize i = 0; i < count; ++i) {
+                ::new (m_data + m_size + i) T(items[i]);
+            }
+        }
+        m_size += static_cast<u32>(count);
+    }
+
+    void assign(ArrayRef<T> items) {
+        if (m_data && items.data() >= m_data && items.data() < m_data + m_size) {
+            const usize offset = static_cast<usize>(items.data() - m_data);
+            const usize count = items.size();
+            if constexpr (IsTriviallyCopyable<T>) {
+                if (count > 0 && offset > 0) {
+                    mem_move(m_data, m_data + offset, count * sizeof(T));
+                }
+            } else {
+                for (usize i = 0; i < count; ++i) {
+                    if (offset > 0) {
+                        m_data[i] = keel::move(m_data[offset + i]);
+                    }
+                }
+                for (usize i = count; i < m_size; ++i) {
+                    m_data[i].~T();
+                }
+            }
+            m_size = static_cast<u32>(count);
+            return;
+        }
+        clear();
+        append(items);
+    }
+
     void pop_back() noexcept {
         KEEL_BOUNDS_ASSERT(m_size > 0);
         --m_size;
         if constexpr (!IsTriviallyDestructible<T>) {
             m_data[m_size].~T();
         }
+    }
+
+    void remove_at(usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        const usize tail = static_cast<usize>(m_size) - i - 1;
+        if constexpr (IsTriviallyCopyable<T>) {
+            if (tail > 0) {
+                mem_move(m_data + i, m_data + i + 1, tail * sizeof(T));
+            }
+        } else {
+            for (usize k = i; k < static_cast<usize>(m_size) - 1; ++k) {
+                m_data[k] = keel::move(m_data[k + 1]);
+            }
+            m_data[m_size - 1].~T();
+        }
+        --m_size;
+    }
+
+    void erase(usize i) noexcept { remove_at(i); }
+
+    void swap_remove(usize i) noexcept {
+        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        --m_size;
+        if (i != static_cast<usize>(m_size)) {
+            m_data[i] = keel::move(m_data[m_size]);
+        }
+        if constexpr (!IsTriviallyDestructible<T>) {
+            m_data[m_size].~T();
+        }
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(const ArenaArray& a, const ArenaArray& b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        return a.as_ref() == b.as_ref();
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(const ArenaArray& a, ArrayRef<T> b) noexcept
+        requires requires(const T& x) {
+            { x == x } -> detail::ConvertibleTo<bool>;
+        }
+    {
+        return a.as_ref() == b;
     }
 
 private:
@@ -465,5 +563,7 @@ private:
         return *elem;
     }
 };
+
+static_assert(IsTriviallyDestructible<ArenaArray<int>>, "ArenaArray<T> must remain trivially destructible for POD T");
 
 } // namespace keel
