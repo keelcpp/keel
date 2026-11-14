@@ -12,7 +12,8 @@ template <typename T> class Array {
     static_assert(IsNothrowDestructible<T>, "Array<T> requires noexcept destructor");
 
 public:
-    explicit Array(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
+    Array() noexcept : m_alloc(default_allocator()) {}
+    explicit Array(Allocator* alloc) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
     explicit Array(usize count, Allocator* alloc = nullptr) : m_alloc(alloc ? alloc : default_allocator()) {
         resize(count);

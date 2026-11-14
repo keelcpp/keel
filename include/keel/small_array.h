@@ -296,7 +296,9 @@ template <typename T, usize N> class SmallArray {
     static_assert(IsNothrowDestructible<T>, "SmallArray<T, N> requires noexcept destructor");
 
 public:
-    explicit SmallArray(Allocator* alloc = nullptr) noexcept
+    SmallArray() noexcept : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(default_allocator()) {}
+
+    explicit SmallArray(Allocator* alloc) noexcept
         : m_heap(nullptr), m_size(0), m_cap(N), m_alloc(alloc ? alloc : default_allocator()) {}
 
     explicit SmallArray(usize count, Allocator* alloc = nullptr)

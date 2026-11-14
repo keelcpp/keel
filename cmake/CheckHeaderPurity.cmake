@@ -1,7 +1,7 @@
 # Verifies that all public keel headers (except interop_std.h):
-# 1. Only contain `#include <cstddef>`, `#include <cstdint>`, or `#include <new>` as angle-bracket includes.
+# 1. Only contain `#include <cstddef>`, `#include <cstdint>`, `#include <initializer_list>`, or `#include <new>` as angle-bracket includes.
 # 2. When compiled standalone with `/showIncludes` (MSVC) or `-H` (Clang/GCC), do not transitively include
-#    any system header outside the exact baseline of `<cstddef> + <cstdint> + <new>`.
+#    any system header outside the exact baseline of `<cstddef> + <cstdint> + <initializer_list> + <new>`.
 
 if(NOT DEFINED KEEL_INCLUDE_DIR)
     message(FATAL_ERROR "KEEL_INCLUDE_DIR must be passed to CheckHeaderPurity.cmake")
@@ -10,7 +10,7 @@ endif()
 file(GLOB KEEL_PUBLIC_HEADERS "${KEEL_INCLUDE_DIR}/keel/*.h")
 list(FILTER KEEL_PUBLIC_HEADERS EXCLUDE REGEX "interop_std\\.h$")
 
-set(ALLOWED_STD_HEADERS "cstddef" "cstdint" "new")
+set(ALLOWED_STD_HEADERS "cstddef" "cstdint" "initializer_list" "new")
 
 foreach(HDR IN LISTS KEEL_PUBLIC_HEADERS)
     get_filename_component(HDR_NAME "${HDR}" NAME)
@@ -18,7 +18,7 @@ foreach(HDR IN LISTS KEEL_PUBLIC_HEADERS)
     foreach(LINE IN LISTS INCLUDE_LINES)
         string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*<([^>]+)>.*$" "\\1" INC_NAME "${LINE}")
         if(NOT INC_NAME IN_LIST ALLOWED_STD_HEADERS)
-            message(FATAL_ERROR "Header purity violation in ${HDR_NAME}: forbidden '#include <${INC_NAME}>'. Only <cstddef>, <cstdint>, <new> are allowed.")
+            message(FATAL_ERROR "Header purity violation in ${HDR_NAME}: forbidden '#include <${INC_NAME}>'. Only <cstddef>, <cstdint>, <initializer_list>, <new> are allowed.")
         endif()
     endforeach()
 endforeach()
@@ -61,7 +61,7 @@ if(DEFINED COMPILER_PATH AND EXISTS "${COMPILER_PATH}")
     endif()
 
     set(BASELINE_SRC "${SCRATCH_DIR}/baseline.cpp")
-    file(WRITE "${BASELINE_SRC}" "#include <cstddef>\n#include <cstdint>\n#include <new>\nint main() { return 0; }\n")
+    file(WRITE "${BASELINE_SRC}" "#include <cstddef>\n#include <cstdint>\n#include <initializer_list>\n#include <new>\nint main() { return 0; }\n")
 
     if(COMPILER_ID MATCHES "MSVC")
         execute_process(

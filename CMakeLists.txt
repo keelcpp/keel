@@ -17,6 +17,7 @@ else()
         src/format.cpp
         src/io.cpp
         src/fs.cpp
+        src/time.cpp
     )
 endif()
 

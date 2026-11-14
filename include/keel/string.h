@@ -32,7 +32,8 @@ namespace detail {
 // Move-only UTF-8 string without SSO. Always null-terminated via c_str().
 class String {
 public:
-    explicit String(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
+    String() noexcept : m_alloc(default_allocator()) {}
+    explicit String(Allocator* alloc) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
     explicit String(StringRef str, Allocator* alloc = nullptr)
         : m_alloc(alloc ? alloc : default_allocator()) {
@@ -306,7 +307,11 @@ template <usize N = 64> class SmallString {
     static_assert(N > 1, "SmallString inline capacity N must be greater than 1");
 
 public:
-    explicit SmallString(Allocator* alloc = nullptr) noexcept
+    SmallString() noexcept : m_heap(nullptr), m_size(0), m_cap(N - 1), m_alloc(default_allocator()) {
+        m_inline[0] = '\0';
+    }
+
+    explicit SmallString(Allocator* alloc) noexcept
         : m_heap(nullptr), m_size(0), m_cap(N - 1), m_alloc(alloc ? alloc : default_allocator()) {
         m_inline[0] = '\0';
     }
@@ -911,6 +916,83 @@ template <usize N> struct Equal<FixedString<N>> {
     }
     [[nodiscard]] bool operator()(const FixedString<N>& a, StringRef b) const noexcept { return a.as_ref() == b; }
     [[nodiscard]] bool operator()(const FixedString<N>& a, const char* b) const noexcept { return a == b; }
+};
+
+class StringSink;
+
+// Concept matching any mutable UTF-8 string storage (`String`, `SmallString<N>`, `FixedString<N>`, or `std::string`).
+template <typename S>
+concept WritableString =
+    (!IsSame<RemoveCvRef<S>, StringSink>) && (!IsSame<RemoveCvRef<S>, StringRef>) && (!IsConst<RemoveReference<S>>) &&
+    requires(S& s, const S& cs) {
+        { cs.data() } -> detail::ConvertibleTo<const char*>;
+        { cs.size() };
+    } &&
+    (requires(S& s, StringRef ref) { s.assign(ref); } ||
+     requires(S& s, const char* d, usize n) { s.assign(d, n); });
+
+// Non-owning mutable UTF-8 string view/writer binding `String&`, `SmallString<N>&`, `FixedString<N>&`,
+// or external mutable strings (such as `std::string&`) with zero heap allocations.
+class StringSink {
+public:
+    constexpr StringSink() noexcept = default;
+    constexpr StringSink(decltype(nullptr)) noexcept {}
+
+    template <WritableString S>
+    explicit constexpr StringSink(S& str KEEL_LIFETIMEBOUND) noexcept
+        : m_ctx(&str),
+          m_view(+[](const void* p) noexcept -> StringRef {
+              const auto& s = *static_cast<const S*>(p);
+              return StringRef(s.data(), static_cast<usize>(s.size()));
+          }),
+          m_assign(+[](void* p, StringRef ref) {
+              auto& s = *static_cast<S*>(p);
+              if constexpr (requires { s.assign(ref); }) {
+                  s.assign(ref);
+              } else {
+                  const char* ptr = ref.data() ? ref.data() : "";
+                  s.assign(ptr, ref.size());
+              }
+          }),
+          m_max_size(resolve_max_size<RemoveCvRef<S>>()) {}
+
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return m_ctx != nullptr; }
+    [[nodiscard]] constexpr bool valid() const noexcept { return m_ctx != nullptr; }
+
+    [[nodiscard]] constexpr StringRef as_ref() const noexcept { return m_ctx ? m_view(m_ctx) : StringRef{}; }
+    [[nodiscard]] constexpr const char* data() const noexcept { return as_ref().data(); }
+    [[nodiscard]] constexpr usize size() const noexcept { return as_ref().size(); }
+    [[nodiscard]] constexpr bool empty() const noexcept { return as_ref().empty(); }
+    [[nodiscard]] constexpr usize max_size() const noexcept { return m_max_size; }
+
+    void assign(StringRef ref) const {
+        if (m_ctx) {
+            m_assign(m_ctx, ref);
+        }
+    }
+
+    void clear() const {
+        if (m_ctx) {
+            m_assign(m_ctx, StringRef("", 0));
+        }
+    }
+
+private:
+    template <typename S> [[nodiscard]] static constexpr usize resolve_max_size() noexcept {
+        if constexpr (requires {
+                          S::buffer_size();
+                          S::max_size();
+                      }) {
+            return S::max_size();
+        } else {
+            return kInvalidIndex;
+        }
+    }
+
+    void* m_ctx = nullptr;
+    StringRef (*m_view)(const void*) noexcept = nullptr;
+    void (*m_assign)(void*, StringRef) = nullptr;
+    usize m_max_size = kInvalidIndex;
 };
 
 } // namespace keel

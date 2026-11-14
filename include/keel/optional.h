@@ -20,6 +20,27 @@ public:
         : m_value(val), m_has_value(true) {}
     constexpr Optional(T&& val) noexcept : m_value(keel::move(val)), m_has_value(true) {}
 
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>) &&
+                (!IsSame<RemoveCvRef<U>, T>) && IsConstructible<T, U>
+    explicit(!IsConvertible<U, T>) constexpr Optional(U&& val) noexcept(IsTriviallyCopyable<T>)
+        : m_value(keel::forward<U>(val)), m_has_value(true) {}
+
+    // Zero-header conversion from external optional-like types (e.g. std::optional<U>)
+    template <typename Opt>
+        requires(!IsSame<RemoveCvRef<Opt>, Optional>) && (!IsSame<RemoveCvRef<Opt>, NullOptT>) &&
+                (!IsPointer<RemoveCvRef<Opt>>) && (!IsConstructible<T, const Opt&>) &&
+                requires(const Opt& o) {
+                    static_cast<bool>(o.has_value());
+                    *o;
+                } && IsConstructible<T, decltype(*detail::declval<const Opt&>())>
+    explicit(!IsConvertible<decltype(*detail::declval<const Opt&>()), T>) constexpr Optional(const Opt& other)
+        : m_dummy(0), m_has_value(static_cast<bool>(other.has_value())) {
+        if (m_has_value) {
+            ::new (&m_value) T(*other);
+        }
+    }
+
     constexpr ~Optional() noexcept
         requires IsTriviallyDestructible<T>
     = default;
@@ -103,6 +124,18 @@ public:
         return *this;
     }
 
+    template <typename U = T>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>) &&
+                IsConstructible<T, U> && IsConvertible<U, T>
+    constexpr Optional& operator=(U&& val) {
+        if (m_has_value) {
+            m_value = static_cast<T>(keel::forward<U>(val));
+        } else {
+            emplace(keel::forward<U>(val));
+        }
+        return *this;
+    }
+
     template <typename... Args> constexpr T& emplace(Args&&... args) {
         reset();
         ::new (&m_value) T(keel::forward<Args>(args)...);
@@ -165,7 +198,10 @@ public:
     }
 
     [[nodiscard]] friend constexpr bool operator==(const Optional& a, NullOptT) noexcept { return !a.m_has_value; }
-    [[nodiscard]] friend constexpr bool operator==(const Optional& a, const T& val) noexcept {
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>) &&
+                requires(const T& x, const U& y) { static_cast<bool>(x == y); }
+    [[nodiscard]] friend constexpr bool operator==(const Optional& a, const U& val) noexcept {
         return a.m_has_value && (a.m_value == val);
     }
 

@@ -57,6 +57,12 @@ template <typename T> struct Hash<T*> {
     }
 };
 
+template <> struct Hash<TypeId> {
+    [[nodiscard]] u64 operator()(TypeId id) const noexcept {
+        return hash_u64(static_cast<u64>(id.hash_code()));
+    }
+};
+
 template <typename T> struct Equal {
     [[nodiscard]] constexpr bool operator()(const T& a, const T& b) const noexcept { return a == b; }
 };

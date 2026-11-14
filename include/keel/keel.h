@@ -24,5 +24,8 @@
 #include "keel/ring.h"
 #include "keel/rtree.h"
 #include "keel/small_array.h"
+#include "keel/smart_ptr.h"
+#include "keel/static_array.h"
 #include "keel/string.h"
+#include "keel/time.h"
 #include "keel/utf8.h"

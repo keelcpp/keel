@@ -106,7 +106,8 @@ public:
         usize m_cap = 0;
     };
 
-    explicit HashMap(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
+    HashMap() noexcept : m_alloc(default_allocator()) {}
+    explicit HashMap(Allocator* alloc) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
     ~HashMap() noexcept {
         destroy_elements();

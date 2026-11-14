@@ -251,6 +251,8 @@ public:
     constexpr ArrayRef() noexcept = default;
     constexpr ArrayRef(decltype(nullptr)) noexcept : m_data(nullptr), m_size(0) {}
     constexpr ArrayRef(const T* data, usize size) noexcept : m_data(data), m_size(size) {}
+    constexpr ArrayRef(std::initializer_list<T> list KEEL_LIFETIMEBOUND) noexcept
+        : m_data(list.begin()), m_size(list.size()) {}
 
     template <usize N> constexpr ArrayRef(const T (&arr)[N]) noexcept : m_data(arr), m_size(N) {}
 

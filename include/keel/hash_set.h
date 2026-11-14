@@ -53,7 +53,8 @@ public:
         usize m_cap = 0;
     };
 
-    explicit HashSet(Allocator* alloc = nullptr) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
+    HashSet() noexcept : m_alloc(default_allocator()) {}
+    explicit HashSet(Allocator* alloc) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
     ~HashSet() noexcept {
         destroy_elements();

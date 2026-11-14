@@ -983,6 +983,137 @@ void test_four_tier_symmetry_and_purity() {
     }
 }
 
+struct PolyBase {
+    inline static int destroyed = 0;
+    virtual ~PolyBase() noexcept { ++destroyed; }
+    virtual int kind() const noexcept = 0;
+};
+
+struct PolyDerived final : PolyBase {
+    int payload = 0;
+    double extra = 0.0; // Larger sizeof than PolyBase to verify exact Derived deallocation size
+    explicit PolyDerived(int p) noexcept : payload(p), extra(static_cast<double>(p) * 2.0) {}
+    int kind() const noexcept override { return payload; }
+};
+
+enum class SampleByteEnum : u8 { Alpha = 1, Beta = 2 };
+
+SourceLocation capture_loc(SourceLocation loc = SourceLocation::current()) noexcept { return loc; }
+
+int sum_array_ref(ArrayRef<int> vals) noexcept {
+    int total = 0;
+    for (int v : vals) total += v;
+    return total;
+}
+
+void test_stage1_primitives() {
+    // 1. Extended traits, SourceLocation, and TypeId
+    static_assert(IsSigned<i32> && IsSigned<f32> && !IsSigned<u32> && !IsSigned<bool>);
+    static_assert(IsUnsigned<u32> && IsUnsigned<bool> && !IsUnsigned<i32> && !IsUnsigned<f64>);
+    static_assert(IsSame<UnderlyingType<SampleByteEnum>, u8>);
+    static_assert(IsBaseOf<PolyBase, PolyDerived> && !IsBaseOf<PolyDerived, PolyBase>);
+    static_assert(IsConvertible<PolyDerived*, PolyBase*> && !IsConvertible<PolyBase*, PolyDerived*>);
+    static_assert(IsConvertible<int, double> && IsTriviallyCopyable<Optional<int>>);
+
+    const SourceLocation loc_a = capture_loc();
+    const SourceLocation loc_b = capture_loc();
+    TEST_CHECK(loc_a.line() > 0 && loc_b.line() > loc_a.line());
+    TEST_CHECK(!StringRef(loc_a.file_name()).empty());
+
+    TEST_CHECK(type_id<int>() == type_id<const int&>());
+    TEST_CHECK(type_id<int>() != type_id<u32>());
+    HashMap<TypeId, int> tid_map;
+    tid_map.put(type_id<PolyBase>(), 11);
+    tid_map.put(type_id<PolyDerived>(), 22);
+    TEST_CHECK(*tid_map.get(type_id<PolyBase>()) == 11);
+    TEST_CHECK(*tid_map.get(type_id<PolyDerived>()) == 22);
+
+    // 2. StaticArray<T, N> & ArrayRef(initializer_list)
+    constexpr StaticArray<int, 4> kStatic = {10, 20, 30, 40};
+    static_assert(kStatic.size() == 4 && kStatic[2] == 30 && IsTriviallyCopyable<StaticArray<int, 4>>);
+    TEST_CHECK(sum_array_ref(kStatic) == 100);
+    TEST_CHECK(sum_array_ref({1, 2, 3, 4, 5}) == 15);
+    TEST_CHECK(sum_array_ref({}) == 0);
+
+    // 3. Optional converting & std::optional zero-header interop
+    Optional<StringRef> opt_sr = "hello";
+    TEST_CHECK(opt_sr.has_value() && opt_sr == "hello");
+    opt_sr = "world";
+    TEST_CHECK(*opt_sr == "world");
+    Optional<f32> opt_f = 12;
+    TEST_CHECK(opt_f.has_value() && *opt_f == 12.0f);
+#if !defined(_HAS_EXCEPTIONS) || _HAS_EXCEPTIONS != 0
+    std::optional<int> std_opt = 77;
+    Optional<f32> from_std = std_opt;
+    TEST_CHECK(from_std.has_value() && *from_std == 77.0f);
+    std::optional<int> std_empty = std::nullopt;
+    Optional<int> from_std_empty = std_empty;
+    TEST_CHECK(!from_std_empty.has_value());
+#endif
+
+    // 4. UniquePtr & Arc with polymorphic upcast & LruCache
+    PolyBase::destroyed = 0;
+    {
+        UniquePtr<PolyBase> up = make_unique<PolyDerived>(42);
+        TEST_CHECK(up && up->kind() == 42);
+        Arc<const PolyBase> arc1 = keel::move(up);
+        TEST_CHECK(!up && arc1 && arc1->kind() == 42 && arc1.use_count() == 1);
+    }
+    TEST_CHECK(PolyBase::destroyed == 1);
+
+    PolyBase::destroyed = 0;
+    {
+        LruCache<u64, Arc<const PolyBase>, 4> cache;
+        Arc<PolyDerived> d = make_arc<PolyDerived>(99);
+        Arc<const PolyBase> base_arc = d;
+        TEST_CHECK(base_arc.use_count() == 2);
+        cache.put(1, base_arc);
+        TEST_CHECK(base_arc.use_count() == 3);
+        d.reset();
+        base_arc.reset();
+        const Arc<const PolyBase>* found = cache.get(1);
+        TEST_CHECK(found != nullptr && (*found)->kind() == 99 && (*found)->kind() == 99);
+    }
+    TEST_CHECK(PolyBase::destroyed == 1);
+
+    // 5. StringSink across String, SmallString, FixedString (and std::string)
+    {
+        String dyn("init");
+        SmallString<16> sm("small");
+        FixedString<7> fx("fix");
+
+        StringSink s_dyn(dyn);
+        StringSink s_sm(sm);
+        StringSink s_fx(fx);
+
+        TEST_CHECK(s_dyn.as_ref() == "init" && s_dyn.max_size() == kInvalidIndex);
+        TEST_CHECK(s_fx.as_ref() == "fix" && s_fx.max_size() == 6);
+
+        s_dyn.assign("updated dynamic string");
+        s_sm.assign("updated small string exceeding inline");
+        s_fx.assign("Hi🚀overflow");
+        TEST_CHECK(dyn == "updated dynamic string");
+        TEST_CHECK(sm == "updated small string exceeding inline");
+        TEST_CHECK(fx == "Hi🚀" && utf8_validate(fx.as_ref()));
+
+        s_dyn.clear();
+        TEST_CHECK(dyn.empty());
+
+#if !defined(_HAS_EXCEPTIONS) || _HAS_EXCEPTIONS != 0
+        std::string std_s = "std_before";
+        StringSink s_std(std_s);
+        TEST_CHECK(s_std.as_ref() == "std_before");
+        s_std.assign("std_after");
+        TEST_CHECK(std_s == "std_after");
+#endif
+    }
+
+    // 6. Monotonic clock
+    const u64 t0 = monotonic_ns();
+    const u64 t1 = monotonic_ns();
+    TEST_CHECK(t0 > 0 && t1 >= t0);
+}
+
 } // namespace
 
 int main() {
@@ -996,6 +1127,7 @@ int main() {
     test_algo_and_rtree();
     test_review_regressions();
     test_four_tier_symmetry_and_purity();
+    test_stage1_primitives();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

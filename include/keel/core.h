@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <new>
 
 #if defined(__clang__)
@@ -116,6 +117,7 @@ template <bool B, typename T, typename F> using Conditional = typename detail::C
 
 template <typename T, typename U> inline constexpr bool IsSame = false;
 template <typename T> inline constexpr bool IsSame<T, T> = true;
+template <typename T, typename U> concept SameAs = IsSame<T, U> && IsSame<U, T>;
 
 template <typename T> inline constexpr bool IsConst = false;
 template <typename T> inline constexpr bool IsConst<const T> = true;
@@ -190,6 +192,81 @@ inline constexpr bool IsIntegral =
 template <typename T>
 inline constexpr bool IsFloatingPoint =
     IsSame<RemoveCv<T>, float> || IsSame<RemoveCv<T>, double> || IsSame<RemoveCv<T>, long double>;
+
+template <typename T>
+inline constexpr bool IsSigned = (IsIntegral<T> || IsFloatingPoint<T>) && !IsSame<RemoveCv<T>, bool> &&
+                                 (static_cast<RemoveCv<T>>(-1) < static_cast<RemoveCv<T>>(0));
+
+template <typename T> inline constexpr bool IsUnsigned = IsIntegral<T> && !IsSigned<T>;
+
+template <typename Base, typename Derived> inline constexpr bool IsBaseOf = __is_base_of(Base, Derived);
+
+namespace detail {
+template <typename T, bool = IsEnum<T>> struct UnderlyingTypeImpl {
+    using Type = T;
+};
+template <typename T> struct UnderlyingTypeImpl<T, true> {
+    using Type = __underlying_type(T);
+};
+
+template <typename T> T&& declval() noexcept;
+template <typename To> void accept_implicit(To) noexcept;
+
+template <typename From, typename To>
+concept ImplicitlyConvertibleImpl = requires { detail::accept_implicit<To>(detail::declval<From>()); };
+
+template <typename T> struct TypeIdAnchor {
+    static inline constexpr char kTag = 0;
+};
+} // namespace detail
+
+template <typename E>
+    requires IsEnum<E>
+using UnderlyingType = typename detail::UnderlyingTypeImpl<RemoveCv<E>>::Type;
+
+template <typename From, typename To>
+inline constexpr bool IsConvertible =
+    detail::ImplicitlyConvertibleImpl<From, To> || (IsSame<RemoveCv<From>, void> && IsSame<RemoveCv<To>, void>);
+
+// Zero-header source location replacement for <source_location> (16 bytes on 64-bit).
+struct SourceLocation {
+    const char* m_file = "";
+    u32 m_line = 0;
+    u32 m_column = 0;
+
+    constexpr SourceLocation() noexcept = default;
+    constexpr SourceLocation(const char* file, u32 line, u32 column = 0) noexcept
+        : m_file(file ? file : ""), m_line(line), m_column(column) {}
+
+    [[nodiscard]] static consteval SourceLocation current(
+        const char* file = __builtin_FILE(),
+        u32 line = static_cast<u32>(__builtin_LINE()),
+        u32 column = static_cast<u32>(__builtin_COLUMN())) noexcept {
+        return SourceLocation(file, line, column);
+    }
+
+    [[nodiscard]] constexpr const char* file_name() const noexcept { return m_file; }
+    [[nodiscard]] constexpr u32 line() const noexcept { return m_line; }
+    [[nodiscard]] constexpr u32 column() const noexcept { return m_column; }
+
+    [[nodiscard]] constexpr bool operator==(const SourceLocation& other) const noexcept = default;
+};
+
+// Zero-RTTI unique type identifier (works with -fno-rtti and constexpr).
+struct TypeId {
+    const void* ptr = nullptr;
+
+    constexpr TypeId() noexcept = default;
+    explicit constexpr TypeId(const void* p) noexcept : ptr(p) {}
+
+    [[nodiscard]] usize hash_code() const noexcept { return reinterpret_cast<usize>(ptr); }
+    [[nodiscard]] friend constexpr bool operator==(TypeId a, TypeId b) noexcept { return a.ptr == b.ptr; }
+    [[nodiscard]] friend constexpr bool operator!=(TypeId a, TypeId b) noexcept { return a.ptr != b.ptr; }
+};
+
+template <typename T> [[nodiscard]] constexpr TypeId type_id() noexcept {
+    return TypeId(&detail::TypeIdAnchor<RemoveCvRef<T>>::kTag);
+}
 
 template <typename T> [[nodiscard]] constexpr RemoveReference<T>&& move(T&& val) noexcept {
     return static_cast<RemoveReference<T>&&>(val);
