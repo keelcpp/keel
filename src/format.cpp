@@ -1,9 +1,43 @@
 #include "keel/format.h"
 #include "keel/io.h"
 
+#include <cmath>
+
 namespace keel {
 
 namespace {
+
+i64 arg_as_i64(const FormatArg& arg) noexcept {
+    switch (arg.kind) {
+    case FormatArg::Kind::Signed:
+    case FormatArg::Kind::Char:
+        return arg.i_val;
+    case FormatArg::Kind::Unsigned:
+    case FormatArg::Kind::Bool:
+        return static_cast<i64>(arg.u_val);
+    case FormatArg::Kind::Float:
+    case FormatArg::Kind::Double:
+        return static_cast<i64>(std::round(arg.f_val));
+    default:
+        return 0;
+    }
+}
+
+u64 arg_as_u64(const FormatArg& arg) noexcept {
+    switch (arg.kind) {
+    case FormatArg::Kind::Unsigned:
+    case FormatArg::Kind::Bool:
+        return arg.u_val;
+    case FormatArg::Kind::Signed:
+    case FormatArg::Kind::Char:
+        return static_cast<u64>(arg.i_val);
+    case FormatArg::Kind::Float:
+    case FormatArg::Kind::Double:
+        return static_cast<u64>(static_cast<i64>(std::round(arg.f_val)));
+    default:
+        return 0;
+    }
+}
 
 void append_aligned_text(String& out, StringRef text, int width, char align, char fill) {
     const usize total_len = text.size();
@@ -130,20 +164,26 @@ void format_arg_into(
     }
     case 'd':
     case 'i': {
-        const i64 v = (arg.kind == FormatArg::Kind::Unsigned) ? static_cast<i64>(arg.u_val) : arg.i_val;
+        const i64 v = arg_as_i64(arg);
         const usize n = format_i64(num_buf, sizeof(num_buf), v, 10, false);
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign, align, fill);
         break;
     }
     case 'u': {
-        const u64 v = (arg.kind == FormatArg::Kind::Signed) ? static_cast<u64>(arg.i_val) : arg.u_val;
+        const u64 v = arg_as_u64(arg);
         const usize n = format_u64(num_buf, sizeof(num_buf), v, 10, false);
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign, align, fill);
         break;
     }
+    case 'o': {
+        const u64 v = arg_as_u64(arg);
+        const usize n = format_u64(num_buf, sizeof(num_buf), v, 8, false);
+        append_padded_num(out, num_buf, n, width, zero_pad, false, align, fill);
+        break;
+    }
     case 'x':
     case 'X': {
-        const u64 v = (arg.kind == FormatArg::Kind::Signed) ? static_cast<u64>(arg.i_val) : arg.u_val;
+        const u64 v = arg_as_u64(arg);
         const usize n = format_u64(num_buf, sizeof(num_buf), v, 16, spec == 'X');
         append_padded_num(out, num_buf, n, width, zero_pad, false, align, fill);
         break;
@@ -232,6 +272,7 @@ bool is_printf_spec(char c) noexcept {
     case 'd':
     case 'i':
     case 'u':
+    case 'o':
     case 'x':
     case 'X':
     case 'f':

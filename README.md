@@ -25,6 +25,7 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | `keel/pool.h` | Generational slot `Pool<T>` and 64-bit `Handle<T>` |
 | `keel/ref.h` | Non-owning `StringRef`, `ArrayRef<T>`, `MutArrayRef<T>`, `FunctionRef<Sig>` (accept `std` ranges without `#include`s) |
 | `keel/error.h` | Value-type `Error`, `ErrorCode`, `ParseError`, `error_message` |
+| `keel/exception.h` | Zero-heap `Exception : std::exception` (`Exception::format`, `Exception::with_error`) when exceptions are enabled |
 | `keel/result.h` | `Result<T, E>`, `KEEL_TRY`, `KEEL_TRY_ASSIGN` |
 | `keel/optional.h` | Trivially-copyable `Optional<T>` and zero-size-overhead `SentinelOptional<T, Sentinel>` |
 | `keel/function_ref.h` | Standalone 2-pointer non-owning `FunctionRef<R(Args...)>` |
@@ -44,6 +45,22 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | `keel/fs.h` | UTF-8 path manipulation (`path_join`, `path_normalize`, etc.) and OS filesystem operations |
 | `keel/io.h` | Move-only `File` with sticky write errors and console I/O |
 | `keel/interop_std.h` | Opt-in conversions to `std::string`, `std::string_view`, `std::vector`, `std::span`, `std::optional` |
+
+## Opt-In CMake Guidelines Enforcement
+
+Downstream targets can voluntarily enforce `keel` coding guidelines (`keel::*` fixed/pointer-sized integers instead of `<cstdint>` / raw `int`, zero-STL header/source discipline, C++ `<exception>` support, and optional standalone header compilation checks):
+
+```cmake
+find_package(keel REQUIRED) # or add_subdirectory(keel)
+
+keel_enforce_guidelines(my_target
+    SCOPE ALL
+    HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    STANDALONE_HEADERS ON
+)
+```
+
+Annotate unavoidable C/OS ABI boundary lines with `// keel-lint: ignore`.
 
 ## Building & Running Tests
 

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(keel VERSION 0.1.0 LANGUAGES CXX)
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/KeelGuidelines.cmake")
+
 option(KEEL_UNITY_BUILD "Compile keel as a single unity translation unit (src/keel_unity.cpp)" OFF)
 option(KEEL_NO_EXCEPTIONS_RTTI "Compile keel without C++ exceptions and RTTI" OFF)
 option(KEEL_BUILD_TESTS "Build keel unit tests and header purity checks" ${PROJECT_IS_TOP_LEVEL})
@@ -78,6 +80,8 @@ write_basic_package_version_file(
 install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/keelConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/keelConfigVersion.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/KeelGuidelines.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/KeelCheckGuidelines.cmake"
     DESTINATION lib/cmake/keel
 )
 

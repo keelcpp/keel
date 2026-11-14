@@ -31,4 +31,32 @@ u64 monotonic_ns() noexcept {
 #endif
 }
 
+void sleep_ns(u64 ns) noexcept {
+    if (ns == 0) return;
+#if defined(__EMSCRIPTEN__)
+    (void)ns;
+#elif defined(_WIN32)
+    const u64 target = monotonic_ns() + ns;
+    for (;;) {
+        const u64 now = monotonic_ns();
+        if (now >= target) break;
+        const u64 rem = target - now;
+        if (rem >= 2000000ULL) {
+            Sleep(static_cast<DWORD>(rem / 1000000ULL));
+        }
+    }
+#else
+    const u64 target = monotonic_ns() + ns;
+    for (;;) {
+        const u64 now = monotonic_ns();
+        if (now >= target) break;
+        const u64 rem = target - now;
+        struct timespec ts {};
+        ts.tv_sec = static_cast<time_t>(rem / 1000000000ULL);
+        ts.tv_nsec = static_cast<long>(rem % 1000000000ULL);
+        nanosleep(&ts, nullptr);
+    }
+#endif
+}
+
 } // namespace keel

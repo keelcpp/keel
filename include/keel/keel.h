@@ -7,6 +7,7 @@
 #include "keel/complex.h"
 #include "keel/core.h"
 #include "keel/error.h"
+#include "keel/exception.h"
 #include "keel/format.h"
 #include "keel/fs.h"
 #include "keel/function.h"

@@ -1108,10 +1108,49 @@ void test_stage1_primitives() {
 #endif
     }
 
-    // 6. Monotonic clock
+    // 6. Monotonic clock & sleep
     const u64 t0 = monotonic_ns();
+    sleep_us(50);
     const u64 t1 = monotonic_ns();
-    TEST_CHECK(t0 > 0 && t1 >= t0);
+    TEST_CHECK(t0 > 0 && t1 > t0);
+    TEST_CHECK(format("%d Hz", 439.7) == "440 Hz");
+    TEST_CHECK(format("%u LEDs", 12.0f) == "12 LEDs");
+    TEST_CHECK(format("%o", 64u) == "100");
+
+    // 7. Zero-heap C++ Exception (`keel::Exception : public std::exception`)
+#if KEEL_HAS_EXCEPTIONS
+    {
+        bool caughtStd = false;
+        try {
+            throw Exception::with_error(
+                Error{ErrorCode::NotFound, 2}, "Asset '{}' missing at offset {}", "icons/play.svg", 42
+            );
+        } catch (const std::exception& e) {
+            caughtStd = (StringRef(e.what()) == "Asset 'icons/play.svg' missing at offset 42");
+        }
+        TEST_CHECK(caughtStd);
+
+        bool caughtKeel = false;
+        try {
+            throw Exception(ErrorCode::PermissionDenied);
+        } catch (const Exception& ex) {
+            caughtKeel = (ex.code() == ErrorCode::PermissionDenied && !ex.message().empty());
+        }
+        TEST_CHECK(caughtKeel);
+
+        // Verify UTF-8 safe clamping on overlong exception messages and noexcept copyability
+        static_assert(__is_nothrow_constructible(Exception, const Exception&));
+        char longUtf8[320];
+        for (usize i = 0; i < 300; i += 2) {
+            longUtf8[i] = static_cast<char>(0xD0);     // 'Я' = D0 AF (2-byte UTF-8)
+            longUtf8[i + 1] = static_cast<char>(0xAF);
+        }
+        longUtf8[300] = '\0';
+        const Exception clampedEx(longUtf8);
+        TEST_CHECK(clampedEx.message().size() <= Exception::kMaxMessageBytes);
+        TEST_CHECK(utf8_validate(clampedEx.message()));
+    }
+#endif
 }
 
 void test_complex() {
