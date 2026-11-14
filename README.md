@@ -17,12 +17,12 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | Header | Contents |
 | :--- | :--- |
 | `keel/core.h` | `i8`..`u64`, `f32`/`f64`, `isize`, `usize`, `KEEL_ASSERT`, builtin type traits, `move`/`forward` |
-| `keel/math.h` | `kPi`/`kTau`, `deg_to_rad`, `Limits<T>`, `constexpr abs`/`sqr`/`sign`, `is_nan`/`is_finite`, `round_i32`/`round_i64`/`floor_i32`/`ceil_i32`, `lerp`/`remap` |
+| `keel/math.h` | `kPi`/`kTau`, `deg_to_rad`, `Limits<T>`, `constexpr abs`/`sqr`/`sign`, `is_nan`/`is_finite`, `round_i32`/`round_i64`/`round_sat`, `floor_i32`/`ceil_i32`, `lerp`/`remap` |
 | `keel/complex.h` | Flat `Complex<T>`, `c32`/`c64` aliases, `constexpr` arithmetic & Smith division, `conj`, `norm_sq`, `abs`, `arg`, `polar` |
-| `keel/bits.h` | `countl_zero`, `countr_zero`, `popcount`, `bit_width`, `bit_ceil`, `bit_floor`, `rotl`, `rotr`, `byteswap` |
+| `keel/bits.h` | Bit ops (`countl_zero`, `popcount`, `bit_ceil`, `byteswap`), `checked_add`/`sub`/`mul`, `sat_add`/`sub`/`mul`/`sat_cast`, endian `read_le/be*` & `write_le/be*` |
 | `keel/hash.h` | Fast 64-bit `hash_bytes`, `hash_u64`, `hash_combine`, `Hash<T>`, `Equal<T>` |
-| `keel/memory.h` | `Allocator`, `default_allocator`, `set_oom_handler`, raw memory primitives |
-| `keel/arena.h` | Virtual-memory `Arena` (with in-place top `realloc`), `ArenaTemp`, `ArenaArray<T>`, thread-local `get_scratch` |
+| `keel/memory.h` | `Allocator` (`alloc_bytes`, `try_alloc_bytes`, `kSimdAlign`), `default_allocator`, `set_oom_handler`, raw memory primitives |
+| `keel/arena.h` | Virtual-memory `Arena` (with overflow block spillover & in-place top `realloc`), `ArenaTemp`, `alloc_slice`/`zero_slice`, `ArenaArray<T>`, thread-local `get_scratch` |
 | `keel/pool.h` | Generational slot `Pool<T>` and 64-bit `Handle<T>` |
 | `keel/ref.h` | Non-owning `StringRef`, `ArrayRef<T>`, `MutArrayRef<T>`, `FunctionRef<Sig>` (accept `std` ranges without `#include`s) |
 | `keel/error.h` | Value-type `Error`, `ErrorCode`, `ParseError`, `error_message` |
@@ -45,7 +45,7 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | `keel/format.h` | Type-safe `format`, `format_small`, `format_fixed`, `format_into`, `format_arena`, `format_buf`, `print` |
 | `keel/fs.h` | UTF-8 path manipulation (`path_join`, `path_normalize`, etc.) and OS filesystem operations |
 | `keel/io.h` | Move-only `File` with sticky write errors and console I/O |
-| `keel/interop_std.h` | Opt-in conversions to `std::string`, `std::string_view`, `std::vector`, `std::span`, `std::optional` |
+| `keel/interop_std.h` | Opt-in conversions to `std::string`, `std::string_view`, `std::vector`, `std::span`, `std::optional`, `std::complex`, and PMR bridges (`PmrAllocatorBridge`, `AllocatorMemoryResource`) |
 
 ## Opt-In CMake Guidelines Enforcement
 

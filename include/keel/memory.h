@@ -5,6 +5,7 @@
 namespace keel {
 
 inline constexpr usize kDefaultAlign = alignof(std::max_align_t);
+inline constexpr usize kSimdAlign = 64;
 
 using OomHandler = void (*)(usize size, usize align, void* user_data);
 
@@ -16,6 +17,25 @@ struct Allocator {
     void* (*realloc)(void* ctx, void* ptr, usize old_size, usize new_size, usize align) noexcept = nullptr;
     void (*free)(void* ctx, void* ptr, usize size, usize align) noexcept = nullptr;
     void* ctx = nullptr;
+
+    [[nodiscard]] void* try_alloc_bytes(usize size, usize align = kDefaultAlign) noexcept {
+        KEEL_ASSERT(align > 0 && (align & (align - 1)) == 0);
+        if (size == 0) return nullptr;
+        return alloc(ctx, size, align);
+    }
+
+    [[nodiscard]] void* try_realloc_bytes(void* ptr, usize old_size, usize new_size,
+                                          usize align = kDefaultAlign) noexcept {
+        KEEL_ASSERT(align > 0 && (align & (align - 1)) == 0);
+        if (new_size == 0) {
+            if (ptr) free(ctx, ptr, old_size, align);
+            return nullptr;
+        }
+        if (!ptr) {
+            return alloc(ctx, new_size, align);
+        }
+        return realloc(ctx, ptr, old_size, new_size, align);
+    }
 
     [[nodiscard]] void* alloc_bytes(usize size, usize align = kDefaultAlign) {
         KEEL_ASSERT(align > 0 && (align & (align - 1)) == 0);
@@ -49,6 +69,15 @@ struct Allocator {
         }
     }
 
+    template <typename T> [[nodiscard]] T* try_alloc_array(usize count, usize align = alignof(T)) noexcept {
+        const usize actual_align = max(align, alignof(T));
+        if (count == 0) return nullptr;
+        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+            return nullptr;
+        }
+        return static_cast<T*>(try_alloc_bytes(count * sizeof(T), actual_align));
+    }
+
     template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
         if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
@@ -60,6 +89,25 @@ struct Allocator {
     template <typename T> void free_array(T* ptr, usize count) noexcept {
         if (ptr) {
             free_bytes(ptr, count * sizeof(T), alignof(T));
+        }
+    }
+
+    template <typename T> [[nodiscard]] T* try_alloc_aligned_array(usize count, usize align = kSimdAlign) noexcept {
+        return try_alloc_array<T>(count, align);
+    }
+
+    template <typename T> [[nodiscard]] T* alloc_aligned_array(usize count, usize align = kSimdAlign) {
+        const usize actual_align = max(align, alignof(T));
+        if (count == 0) return nullptr;
+        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+            handle_oom(~usize{0}, actual_align);
+        }
+        return static_cast<T*>(alloc_bytes(count * sizeof(T), actual_align));
+    }
+
+    template <typename T> void free_aligned_array(T* ptr, usize count, usize align = kSimdAlign) noexcept {
+        if (ptr) {
+            free_bytes(ptr, count * sizeof(T), max(align, alignof(T)));
         }
     }
 

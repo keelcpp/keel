@@ -7,6 +7,7 @@
 
 #include "keel/array.h"
 #include "keel/complex.h"
+#include "keel/memory.h"
 #include "keel/optional.h"
 #include "keel/ref.h"
 #include "keel/string.h"
@@ -17,6 +18,13 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#if __has_include(<memory_resource>) && (defined(__cpp_exceptions) || defined(__EXCEPTIONS) || (defined(_CPPUNWIND) && _CPPUNWIND != 0))
+#include <memory_resource>
+#define KEEL_INTEROP_HAS_PMR 1
+#else
+#define KEEL_INTEROP_HAS_PMR 0
+#endif
 
 namespace keel {
 
@@ -101,6 +109,92 @@ template <typename T>
 [[nodiscard]] inline std::span<std::complex<T>> to_std_complex_span(MutArrayRef<Complex<T>> s) noexcept {
     return std::span<std::complex<T>>(reinterpret_cast<std::complex<T>*>(s.data()), s.size());
 }
+
+#if KEEL_INTEROP_HAS_PMR
+
+// Adapts a `std::pmr::memory_resource*` to a `keel::Allocator`.
+class PmrAllocatorBridge {
+public:
+    explicit PmrAllocatorBridge(std::pmr::memory_resource* mr = nullptr) noexcept
+        : m_mr(mr ? mr : std::pmr::get_default_resource()) {
+        m_alloc.ctx = m_mr;
+        m_alloc.alloc = [](void* ctx, usize size, usize align) noexcept -> void* {
+            if (size == 0) return nullptr;
+            try {
+                return static_cast<std::pmr::memory_resource*>(ctx)->allocate(size, align);
+            } catch (...) {
+                return nullptr;
+            }
+        };
+        m_alloc.realloc = [](void* ctx, void* ptr, usize old_size, usize new_size, usize align) noexcept -> void* {
+            auto* r = static_cast<std::pmr::memory_resource*>(ctx);
+            if (new_size == 0) {
+                if (ptr) r->deallocate(ptr, old_size, align);
+                return nullptr;
+            }
+            void* next = nullptr;
+            try {
+                next = r->allocate(new_size, align);
+            } catch (...) {
+                return nullptr;
+            }
+            if (ptr && old_size > 0) {
+                mem_copy(next, ptr, min(old_size, new_size));
+                r->deallocate(ptr, old_size, align);
+            }
+            return next;
+        };
+        m_alloc.free = [](void* ctx, void* ptr, usize size, usize align) noexcept {
+            if (ptr) {
+                static_cast<std::pmr::memory_resource*>(ctx)->deallocate(ptr, size, align);
+            }
+        };
+    }
+
+    PmrAllocatorBridge(const PmrAllocatorBridge&) = delete;
+    PmrAllocatorBridge& operator=(const PmrAllocatorBridge&) = delete;
+
+    [[nodiscard]] Allocator* allocator() noexcept { return &m_alloc; }
+    [[nodiscard]] std::pmr::memory_resource* resource() const noexcept { return m_mr; }
+
+private:
+    std::pmr::memory_resource* m_mr = nullptr;
+    Allocator m_alloc{};
+};
+
+// Adapts a `keel::Allocator*` to a `std::pmr::memory_resource`.
+class AllocatorMemoryResource final : public std::pmr::memory_resource {
+public:
+    explicit AllocatorMemoryResource(Allocator* alloc = nullptr) noexcept
+        : m_alloc(alloc ? alloc : default_allocator()) {}
+
+    [[nodiscard]] Allocator* allocator() const noexcept { return m_alloc; }
+
+protected:
+    void* do_allocate(std::size_t bytes, std::size_t alignment) override {
+        if (bytes == 0) bytes = 1;
+        void* p = m_alloc->try_alloc_bytes(bytes, alignment);
+        if (!p) {
+            throw std::bad_alloc();
+        }
+        return p;
+    }
+
+    void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) noexcept override {
+        if (p) {
+            m_alloc->free_bytes(p, bytes, alignment);
+        }
+    }
+
+    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
+        return this == &other;
+    }
+
+private:
+    Allocator* m_alloc = nullptr;
+};
+
+#endif // KEEL_INTEROP_HAS_PMR
 
 } // namespace keel
 

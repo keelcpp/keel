@@ -40,6 +40,20 @@ public:
     [[nodiscard]] Allocator* allocator() const noexcept;
     void release() noexcept;
 
+    template <typename T> [[nodiscard]] T* alloc_array(usize count) const;
+
+    template <typename T>
+        requires IsTriviallyDestructible<T>
+    [[nodiscard]] MutArrayRef<T> alloc_slice(usize count, usize align = alignof(T)) const;
+
+    template <typename T>
+        requires IsTriviallyCopyable<T>
+    [[nodiscard]] MutArrayRef<T> zero_slice(usize count, usize align = alignof(T)) const;
+
+    template <typename T>
+        requires IsTriviallyCopyable<T>
+    [[nodiscard]] MutArrayRef<T> copy_slice(ArrayRef<T> src, usize align = alignof(T)) const;
+
 private:
     Arena* m_arena = nullptr;
     usize m_saved_offset = 0;
@@ -49,7 +63,7 @@ class Arena {
 public:
     static constexpr usize kDefaultReserveSize = (sizeof(void*) >= 8) ? (64ULL * 1024 * 1024) : (4ULL * 1024 * 1024);
 
-    explicit Arena(usize reserve_size = kDefaultReserveSize) noexcept;
+    explicit Arena(usize reserve_size = kDefaultReserveSize, Allocator* upstream = nullptr) noexcept;
     ~Arena() noexcept;
 
     Arena(const Arena&) = delete;
@@ -58,9 +72,20 @@ public:
     Arena(Arena&& other) noexcept;
     Arena& operator=(Arena&& other) noexcept;
 
+    [[nodiscard]] void* try_alloc(usize size, usize align = kDefaultAlign) noexcept;
+    [[nodiscard]] void* try_realloc(void* ptr, usize old_size, usize new_size, usize align = kDefaultAlign) noexcept;
     [[nodiscard]] void* alloc(usize size, usize align = kDefaultAlign);
     [[nodiscard]] void* realloc(void* ptr, usize old_size, usize new_size, usize align = kDefaultAlign);
     [[nodiscard]] bool try_extend(void* ptr, usize old_size, usize new_size) noexcept;
+
+    template <typename T> [[nodiscard]] T* try_alloc_array(usize count, usize align = alignof(T)) noexcept {
+        const usize actual_align = max(align, alignof(T));
+        if (count == 0) return nullptr;
+        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+            return nullptr;
+        }
+        return static_cast<T*>(try_alloc(count * sizeof(T), actual_align));
+    }
 
     template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
@@ -70,12 +95,43 @@ public:
         return static_cast<T*>(alloc(count * sizeof(T), alignof(T)));
     }
 
+    template <typename T>
+        requires IsTriviallyDestructible<T>
+    [[nodiscard]] MutArrayRef<T> alloc_slice(usize count, usize align = alignof(T)) {
+        const usize actual_align = max(align, alignof(T));
+        if (count == 0) return MutArrayRef<T>();
+        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+            handle_oom(~usize{0}, actual_align);
+        }
+        return MutArrayRef<T>(static_cast<T*>(alloc(count * sizeof(T), actual_align)), count);
+    }
+
+    template <typename T>
+        requires IsTriviallyCopyable<T>
+    [[nodiscard]] MutArrayRef<T> zero_slice(usize count, usize align = alignof(T)) {
+        MutArrayRef<T> out = alloc_slice<T>(count, align);
+        if (!out.empty()) {
+            mem_zero(out.data(), out.size() * sizeof(T));
+        }
+        return out;
+    }
+
+    template <typename T>
+        requires IsTriviallyCopyable<T>
+    [[nodiscard]] MutArrayRef<T> copy_slice(ArrayRef<T> src, usize align = alignof(T)) {
+        MutArrayRef<T> out = alloc_slice<T>(src.size(), align);
+        if (!out.empty()) {
+            mem_copy(out.data(), src.data(), src.size() * sizeof(T));
+        }
+        return out;
+    }
+
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
         if constexpr (IsTriviallyDestructible<T>) {
             void* mem = alloc(sizeof(T), alignof(T));
             return ::new (mem) T(keel::forward<Args>(args)...);
         } else {
-            const usize mark = m_offset;
+            const usize mark = used();
             void* mem = alloc(sizeof(T), alignof(T));
             auto* node = static_cast<DtorNode*>(alloc(sizeof(DtorNode), alignof(DtorNode)));
             T* obj = ::new (mem) T(keel::forward<Args>(args)...);
@@ -102,7 +158,7 @@ public:
                 T* data = nullptr;
                 usize count = 0;
             };
-            const usize mark = m_offset;
+            const usize mark = used();
             T* arr = alloc_array<T>(count);
             auto* rec = static_cast<ArrayDtorRecord*>(alloc(sizeof(ArrayDtorRecord), alignof(ArrayDtorRecord)));
             for (usize i = 0; i < count; ++i) {
@@ -140,11 +196,13 @@ public:
     void rewind_to(usize offset) noexcept;
     void release_memory() noexcept;
 
-    [[nodiscard]] usize used() const noexcept { return m_offset; }
+    [[nodiscard]] usize used() const noexcept { return m_offset + m_overflow_used; }
     [[nodiscard]] usize committed() const noexcept { return m_committed; }
     [[nodiscard]] usize reserved() const noexcept { return m_reserved; }
+    [[nodiscard]] usize overflow_used() const noexcept { return m_overflow_used; }
+    [[nodiscard]] Allocator* upstream_allocator() const noexcept { return m_upstream; }
 
-    [[nodiscard]] ArenaTemp begin_temp() noexcept { return ArenaTemp(*this, m_offset); }
+    [[nodiscard]] ArenaTemp begin_temp() noexcept { return ArenaTemp(*this, used()); }
     [[nodiscard]] Allocator* allocator() noexcept { return &m_allocator; }
 
 private:
@@ -155,15 +213,35 @@ private:
         usize offset = 0;
     };
 
+    struct OverflowBlock {
+        OverflowBlock* prev = nullptr;
+        u8* data = nullptr;
+        usize chunk_used = 0;
+        usize chunk_cap = 0;
+        usize birth_slab_offset = 0;
+        usize birth_overflow_used = 0;
+        usize alloc_bytes = 0;
+        usize alloc_align = kDefaultAlign;
+        bool is_bump_chunk = false;
+
+        [[nodiscard]] usize birth_mark() const noexcept { return birth_slab_offset + birth_overflow_used; }
+    };
+
     void init_allocator() noexcept;
     void run_destructors_from(usize offset) noexcept;
+    void free_overflow_from(usize offset) noexcept;
+    void* alloc_overflow(usize size, usize align) noexcept;
 
     u8* m_base = nullptr;
     usize m_offset = 0;
     usize m_committed = 0;
     usize m_reserved = 0;
     usize m_last_alloc_end = 0;
+    usize m_overflow_used = 0;
     DtorNode* m_dtor_head = nullptr;
+    OverflowBlock* m_overflow_head = nullptr;
+    Allocator* m_upstream = nullptr;
+    bool m_has_bump_chunk = false;
     Allocator m_allocator{};
 };
 
@@ -181,9 +259,34 @@ inline Allocator* ArenaTemp::allocator() const noexcept {
     return m_arena->allocator();
 }
 
+template <typename T> inline T* ArenaTemp::alloc_array(usize count) const {
+    return arena().alloc_array<T>(count);
+}
+
+template <typename T>
+    requires IsTriviallyDestructible<T>
+inline MutArrayRef<T> ArenaTemp::alloc_slice(usize count, usize align) const {
+    return arena().alloc_slice<T>(count, align);
+}
+
+template <typename T>
+    requires IsTriviallyCopyable<T>
+inline MutArrayRef<T> ArenaTemp::zero_slice(usize count, usize align) const {
+    return arena().zero_slice<T>(count, align);
+}
+
+template <typename T>
+    requires IsTriviallyCopyable<T>
+inline MutArrayRef<T> ArenaTemp::copy_slice(ArrayRef<T> src, usize align) const {
+    return arena().copy_slice<T>(src, align);
+}
+
 // Thread-local scratch arena acquisition with conflict avoidance (ping-pong between 2 thread-local arenas)
 [[nodiscard]] ArenaTemp get_scratch(Arena* const* conflicts = nullptr, usize conflict_count = 0) noexcept;
 [[nodiscard]] ArenaTemp get_scratch(const Allocator* conflict_alloc) noexcept;
+[[nodiscard]] inline ArenaTemp get_scratch(decltype(nullptr)) noexcept {
+    return get_scratch(static_cast<Arena* const*>(nullptr), 0);
+}
 
 namespace detail {
 
@@ -243,6 +346,8 @@ public:
             reserve(initial_reserve);
         }
     }
+
+    explicit ArenaArray(const ArenaTemp& temp, usize initial_reserve = 0) : ArenaArray(temp.arena(), initial_reserve) {}
 
     [[nodiscard]] static ArenaArray from(Arena& arena, ArrayRef<T> items) {
         ArenaArray arr(arena, items.size());

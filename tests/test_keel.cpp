@@ -503,6 +503,47 @@ void test_std_interop() {
     std::span<const int> span_from_small = small_arr;
     std::span<int> mut_span_from_small = small_arr;
     TEST_CHECK(span_from_small.size() == 2 && mut_span_from_small[1] == 8);
+
+#if KEEL_INTEROP_HAS_PMR
+    {
+        u8 stack_buf[4096];
+        std::pmr::monotonic_buffer_resource mono(stack_buf, sizeof(stack_buf), std::pmr::null_memory_resource());
+        PmrAllocatorBridge bridge(&mono);
+
+        Array<int> k_arr(bridge.allocator());
+        for (int i = 0; i < 64; ++i) k_arr.push_back(i * 3);
+        TEST_CHECK(k_arr.size() == 64 && k_arr[20] == 60);
+
+        // Exhaust null-backed monotonic_buffer_resource -> try_alloc_bytes returns nullptr without throwing
+        void* too_big = bridge.allocator()->try_alloc_bytes(64 * 1024, 16);
+        TEST_CHECK(too_big == nullptr);
+    }
+    {
+        Arena pmr_arena(1024 * 1024);
+        AllocatorMemoryResource mr(pmr_arena.allocator());
+        {
+            std::pmr::vector<int> pvec(&mr);
+            for (int i = 0; i < 100; ++i) pvec.push_back(i + 1);
+            TEST_CHECK(pvec.size() == 100 && pvec[99] == 100);
+            TEST_CHECK(pmr_arena.used() > 0);
+        }
+
+        Allocator fail_alloc{
+            .alloc = [](void*, usize, usize) noexcept -> void* { return nullptr; },
+            .realloc = [](void*, void*, usize, usize, usize) noexcept -> void* { return nullptr; },
+            .free = [](void*, void*, usize, usize) noexcept {},
+            .ctx = nullptr,
+        };
+        AllocatorMemoryResource fail_mr(&fail_alloc);
+        bool threw_bad_alloc = false;
+        try {
+            (void)fail_mr.allocate(64, 16);
+        } catch (const std::bad_alloc&) {
+            threw_bad_alloc = true;
+        }
+        TEST_CHECK(threw_bad_alloc);
+    }
+#endif
 #endif
 }
 
@@ -1278,6 +1319,226 @@ void test_math() {
     TEST_CHECK(round_i32(123.6f) == 124 && floor_i64(-4.01) == -5 && ceil_i64(4.01) == 5);
 }
 
+struct CountingUpstream {
+    usize live_blocks = 0;
+    usize live_bytes = 0;
+    usize total_allocs = 0;
+
+    Allocator make_allocator() noexcept {
+        return Allocator{
+            .alloc = [](void* ctx, usize size, usize align) noexcept -> void* {
+                auto* self = static_cast<CountingUpstream*>(ctx);
+                void* p = default_allocator()->try_alloc_bytes(size, align);
+                if (p) {
+                    ++self->live_blocks;
+                    self->live_bytes += size;
+                    ++self->total_allocs;
+                }
+                return p;
+            },
+            .realloc = [](void* ctx, void* ptr, usize old_size, usize new_size, usize align) noexcept -> void* {
+                auto* self = static_cast<CountingUpstream*>(ctx);
+                void* p = default_allocator()->try_realloc_bytes(ptr, old_size, new_size, align);
+                if (p) {
+                    if (!ptr) ++self->live_blocks;
+                    self->live_bytes = self->live_bytes - old_size + new_size;
+                }
+                return p;
+            },
+            .free = [](void* ctx, void* ptr, usize size, usize align) noexcept {
+                auto* self = static_cast<CountingUpstream*>(ctx);
+                if (ptr) {
+                    --self->live_blocks;
+                    self->live_bytes -= size;
+                    default_allocator()->free_bytes(ptr, size, align);
+                }
+            },
+            .ctx = this,
+        };
+    }
+};
+
+void test_step0_memory_and_arena_spillover() {
+    // 1. Non-aborting try_alloc* on failing allocator + kSimdAlign helpers
+    bool oom_called = false;
+    set_oom_handler([](usize, usize, void* ud) { *static_cast<bool*>(ud) = true; }, &oom_called);
+
+    Allocator fail_alloc{
+        .alloc = [](void*, usize, usize) noexcept -> void* { return nullptr; },
+        .realloc = [](void*, void*, usize, usize, usize) noexcept -> void* { return nullptr; },
+        .free = [](void*, void*, usize, usize) noexcept {},
+        .ctx = nullptr,
+    };
+    TEST_CHECK(fail_alloc.try_alloc_bytes(128, kSimdAlign) == nullptr);
+    TEST_CHECK(fail_alloc.try_realloc_bytes(nullptr, 0, 128, kSimdAlign) == nullptr);
+    TEST_CHECK(fail_alloc.try_alloc_array<f64>(16) == nullptr);
+    TEST_CHECK(fail_alloc.try_alloc_aligned_array<f64>(16) == nullptr);
+    TEST_CHECK(fail_alloc.try_alloc_array<u64>((~usize{0}) / sizeof(u64) + 1) == nullptr);
+    TEST_CHECK(!oom_called);
+
+    f64* simd_buf = default_allocator()->alloc_aligned_array<f64>(64, kSimdAlign);
+    TEST_CHECK(simd_buf != nullptr);
+    TEST_CHECK((reinterpret_cast<usize>(simd_buf) & (kSimdAlign - 1)) == 0);
+    default_allocator()->free_aligned_array(simd_buf, 64, kSimdAlign);
+
+    set_oom_handler(nullptr, nullptr);
+
+    // 2. Arena spillover (giant exact block + primary slab continuation + bump-chunk exhaustion + nested ArenaTemp)
+    CountingUpstream upstream_stats{};
+    Allocator upstream = upstream_stats.make_allocator();
+    TrackedObj::live_count = 0;
+    {
+        // Reserve 128 KiB (2 commit granules) so initial offset < 64 KiB leaves > 64 KiB remaining on primary slab
+        Arena arena(128 * 1024, &upstream);
+        TEST_CHECK(arena.reserved() == 128 * 1024);
+        TEST_CHECK(arena.upstream_allocator() == &upstream);
+
+        auto base_slice = arena.zero_slice<u8>(16 * 1024);
+        TEST_CHECK(base_slice.size() == 16 * 1024 && base_slice[0] == 0 && base_slice[16383] == 0);
+        TEST_CHECK(arena.used() == 16 * 1024 && arena.overflow_used() == 0);
+        TEST_CHECK(upstream_stats.live_blocks == 0);
+
+        {
+            ArenaTemp t1 = arena.begin_temp();
+            // Giant 512 KiB allocation exceeds 128 KiB slab while > 64 KiB remains -> immutable OverflowBlock
+            auto giant = t1.alloc_slice<u8>(512 * 1024, kSimdAlign);
+            TEST_CHECK(giant.size() == 512 * 1024);
+            TEST_CHECK((reinterpret_cast<usize>(giant.data()) & (kSimdAlign - 1)) == 0);
+            mem_set(giant.data(), 0xAB, giant.size());
+            TEST_CHECK(upstream_stats.live_blocks == 1);
+            TEST_CHECK(arena.overflow_used() == 512 * 1024);
+
+            // Small allocation still bumps on the primary slab (does NOT waste remaining slab!)
+            auto small_after_giant = t1.alloc_slice<u8>(8 * 1024);
+            TEST_CHECK(small_after_giant.size() == 8 * 1024);
+            TEST_CHECK(upstream_stats.live_blocks == 1);
+            TEST_CHECK(arena.overflow_used() == 512 * 1024);
+
+            TrackedObj* outer_obj = arena.create<TrackedObj>(111);
+            TEST_CHECK(outer_obj->value == 111 && TrackedObj::live_count == 1);
+
+            const usize mark_before_t2 = arena.used();
+            {
+                ArenaTemp t2 = arena.begin_temp();
+                // Exhaust remaining primary slab -> transitions to >= 1 MiB overflow bump chunk
+                auto exhaust = t2.alloc_slice<u8>(120 * 1024);
+                TEST_CHECK(exhaust.size() == 120 * 1024);
+                TEST_CHECK(upstream_stats.live_blocks == 2);
+
+                // Grow ArenaArray inside the overflow bump chunk (exercises try_extend on bump chunk)
+                ArenaArray<i64> bump_arr(t2, 8);
+                for (i64 i = 0; i < 2048; ++i) {
+                    bump_arr.push_back(i * 7);
+                }
+                TEST_CHECK(bump_arr.size() == 2048 && bump_arr[2047] == 2047 * 7);
+                TEST_CHECK(upstream_stats.live_blocks == 2);
+
+                const f64 src_vals[4] = {1.5, -2.5, 3.25, 8.0};
+                auto copied = t2.copy_slice<f64>(ArrayRef<f64>(src_vals, 4), kSimdAlign);
+                TEST_CHECK((reinterpret_cast<usize>(copied.data()) & (kSimdAlign - 1)) == 0);
+                TEST_CHECK(copied[0] == 1.5 && copied[3] == 8.0);
+
+                TrackedObj* inner_obj = arena.create<TrackedObj>(222);
+                TEST_CHECK(inner_obj->value == 222 && TrackedObj::live_count == 2);
+            }
+            // Inner temp rewound: bump chunk freed, inner dtor ran, giant block & outer_obj intact
+            TEST_CHECK(TrackedObj::live_count == 1 && outer_obj->value == 111);
+            TEST_CHECK(giant[0] == 0xAB && giant[512 * 1024 - 1] == 0xAB);
+            TEST_CHECK(upstream_stats.live_blocks == 1);
+            TEST_CHECK(arena.used() == mark_before_t2);
+        }
+
+        // Outer temp rewound: giant block freed, outer dtor ran, back to 16 KiB on primary slab
+        TEST_CHECK(TrackedObj::live_count == 0);
+        TEST_CHECK(upstream_stats.live_blocks == 0 && upstream_stats.live_bytes == 0);
+        TEST_CHECK(upstream_stats.total_allocs == 2);
+        TEST_CHECK(arena.overflow_used() == 0 && arena.used() == 16 * 1024);
+
+        arena.reset();
+        TEST_CHECK(arena.used() == 0);
+    }
+    TEST_CHECK(upstream_stats.live_blocks == 0 && upstream_stats.live_bytes == 0);
+
+    // 3. Failing upstream on exhausted arena returns nullptr from try_alloc / Arena::allocator() without aborting
+    Arena tiny_arena(64 * 1024, &fail_alloc);
+    void* ok_slab = tiny_arena.try_alloc(32 * 1024, 16);
+    TEST_CHECK(ok_slab != nullptr);
+    void* oom_spill = tiny_arena.allocator()->try_alloc_bytes(128 * 1024, kSimdAlign);
+    TEST_CHECK(oom_spill == nullptr);
+
+    // 4. Scratch overload disambiguation (get_scratch(), get_scratch(nullptr), get_scratch(Allocator*))
+    ArenaTemp s_null = get_scratch(nullptr);
+    ArenaTemp s_conflict = get_scratch(s_null.allocator());
+    TEST_CHECK(&s_null.arena() != &s_conflict.arena());
+}
+
+constexpr bool verify_constexpr_checked_and_sat() {
+    i32 sum32 = 0;
+    if (!checked_add<i32>(100, 200, sum32) || sum32 != 300) return false;
+    if (checked_add<i32>(Limits<i32>::kMax, 1, sum32)) return false;
+    if (checked_add<i32>(Limits<i32>::kMin, -1, sum32)) return false;
+
+    u32 diff_u32 = 0;
+    if (checked_sub<u32>(5u, 6u, diff_u32)) return false;
+    if (!checked_sub<u32>(10u, 4u, diff_u32) || diff_u32 != 6u) return false;
+
+    i64 prod64 = 0;
+    if (checked_mul<i64>(Limits<i64>::kMin, -1, prod64)) return false;
+    if (!checked_mul<i64>(-123456, 789, prod64) || prod64 != -123456LL * 789LL) return false;
+
+    if (sat_add<u8>(250, 20) != 255) return false;
+    if (sat_sub<u8>(5, 20) != 0) return false;
+    if (sat_add<i8>(120, 20) != 127) return false;
+    if (sat_add<i8>(-120, -20) != -128) return false;
+    if (sat_sub<i8>(-120, 20) != -128) return false;
+    if (sat_sub<i8>(120, -20) != 127) return false;
+    if (sat_mul<i16>(1000, 100) != Limits<i16>::kMax) return false;
+    if (sat_mul<i16>(-1000, 100) != Limits<i16>::kMin) return false;
+    if (sat_mul<u16>(1000, 100) != Limits<u16>::kMax) return false;
+
+    if (sat_cast<u8>(-5) != 0 || sat_cast<u8>(300) != 255 || sat_cast<u8>(42) != 42) return false;
+    if (sat_cast<i8>(200) != 127 || sat_cast<i8>(-200) != -128) return false;
+    if (sat_cast<i64>(Limits<u64>::kMax) != Limits<i64>::kMax) return false;
+
+    if (round_sat<u8>(-3.2) != 0 || round_sat<u8>(254.6) != 255 || round_sat<u8>(1e9) != 255) return false;
+    if (round_sat<i8>(-129.0) != -128 || round_sat<i8>(126.5) != 127 || round_sat<i8>(-0.5) != -1) return false;
+    if (round_sat<i16>(Limits<f64>::quiet_nan()) != 0) return false;
+    if (round_sat<i32>(Limits<f64>::infinity()) != Limits<i32>::kMax) return false;
+    if (round_sat<i32>(-Limits<f64>::infinity()) != Limits<i32>::kMin) return false;
+
+    return true;
+}
+
+void test_step0_checked_sat_and_endian() {
+    static_assert(verify_constexpr_checked_and_sat());
+    TEST_CHECK(verify_constexpr_checked_and_sat());
+
+    usize prod_sz = 0;
+    TEST_CHECK(!checked_mul<usize>(~usize{0}, 2, prod_sz));
+    TEST_CHECK(checked_mul<usize>(1024, 2048, prod_sz) && prod_sz == 2097152);
+
+    // Unaligned little-endian and big-endian load/store
+    u8 buf[16]{};
+    write_le16(buf + 1, 0x1234u);
+    TEST_CHECK(buf[1] == 0x34u && buf[2] == 0x12u && read_le16(buf + 1) == 0x1234u);
+
+    write_be16(buf + 1, 0x1234u);
+    TEST_CHECK(buf[1] == 0x12u && buf[2] == 0x34u && read_be16(buf + 1) == 0x1234u);
+
+    write_le32(buf + 3, 0xDEADBEEFu);
+    TEST_CHECK(buf[3] == 0xEFu && buf[6] == 0xDEu && read_le32(buf + 3) == 0xDEADBEEFu);
+
+    write_be32(buf + 3, 0xDEADBEEFu);
+    TEST_CHECK(buf[3] == 0xDEu && buf[6] == 0xEFu && read_be32(buf + 3) == 0xDEADBEEFu);
+
+    constexpr u64 kVal64 = 0x0123456789ABCDEFULL;
+    write_le64(buf + 5, kVal64);
+    TEST_CHECK(buf[5] == 0xEFu && buf[12] == 0x01u && read_le64(buf + 5) == kVal64);
+
+    write_be64(buf + 5, kVal64);
+    TEST_CHECK(buf[5] == 0x01u && buf[12] == 0xEFu && read_be64(buf + 5) == kVal64);
+}
+
 } // namespace
 
 int main() {
@@ -1294,6 +1555,8 @@ int main() {
     test_stage1_primitives();
     test_complex();
     test_math();
+    test_step0_memory_and_arena_spillover();
+    test_step0_checked_sat_and_endian();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

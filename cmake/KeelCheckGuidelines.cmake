@@ -136,6 +136,7 @@ set(FORBIDDEN_CPP_STD_INCLUDES
     "bitset"
     "chrono"
     "compare"
+    "complex"
     "concepts"
     "cstddef"
     "cstdint"
@@ -150,6 +151,7 @@ set(FORBIDDEN_CPP_STD_INCLUDES
     "list"
     "map"
     "memory"
+    "memory_resource"
     "numbers"
     "optional"
     "queue"
@@ -178,7 +180,7 @@ if(KG_ALLOW_HEADERS)
 endif()
 
 set(FORBIDDEN_STD_TYPES_BASE
-    "string|wstring|u8string|string_view|vector|span|optional|nullopt|array|function|unique_ptr|shared_ptr|weak_ptr|variant|monostate|unordered_map|unordered_set|map|set|source_location|type_index|chrono"
+    "string|wstring|u8string|string_view|vector|span|optional|nullopt|array|function|unique_ptr|shared_ptr|weak_ptr|variant|monostate|unordered_map|unordered_set|map|set|source_location|type_index|chrono|complex|pmr|memory_resource"
 )
 set(FORBIDDEN_STD_REGEX_HDR
     "std::(${FORBIDDEN_STD_TYPES_BASE}|runtime_error|logic_error|invalid_argument|out_of_range)([^A-Za-z0-9_]|$)"

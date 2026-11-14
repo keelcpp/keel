@@ -216,6 +216,22 @@ template <typename T>
     return (r > Limits<u32>::kMax) ? Limits<u32>::kMax : static_cast<u32>(r);
 }
 
+// Generic round-to-nearest (ties away from zero) with saturation to [Limits<Int>::kMin, Limits<Int>::kMax]; NaN -> 0.
+template <typename Int, typename Float>
+    requires(IsIntegral<Int> && !IsSame<RemoveCv<Int>, bool> && IsFloatingPoint<Float>)
+[[nodiscard]] constexpr RemoveCv<Int> round_sat(Float x) noexcept {
+    using CleanInt = RemoveCv<Int>;
+    if constexpr (IsUnsigned<CleanInt>) {
+        const u64 r = round_u64(x);
+        return (r > static_cast<u64>(Limits<CleanInt>::kMax)) ? Limits<CleanInt>::kMax : static_cast<CleanInt>(r);
+    } else {
+        const i64 r = round_i64(x);
+        if (r < static_cast<i64>(Limits<CleanInt>::kMin)) return Limits<CleanInt>::kMin;
+        if (r > static_cast<i64>(Limits<CleanInt>::kMax)) return Limits<CleanInt>::kMax;
+        return static_cast<CleanInt>(r);
+    }
+}
+
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr i32 floor_i32(T x) noexcept {
