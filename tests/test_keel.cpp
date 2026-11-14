@@ -1114,6 +1114,84 @@ void test_stage1_primitives() {
     TEST_CHECK(t0 > 0 && t1 >= t0);
 }
 
+void test_complex() {
+    static_assert(sizeof(c32) == 8 && alignof(c32) == 4);
+    static_assert(sizeof(c64) == 16 && alignof(c64) == 8);
+    static_assert(IsSame<c32, Complex<f32>>);
+    static_assert(IsSame<c64, Complex<f64>>);
+
+    // Constexpr arithmetic & helpers
+    constexpr c64 a(3.0, 4.0);
+    constexpr c64 b(1.0, -2.0);
+    constexpr c64 sum = a + b;
+    constexpr c64 diff = a - b;
+    constexpr c64 prod = a * b; // (3 + 4i)(1 - 2i) = 11 - 2i
+    constexpr c64 quot = prod / b;
+    static_assert(sum == c64(4.0, 2.0));
+    static_assert(diff == c64(2.0, 6.0));
+    static_assert(prod == c64(11.0, -2.0));
+    static_assert(conj(a) == c64(3.0, -4.0));
+    static_assert(norm_sq(a) == 25.0);
+    TEST_CHECK(std::fabs(quot.re - a.re) < 1e-15 && std::fabs(quot.im - a.im) < 1e-15);
+
+    // Scalar mixed operations & equality
+    TEST_CHECK((a + 2.0) == c64(5.0, 4.0));
+    TEST_CHECK((2.0 + a) == c64(5.0, 4.0));
+    TEST_CHECK((2.0 - a) == c64(-1.0, -4.0));
+    TEST_CHECK((a * 0.5) == c64(1.5, 2.0));
+    TEST_CHECK((0.5 * a) == c64(1.5, 2.0));
+    TEST_CHECK((a / 2.0) == c64(1.5, 2.0));
+    const c64 inv_i = 1.0 / c64(0.0, 1.0);
+    TEST_CHECK(std::fabs(inv_i.re) < 1e-15 && std::fabs(inv_i.im + 1.0) < 1e-15);
+    TEST_CHECK(c64(5.0, 0.0) == 5.0 && 5.0 == c64(5.0, 0.0) && a != 3.0);
+
+    // Smith's overflow-safe division for extreme magnitudes
+    const c64 huge1(3.0e200, 4.0e200);
+    const c64 huge2(1.0e200, -2.0e200);
+    const c64 huge_q = huge1 / huge2; // (3+4i)/(1-2i) = (3-8 + (6+4)i)/5 = -1 + 2i
+    TEST_CHECK(std::fabs(huge_q.re - (-1.0)) < 1e-14 && std::fabs(huge_q.im - 2.0) < 1e-14);
+
+    // Widening c32 -> c64 (implicit) and narrowing c64 -> c32 (explicit)
+    const c32 z32(1.5f, -2.5f);
+    const c64 z64_from_32 = z32;
+    const c32 z32_back = static_cast<c32>(z64_from_32);
+    TEST_CHECK(z64_from_32 == c64(1.5, -2.5));
+    TEST_CHECK(z32_back == z32);
+    static_assert(IsConvertible<c32, c64>);
+    static_assert(!IsConvertible<c64, c32>);
+
+    // Transcendentals: abs, arg, polar
+    TEST_CHECK(std::fabs(keel::abs(a) - 5.0) < 1e-15);
+    TEST_CHECK(std::fabs(keel::abs(c32(3.0f, 4.0f)) - 5.0f) < 1e-6f);
+    const c64 p = polar(2.0, std::atan2(4.0, 3.0));
+    TEST_CHECK(std::fabs(keel::abs(p) - 2.0) < 1e-15);
+    TEST_CHECK(std::fabs(keel::arg(p) - keel::arg(a)) < 1e-15);
+
+    // HashMap & -0.0 normalization
+    HashMap<c64, int> cmap;
+    cmap.put(c64(0.0, -0.0), 77);
+    const int* cfound = cmap.get(c64(-0.0, 0.0));
+    TEST_CHECK(cfound != nullptr && *cfound == 77);
+
+#if !defined(_HAS_EXCEPTIONS) || _HAS_EXCEPTIONS != 0
+    // Implicit std::complex conversion & zero-copy span/ref interop
+    std::complex<double> sc(2.25, -4.5);
+    c64 kc = sc;
+    std::complex<double> sc2 = kc;
+    TEST_CHECK(kc == c64(2.25, -4.5) && sc2 == sc);
+
+    std::vector<std::complex<double>> svec = {{1.0, 2.0}, {3.0, 4.0}};
+    MutArrayRef<c64> mref = as_mut_complex_ref(std::span<std::complex<double>>(svec));
+    TEST_CHECK(mref.size() == 2 && mref[0] == c64(1.0, 2.0));
+    mref[1] = c64(9.0, -1.0);
+    TEST_CHECK(svec[1] == std::complex<double>(9.0, -1.0));
+
+    ArrayRef<c64> cref = as_complex_ref(std::span<const std::complex<double>>(svec));
+    auto cspan = to_std_complex_span(cref);
+    TEST_CHECK(cspan.size() == 2 && cspan[1] == std::complex<double>(9.0, -1.0));
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -1128,6 +1206,7 @@ int main() {
     test_review_regressions();
     test_four_tier_symmetry_and_purity();
     test_stage1_primitives();
+    test_complex();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

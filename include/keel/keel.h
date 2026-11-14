@@ -4,6 +4,7 @@
 #include "keel/arena.h"
 #include "keel/array.h"
 #include "keel/bits.h"
+#include "keel/complex.h"
 #include "keel/core.h"
 #include "keel/error.h"
 #include "keel/format.h"
