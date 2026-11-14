@@ -1231,6 +1231,53 @@ void test_complex() {
 #endif
 }
 
+void test_math() {
+    // 1. Constants & angles (constexpr)
+    static_assert(approx_eq(deg_to_rad(180.0), kPi, 1e-15));
+    static_assert(approx_eq(rad_to_deg(kHalfPiF), 90.0f, 1e-5f));
+    static_assert(approx_eq(kTau, 2.0 * kPi, 1e-15));
+
+    // 2. Numeric limits (constexpr)
+    static_assert(Limits<i8>::kMin == -128 && Limits<i8>::kMax == 127);
+    static_assert(Limits<u8>::kMin == 0 && Limits<u8>::kMax == 255);
+    static_assert(Limits<i32>::kMin == -2147483647 - 1 && Limits<i32>::kMax == 2147483647);
+    static_assert(Limits<u32>::kMin == 0u && Limits<u32>::kMax == 4294967295u);
+    static_assert(Limits<f32>::kLowest < -3.4e38f && Limits<f32>::kMax > 3.4e38f);
+    static_assert(is_inf(Limits<f32>::infinity()) && !is_finite(Limits<f32>::infinity()));
+    static_assert(is_nan(Limits<f32>::quiet_nan()) && !is_finite(Limits<f32>::quiet_nan()));
+    static_assert(is_inf(Limits<f64>::infinity()) && is_nan(Limits<f64>::quiet_nan()));
+    static_assert(is_finite(0.0f) && is_finite(-123.456));
+
+    // 3. abs, sign, sqr (including -0.0 sign-bit clear and signed min safety)
+    static_assert(keel::abs(-42) == 42 && keel::abs(0) == 0);
+    static_assert(__builtin_bit_cast(u32, keel::abs(-0.0f)) == 0u);
+    static_assert(__builtin_bit_cast(u64, keel::abs(-0.0)) == 0ULL);
+    static_assert(sqr(-5) == 25 && approx_eq(sqr(-1.5f), 2.25f));
+    static_assert(sign(-9) == -1 && sign(0) == 0 && sign(9) == 1);
+    static_assert(sign(-0.25f) == -1.0f && sign(0.0f) == 0.0f && sign(0.25f) == 1.0f);
+    TEST_CHECK(keel::abs(c32(3.0f, 4.0f)) == 5.0f); // Coexists cleanly with complex abs
+
+    // 4. Exact UB-free integer rounding (including 0.5 - ulp predecessor & saturation)
+    constexpr f64 kPredHalf = __builtin_bit_cast(f64, 0x3FDFFFFFFFFFFFFFULL); // 0.49999999999999994
+    static_assert(round_i32(kPredHalf) == 0 && round_i64(kPredHalf) == 0);
+    static_assert(round_i32(-kPredHalf) == 0 && round_i64(-kPredHalf) == 0);
+    static_assert(round_i32(0.5f) == 1 && round_i32(-0.5f) == -1);
+    static_assert(round_i64(2.5) == 3 && round_i64(-2.5) == -3);
+    static_assert(round_i64(4503599627370497.0) == 4503599627370497LL);
+    static_assert(round_i32(Limits<f32>::quiet_nan()) == 0);
+    static_assert(round_i32(1e20) == Limits<i32>::kMax && round_i32(-1e20) == Limits<i32>::kMin);
+    static_assert(round_u32(-3.7f) == 0u && round_u32(254.6f) == 255u && round_u32(1e20) == Limits<u32>::kMax);
+    static_assert(floor_i32(-0.1f) == -1 && floor_i32(2.9f) == 2);
+    static_assert(ceil_i32(0.1f) == 1 && ceil_i32(-2.9f) == -2);
+
+    // 5. Interpolation
+    static_assert(approx_eq(lerp(10.0f, 20.0f, 0.25f), 12.5f));
+    static_assert(approx_eq(inverse_lerp(10.0f, 20.0f, 15.0f), 0.5f));
+    static_assert(inverse_lerp(5.0f, 5.0f, 5.0f) == 0.0f);
+    static_assert(approx_eq(remap(5.0f, 0.0f, 10.0f, 100.0f, 200.0f), 150.0f));
+    TEST_CHECK(round_i32(123.6f) == 124 && floor_i64(-4.01) == -5 && ceil_i64(4.01) == 5);
+}
+
 } // namespace
 
 int main() {
@@ -1246,6 +1293,7 @@ int main() {
     test_four_tier_symmetry_and_purity();
     test_stage1_primitives();
     test_complex();
+    test_math();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

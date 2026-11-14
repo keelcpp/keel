@@ -150,6 +150,7 @@ set(FORBIDDEN_CPP_STD_INCLUDES
     "list"
     "map"
     "memory"
+    "numbers"
     "optional"
     "queue"
     "regex"
@@ -300,7 +301,7 @@ foreach(FILE_PATH IN LISTS KG_FILES)
                     else()
                         message(FATAL_ERROR
                             "[keel-guidelines] Target '${KG_TARGET}' violation in ${REL_FILE}: "
-                            "forbidden STL header '#include <${INC_NAME}>'. Use keel equivalents (\"keel/array.h\", \"keel/string.h\", \"keel/hash_map.h\", \"keel/exception.h\", etc.)."
+                            "forbidden STL header '#include <${INC_NAME}>'. Use keel equivalents (\"keel/array.h\", \"keel/string.h\", \"keel/hash_map.h\", \"keel/math.h\", \"keel/exception.h\", etc.)."
                         )
                     endif()
                 endif()

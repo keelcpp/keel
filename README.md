@@ -17,6 +17,7 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | Header | Contents |
 | :--- | :--- |
 | `keel/core.h` | `i8`..`u64`, `f32`/`f64`, `isize`, `usize`, `KEEL_ASSERT`, builtin type traits, `move`/`forward` |
+| `keel/math.h` | `kPi`/`kTau`, `deg_to_rad`, `Limits<T>`, `constexpr abs`/`sqr`/`sign`, `is_nan`/`is_finite`, `round_i32`/`round_i64`/`floor_i32`/`ceil_i32`, `lerp`/`remap` |
 | `keel/complex.h` | Flat `Complex<T>`, `c32`/`c64` aliases, `constexpr` arithmetic & Smith division, `conj`, `norm_sq`, `abs`, `arg`, `polar` |
 | `keel/bits.h` | `countl_zero`, `countr_zero`, `popcount`, `bit_width`, `bit_ceil`, `bit_floor`, `rotl`, `rotr`, `byteswap` |
 | `keel/hash.h` | Fast 64-bit `hash_bytes`, `hash_u64`, `hash_combine`, `Hash<T>`, `Equal<T>` |
