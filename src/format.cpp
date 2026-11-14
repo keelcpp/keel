@@ -96,7 +96,14 @@ void format_arg_into(
         if (arg.kind == FormatArg::Kind::StringRef) {
             sv = StringRef(arg.cstr_val, arg.str_len);
         } else if (arg.kind == FormatArg::Kind::CString) {
-            sv = StringRef(arg.cstr_val);
+            if (precision >= 0) {
+                usize len = 0;
+                const usize max_len = static_cast<usize>(precision);
+                while (len < max_len && arg.cstr_val[len] != '\0') ++len;
+                sv = StringRef(arg.cstr_val, len);
+            } else {
+                sv = StringRef(arg.cstr_val);
+            }
         } else if (arg.kind == FormatArg::Kind::Bool) {
             sv = arg.u_val ? StringRef("true") : StringRef("false");
         }
@@ -396,18 +403,30 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
         }
 
         int width = 0;
-        while (p < len && fmt[p] >= '0' && fmt[p] <= '9') {
-            width = width * 10 + (fmt[p] - '0');
+        bool has_dyn_width = false;
+        if (p < len && fmt[p] == '*') {
+            has_dyn_width = true;
             ++p;
+        } else {
+            while (p < len && fmt[p] >= '0' && fmt[p] <= '9') {
+                width = width * 10 + (fmt[p] - '0');
+                ++p;
+            }
         }
 
         int precision = -1;
+        bool has_dyn_prec = false;
         if (p < len && fmt[p] == '.') {
             ++p;
-            precision = 0;
-            while (p < len && fmt[p] >= '0' && fmt[p] <= '9') {
-                precision = precision * 10 + (fmt[p] - '0');
+            if (p < len && fmt[p] == '*') {
+                has_dyn_prec = true;
                 ++p;
+            } else {
+                precision = 0;
+                while (p < len && fmt[p] >= '0' && fmt[p] <= '9') {
+                    precision = precision * 10 + (fmt[p] - '0');
+                    ++p;
+                }
             }
         }
 
@@ -418,6 +437,21 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
 
         if (p < len && is_printf_spec(fmt[p])) {
             const char spec = fmt[p];
+            if (has_dyn_width && arg_idx < args.size()) {
+                const FormatArg& wa = args[arg_idx++];
+                const i64 wv = (wa.kind == FormatArg::Kind::Unsigned) ? static_cast<i64>(wa.u_val) : wa.i_val;
+                if (wv < 0) {
+                    left_align = true;
+                    width = static_cast<int>(-wv);
+                } else {
+                    width = static_cast<int>(wv);
+                }
+            }
+            if (has_dyn_prec && arg_idx < args.size()) {
+                const FormatArg& pa = args[arg_idx++];
+                const i64 pv = (pa.kind == FormatArg::Kind::Unsigned) ? static_cast<i64>(pa.u_val) : pa.i_val;
+                precision = (pv >= 0) ? static_cast<int>(pv) : -1;
+            }
             if (arg_idx < args.size()) {
                 const char align = left_align ? '<' : ((spec == 's' || spec == 'S' || spec == 'c') ? '>' : '\0');
                 format_arg_into(out, spec, width, zero_pad, plus_sign, precision, args[arg_idx++], align, ' ');

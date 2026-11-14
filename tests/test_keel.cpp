@@ -806,6 +806,12 @@ void test_review_regressions() {
         format_into(fs, "{}", 10);
         format_into(fs, ", B={}", 20);
         TEST_CHECK(fs == "A=10, B=20");
+
+        char cbuf[64];
+        const StringRef mName("October_extra", 7);
+        const StringRef titleStr = format_buf(cbuf, "%.*s %04d", static_cast<int>(mName.size()), mName.data(), 2026);
+        TEST_CHECK(titleStr == "October 2026");
+        TEST_CHECK(format("%*d", 5, 42) == "   42");
     }
 }
 
