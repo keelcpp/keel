@@ -174,6 +174,7 @@ template <typename T> [[nodiscard]] constexpr T real(Complex<T> z) noexcept { re
 template <typename T> [[nodiscard]] constexpr T imag(Complex<T> z) noexcept { return z.im; }
 template <typename T> [[nodiscard]] constexpr Complex<T> conj(Complex<T> z) noexcept { return {z.re, -z.im}; }
 template <typename T> [[nodiscard]] constexpr T norm_sq(Complex<T> z) noexcept { return z.re * z.re + z.im * z.im; }
+template <typename T> [[nodiscard]] constexpr T norm(Complex<T> z) noexcept { return z.re * z.re + z.im * z.im; }
 
 [[nodiscard]] f32 abs(c32 z) noexcept;
 [[nodiscard]] f64 abs(c64 z) noexcept;
@@ -181,6 +182,47 @@ template <typename T> [[nodiscard]] constexpr T norm_sq(Complex<T> z) noexcept {
 [[nodiscard]] f64 arg(c64 z) noexcept;
 [[nodiscard]] c32 polar(f32 r, f32 theta = 0.0f) noexcept;
 [[nodiscard]] c64 polar(f64 r, f64 theta = 0.0) noexcept;
+
+[[nodiscard]] c32 exp(c32 z) noexcept;
+[[nodiscard]] c64 exp(c64 z) noexcept;
+[[nodiscard]] c32 log(c32 z) noexcept;
+[[nodiscard]] c64 log(c64 z) noexcept;
+[[nodiscard]] c32 log10(c32 z) noexcept;
+[[nodiscard]] c64 log10(c64 z) noexcept;
+[[nodiscard]] c32 sqrt(c32 z) noexcept;
+[[nodiscard]] c64 sqrt(c64 z) noexcept;
+[[nodiscard]] c32 pow(c32 z, c32 w) noexcept;
+[[nodiscard]] c64 pow(c64 z, c64 w) noexcept;
+[[nodiscard]] c32 pow(c32 z, f32 p) noexcept;
+[[nodiscard]] c64 pow(c64 z, f64 p) noexcept;
+[[nodiscard]] c32 pow(f32 b, c32 w) noexcept;
+[[nodiscard]] c64 pow(f64 b, c64 w) noexcept;
+
+[[nodiscard]] c32 sin(c32 z) noexcept;
+[[nodiscard]] c64 sin(c64 z) noexcept;
+[[nodiscard]] c32 cos(c32 z) noexcept;
+[[nodiscard]] c64 cos(c64 z) noexcept;
+[[nodiscard]] c32 tan(c32 z) noexcept;
+[[nodiscard]] c64 tan(c64 z) noexcept;
+[[nodiscard]] c32 sinh(c32 z) noexcept;
+[[nodiscard]] c64 sinh(c64 z) noexcept;
+[[nodiscard]] c32 cosh(c32 z) noexcept;
+[[nodiscard]] c64 cosh(c64 z) noexcept;
+[[nodiscard]] c32 tanh(c32 z) noexcept;
+[[nodiscard]] c64 tanh(c64 z) noexcept;
+
+[[nodiscard]] c32 asin(c32 z) noexcept;
+[[nodiscard]] c64 asin(c64 z) noexcept;
+[[nodiscard]] c32 acos(c32 z) noexcept;
+[[nodiscard]] c64 acos(c64 z) noexcept;
+[[nodiscard]] c32 atan(c32 z) noexcept;
+[[nodiscard]] c64 atan(c64 z) noexcept;
+[[nodiscard]] c32 asinh(c32 z) noexcept;
+[[nodiscard]] c64 asinh(c64 z) noexcept;
+[[nodiscard]] c32 acosh(c32 z) noexcept;
+[[nodiscard]] c64 acosh(c64 z) noexcept;
+[[nodiscard]] c32 atanh(c32 z) noexcept;
+[[nodiscard]] c64 atanh(c64 z) noexcept;
 
 template <> struct Hash<c32> {
     [[nodiscard]] constexpr u64 operator()(c32 z) const noexcept {

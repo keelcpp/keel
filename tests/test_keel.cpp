@@ -1269,6 +1269,42 @@ void test_complex() {
     ArrayRef<c64> cref = as_complex_ref(std::span<const std::complex<double>>(svec));
     auto cspan = to_std_complex_span(cref);
     TEST_CHECK(cspan.size() == 2 && cspan[1] == std::complex<double>(9.0, -1.0));
+
+    // Verify all complex elementary & inverse trig/hyperbolic functions against std::complex<double>
+    const c64 samples[] = {
+        c64(0.7, 1.1),
+        c64(-1.3, 0.4),
+        c64(-0.8, -1.7),
+        c64(2.1, -0.6),
+    };
+    auto close_c64 = [](c64 k, std::complex<double> s) {
+        return std::fabs(k.re - s.real()) < 1e-13 && std::fabs(k.im - s.imag()) < 1e-13;
+    };
+    for (c64 z : samples) {
+        const std::complex<double> sz = z;
+        TEST_CHECK(close_c64(keel::exp(z), std::exp(sz)));
+        TEST_CHECK(close_c64(keel::log(z), std::log(sz)));
+        TEST_CHECK(close_c64(keel::log10(z), std::log10(sz)));
+        TEST_CHECK(close_c64(keel::sqrt(z), std::sqrt(sz)));
+        TEST_CHECK(close_c64(keel::pow(z, c64(0.5, -0.25)), std::pow(sz, std::complex<double>(0.5, -0.25))));
+        TEST_CHECK(close_c64(keel::pow(z, 1.5), std::pow(sz, 1.5)));
+        TEST_CHECK(close_c64(keel::pow(2.5, z), std::pow(2.5, sz)));
+        TEST_CHECK(close_c64(keel::sin(z), std::sin(sz)));
+        TEST_CHECK(close_c64(keel::cos(z), std::cos(sz)));
+        TEST_CHECK(close_c64(keel::tan(z), std::tan(sz)));
+        TEST_CHECK(close_c64(keel::sinh(z), std::sinh(sz)));
+        TEST_CHECK(close_c64(keel::cosh(z), std::cosh(sz)));
+        TEST_CHECK(close_c64(keel::tanh(z), std::tanh(sz)));
+        TEST_CHECK(close_c64(keel::asin(z), std::asin(sz)));
+        TEST_CHECK(close_c64(keel::acos(z), std::acos(sz)));
+        TEST_CHECK(close_c64(keel::atan(z), std::atan(sz)));
+        TEST_CHECK(close_c64(keel::asinh(z), std::asinh(sz)));
+        TEST_CHECK(close_c64(keel::acosh(z), std::acosh(sz)));
+        TEST_CHECK(close_c64(keel::atanh(z), std::atanh(sz)));
+    }
+    // Overflow-safe sqrt for extreme magnitude 3e300 + 4e300i -> sqrt(4e300) + i*sqrt(1e300) = 2e150 + 1e150i
+    const c64 extreme_root = keel::sqrt(c64(3.0e300, 4.0e300));
+    TEST_CHECK(std::fabs(extreme_root.re - 2.0e150) < 1.0e136 && std::fabs(extreme_root.im - 1.0e150) < 1.0e136);
 #endif
 }
 
