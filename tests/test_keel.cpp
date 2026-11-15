@@ -490,6 +490,18 @@ void test_std_interop() {
     std::string roundtrip = to_std_string(ref_from_std);
     TEST_CHECK(roundtrip == std_s);
 
+    // Ensure niebloid `keel::swap` never causes ADL ambiguity with `using std::swap; swap(a, b);`
+    static_assert(std::is_swappable_v<c64>);
+    static_assert(std::is_swappable_v<Array<int>>);
+    static_assert(std::is_swappable_v<std::pair<c64, usize>>);
+    {
+        std::pair<c64, usize> pa{c64(1.0, 2.0), 10u}, pb{c64(3.0, 4.0), 20u};
+        using std::swap;
+        swap(pa, pb);
+        TEST_CHECK(pa.first == c64(3.0, 4.0) && pa.second == 20u);
+        TEST_CHECK(pb.first == c64(1.0, 2.0) && pb.second == 10u);
+    }
+
     std::vector<int> std_vec = {10, 20, 30, 40};
     ArrayRef<int> arr_ref = std_vec;
     TEST_CHECK(arr_ref.size() == 4 && arr_ref[2] == 30);

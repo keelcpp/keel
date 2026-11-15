@@ -280,11 +280,27 @@ template <typename T> [[nodiscard]] constexpr T&& forward(RemoveReference<T>&& v
     return static_cast<T&&>(val);
 }
 
-template <typename T> constexpr void swap(T& a, T& b) noexcept {
-    T tmp = keel::move(a);
-    a = keel::move(b);
-    b = keel::move(tmp);
-}
+namespace detail {
+struct SwapFn {
+    template <typename T>
+        requires(IsConstructible<T, T&&> && requires(T& lhs, T&& rhs) { lhs = static_cast<T&&>(rhs); })
+    constexpr void operator()(T& a, T& b) const noexcept {
+        T tmp = static_cast<T&&>(a);
+        a = static_cast<T&&>(b);
+        b = static_cast<T&&>(tmp);
+    }
+
+    template <typename T, usize N>
+        requires requires(const SwapFn& fn, T& a, T& b) { fn(a, b); }
+    constexpr void operator()(T (&a)[N], T (&b)[N]) const noexcept {
+        for (usize i = 0; i < N; ++i) (*this)(a[i], b[i]);
+    }
+};
+} // namespace detail
+
+// Niebloid function object: prevents ADL ambiguity with `using std::swap; swap(a, b);`
+// on types defined in `namespace keel` (so `std::is_swappable_v<keel::T>` holds everywhere).
+inline constexpr detail::SwapFn swap{};
 
 template <typename T, typename U = T> constexpr T exchange(T& obj, U&& new_val) noexcept {
     T old_val = keel::move(obj);
