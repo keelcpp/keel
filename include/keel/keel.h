@@ -30,5 +30,6 @@
 #include "keel/smart_ptr.h"
 #include "keel/static_array.h"
 #include "keel/string.h"
+#include "keel/thread_pool.h"
 #include "keel/time.h"
 #include "keel/utf8.h"

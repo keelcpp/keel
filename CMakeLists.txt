@@ -20,12 +20,19 @@ else()
         src/format.cpp
         src/io.cpp
         src/fs.cpp
+        src/thread_pool.cpp
         src/time.cpp
     )
 endif()
 
 add_library(keel STATIC ${KEEL_SOURCES})
 add_library(keel::keel ALIAS keel)
+
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+    target_link_libraries(keel PUBLIC Threads::Threads)
+endif()
 
 target_compile_features(keel PUBLIC cxx_std_20)
 set_target_properties(keel PROPERTIES

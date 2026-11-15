@@ -176,6 +176,7 @@ template <typename T> inline constexpr bool IsTriviallyDestructible = __has_triv
 template <typename T, typename... Args>
 inline constexpr bool IsTriviallyConstructible = __is_trivially_constructible(T, Args...);
 template <typename T, typename... Args> inline constexpr bool IsConstructible = __is_constructible(T, Args...);
+template <typename T> inline constexpr bool IsCopyConstructible = __is_constructible(T, const T&);
 template <typename T> inline constexpr bool IsNothrowMoveConstructible = __is_nothrow_constructible(T, T&&);
 template <typename T> inline constexpr bool IsNothrowDestructible = requires(T& v) {
     { v.~T() } noexcept;

@@ -43,8 +43,9 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | `keel/utf8.h` | `utf8_validate`, `utf8_decode_next`, `utf8_encode`, `utf8_codepoint_count` |
 | `keel/number.h` | Locale-independent integer & shortest round-trip IEEE-754 float/double parsing & formatting |
 | `keel/format.h` | Type-safe `format`, `format_small`, `format_fixed`, `format_into`, `format_arena`, `format_buf`, `print` |
-| `keel/fs.h` | UTF-8 path manipulation (`path_join`, `path_normalize`, etc.) and OS filesystem operations |
+| `keel/fs.h` | UTF-8 path manipulation (`PathBuf`, `path_append`, `path_join`, `path_normalize`) and OS filesystem operations (`fs_walk_dir`, `fs_remove_all`, `fs_realpath`) |
 | `keel/io.h` | Move-only `File` with sticky write errors and console I/O |
+| `keel/thread_pool.h` | Zero-allocation persistent worker pool (`ThreadPool`, `parallel_for`, `hardware_concurrency`) |
 | `keel/interop_std.h` | Opt-in conversions to `std::string`, `std::string_view`, `std::vector`, `std::span`, `std::optional`, `std::complex`, and PMR bridges (`PmrAllocatorBridge`, `AllocatorMemoryResource`) |
 
 ## Opt-In CMake Guidelines Enforcement

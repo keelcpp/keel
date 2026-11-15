@@ -15,11 +15,18 @@ public:
     Array() noexcept : m_alloc(default_allocator()) {}
     explicit Array(Allocator* alloc) noexcept : m_alloc(alloc ? alloc : default_allocator()) {}
 
-    explicit Array(usize count, Allocator* alloc = nullptr) : m_alloc(alloc ? alloc : default_allocator()) {
+    explicit Array(usize count) : m_alloc(default_allocator()) {
+        resize(count);
+    }
+
+    template <typename A>
+        requires(IsSame<Decay<A>, Allocator*> || IsSame<Decay<A>, decltype(nullptr)>)
+    Array(usize count, A alloc) : m_alloc(alloc ? static_cast<Allocator*>(alloc) : default_allocator()) {
         resize(count);
     }
 
     Array(usize count, const T& fill_value, Allocator* alloc = nullptr)
+        requires IsCopyConstructible<T>
         : m_alloc(alloc ? alloc : default_allocator()) {
         assign(count, fill_value);
     }
@@ -27,6 +34,12 @@ public:
     explicit Array(ArrayRef<T> items, Allocator* alloc = nullptr)
         : m_alloc(alloc ? alloc : default_allocator()) {
         append(items);
+    }
+
+    Array(std::initializer_list<T> list, Allocator* alloc = nullptr)
+        requires IsCopyConstructible<T>
+        : m_alloc(alloc ? alloc : default_allocator()) {
+        append(ArrayRef<T>(list.begin(), list.size()));
     }
 
     [[nodiscard]] static Array with_capacity(usize cap, Allocator* alloc = nullptr) {

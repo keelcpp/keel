@@ -9,6 +9,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#include <unistd.h>
+#endif
 
 using namespace keel;
 
@@ -1587,6 +1590,170 @@ void test_step0_checked_sat_and_endian() {
     TEST_CHECK(buf[5] == 0x01u && buf[12] == 0xEFu && read_be64(buf + 5) == kVal64);
 }
 
+void test_stage0_fs_thread_pool_and_array_init() {
+    // 1. Array / SmallArray / FixedArray initializer_list & (count, 0) disambiguation
+    static_assert(!IsCopyConstructible<String>);
+    static_assert(IsCopyConstructible<i32>);
+    Array<String> empty_move_only{};
+    TEST_CHECK(empty_move_only.empty());
+
+    Array<i32> arr_il = {10, 20, 30, 40};
+    TEST_CHECK(arr_il.size() == 4 && arr_il[0] == 10 && arr_il[3] == 40);
+    SmallArray<i32, 2> sarr_il = {1, 2, 3};
+    TEST_CHECK(sarr_il.size() == 3 && !sarr_il.is_inline() && sarr_il[2] == 3);
+    FixedArray<i32, 4> farr_il = {7, 8, 9};
+    TEST_CHECK(farr_il.size() == 3 && farr_il[1] == 8);
+
+    // 2. PathBuf, path_append, multi-part path_join, fs_is_dir/file, fs_absolute, fs_realpath, fs_walk_dir, fs_remove_all
+    PathBuf pbuf("alpha\\beta");
+    path_append(pbuf, "gamma\\delta");
+    TEST_CHECK(pbuf == "alpha/beta/gamma/delta");
+    path_append(pbuf, pbuf.substr(0, 5)); // self-aliasing append
+    TEST_CHECK(pbuf == "alpha/beta/gamma/delta/alpha");
+
+    String j3 = path_join("root", "sub\\dir", "leaf.txt");
+    TEST_CHECK(j3 == "root/sub/dir/leaf.txt");
+    String j4 = path_join("/var", "tmp", "keel", "out.bin");
+    TEST_CHECK(j4 == "/var/tmp/keel/out.bin");
+
+    auto tmp_res = fs_temp_dir();
+    TEST_CHECK(tmp_res.is_ok());
+    String base_dir = path_join(*tmp_res, "keel_stage0_fs_test");
+    TEST_CHECK(fs_remove_all(base_dir).is_ok()); // idempotent on non-existent path
+    TEST_CHECK(fs_remove_all(base_dir).is_ok());
+
+    String sub_a = path_join(base_dir, "a", "nested");
+    String sub_b = path_join(base_dir, "b");
+    String outside_dir = path_join(*tmp_res, "keel_stage0_outside_target");
+    TEST_CHECK(fs_remove_all(outside_dir).is_ok());
+    TEST_CHECK(fs_create_dirs(sub_a).is_ok());
+    TEST_CHECK(fs_create_dirs(sub_b).is_ok());
+    TEST_CHECK(fs_create_dirs(outside_dir).is_ok());
+
+    String f1 = path_join(sub_a, "one.txt");
+    String f2 = path_join(sub_b, "two.txt");
+    String outside_file = path_join(outside_dir, "keep.txt");
+    TEST_CHECK(fs_write_text(f1, "hello").is_ok());
+    TEST_CHECK(fs_write_text(f2, "world").is_ok());
+    TEST_CHECK(fs_write_text(outside_file, "survive").is_ok());
+
+    TEST_CHECK(fs_is_dir(base_dir) && !fs_is_file(base_dir));
+    TEST_CHECK(fs_is_file(f1) && !fs_is_dir(f1));
+    TEST_CHECK(!fs_is_dir(path_join(base_dir, "missing")) && !fs_is_file(path_join(base_dir, "missing")));
+
+    auto abs_rel = fs_absolute("relative_test_dir/../leaf.txt");
+    TEST_CHECK(abs_rel.is_ok() && path_is_absolute(*abs_rel) && abs_rel->ends_with("/leaf.txt"));
+
+    auto rp = fs_realpath(f1);
+    TEST_CHECK(rp.is_ok() && path_is_absolute(*rp) && rp->ends_with("/one.txt"));
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+    String sym_dir = path_join(base_dir, "link_to_outside");
+    TEST_CHECK(::symlink(outside_dir.c_str(), sym_dir.c_str()) == 0);
+#endif
+
+    usize walk_files = 0;
+    usize walk_dirs = 0;
+    TEST_CHECK(fs_walk_dir(base_dir, [&](const DirEntry& e) -> bool {
+        if (e.is_file) ++walk_files;
+        if (e.is_dir) ++walk_dirs;
+        return true;
+    }).is_ok());
+    TEST_CHECK(walk_files == 2); // Must NOT traverse into `link_to_outside` (`keep.txt`)!
+    TEST_CHECK(walk_dirs >= 3);
+
+    usize early_count = 0;
+    TEST_CHECK(fs_walk_dir(base_dir, [&](const DirEntry&) -> bool {
+        ++early_count;
+        return false;
+    }).is_ok());
+    TEST_CHECK(early_count == 1);
+
+    TEST_CHECK(fs_remove_all(base_dir).is_ok());
+    TEST_CHECK(!fs_exists(base_dir));
+    TEST_CHECK(fs_is_file(outside_file)); // Symlink target survived!
+    TEST_CHECK(fs_remove_all(outside_dir).is_ok());
+
+    // 3. ThreadPool & parallel_for (custom allocator, max_workers, nested dispatch, exception safety)
+    TEST_CHECK(hardware_concurrency() >= 1);
+
+    CountingUpstream tp_stats{};
+    Allocator tp_alloc = tp_stats.make_allocator();
+    {
+        ThreadPool pool(4, &tp_alloc);
+        constexpr usize kN = 50000;
+        Array<u64> out(kN, 0);
+
+        pool.run(kN, [&](usize b, usize e) {
+            for (usize i = b; i < e; ++i) {
+                out[i] = static_cast<u64>(i) * 3ULL + 1ULL;
+            }
+        });
+        for (usize i = 0; i < kN; ++i) {
+            if (out[i] != static_cast<u64>(i) * 3ULL + 1ULL) {
+                TEST_CHECK(false);
+                break;
+            }
+        }
+
+        // Nested dispatch inside a worker chunk must run inline without deadlocking + max_workers cap
+        pool.run(64, [&](usize b, usize e) {
+            for (usize i = b; i < e; ++i) {
+                u64 inner_sum = 0;
+                pool.run(16, [&](usize ib, usize ie) {
+                    for (usize j = ib; j < ie; ++j) inner_sum += j;
+                });
+                out[i] = inner_sum;
+            }
+        }, 2);
+        TEST_CHECK(out[0] == 120 && out[63] == 120);
+
+        // Edge cases: count < num_workers and count == 0
+        pool.run(2, [&](usize b, usize e) {
+            for (usize i = b; i < e; ++i) out[i] = 999;
+        });
+        TEST_CHECK(out[0] == 999 && out[1] == 999);
+        pool.run(0, [&](usize, usize) { TEST_CHECK(false); });
+
+#if KEEL_HAS_EXCEPTIONS
+        bool caught_caller = false;
+        try {
+            pool.run(1024, [&](usize b, usize) {
+                if (b == 0) throw Exception("chunk0_boom");
+            });
+        } catch (const Exception& ex) {
+            caught_caller = (ex.message() == "chunk0_boom");
+        }
+        TEST_CHECK(caught_caller);
+
+        if (pool.num_workers() > 1) {
+            bool caught_worker = false;
+            try {
+                pool.run(1024, [&](usize b, usize) {
+                    if (b > 0) throw Exception("worker_boom");
+                });
+            } catch (const Exception& ex) {
+                caught_worker = (ex.message() == "worker_boom");
+            }
+            TEST_CHECK(caught_worker);
+        }
+#endif
+    }
+    TEST_CHECK(tp_stats.live_blocks == 0 && tp_stats.live_bytes == 0);
+
+    // Global parallel_for below and above threshold
+    Array<u32> pf_buf(4096, 0);
+    parallel_for(pf_buf.size(), 8192, [&](usize b, usize e) {
+        for (usize i = b; i < e; ++i) pf_buf[i] = 1u;
+    });
+    TEST_CHECK(pf_buf[0] == 1u && pf_buf[4095] == 1u);
+
+    parallel_for(pf_buf.size(), 64, [&](usize b, usize e) {
+        for (usize i = b; i < e; ++i) pf_buf[i] = static_cast<u32>(i * 2);
+    }, 4);
+    TEST_CHECK(pf_buf[0] == 0u && pf_buf[4095] == 8190u);
+}
+
 } // namespace
 
 int main() {
@@ -1605,6 +1772,7 @@ int main() {
     test_math();
     test_step0_memory_and_arena_spillover();
     test_step0_checked_sat_and_endian();
+    test_stage0_fs_thread_pool_and_array_init();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

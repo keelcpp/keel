@@ -115,25 +115,55 @@ bool path_is_absolute(StringRef path) noexcept {
     return false;
 }
 
+void path_append(String& base, StringRef seg) {
+    if (seg.empty()) {
+        for (usize i = 0; i < base.size(); ++i) {
+            if (base[i] == '\\') base[i] = '/';
+        }
+        return;
+    }
+    const char* cur = base.data();
+    if (cur && seg.data() >= cur && seg.data() <= cur + base.size()) {
+        const usize off = static_cast<usize>(seg.data() - cur);
+        const usize len = seg.size();
+        base.reserve(base.size() + 1 + len);
+        seg = StringRef(base.data() + off, len);
+    }
+    if (base.empty() || path_is_absolute(seg)) {
+        base.assign(seg);
+    } else {
+        base.reserve(base.size() + 1 + seg.size());
+        if (!detail::is_sep(base.back())) {
+            base.push_back('/');
+        }
+        usize seg_start = 0;
+        while (seg_start < seg.size() && detail::is_sep(seg[seg_start])) {
+            ++seg_start;
+        }
+        base.append(seg.substr(seg_start));
+    }
+    for (usize i = 0; i < base.size(); ++i) {
+        if (base[i] == '\\') base[i] = '/';
+    }
+}
+
 void path_join_into(String& out, StringRef a, StringRef b) {
     if (b.empty()) {
         out.append(a);
-        return;
-    }
-    if (a.empty() || path_is_absolute(b)) {
+    } else if (a.empty() || path_is_absolute(b)) {
         out.append(b);
-        return;
+    } else {
+        out.reserve(out.size() + a.size() + 1 + b.size());
+        out.append(a);
+        if (!detail::is_sep(a.back())) {
+            out.push_back('/');
+        }
+        usize b_start = 0;
+        while (b_start < b.size() && detail::is_sep(b[b_start])) {
+            ++b_start;
+        }
+        out.append(b.substr(b_start));
     }
-    out.reserve(out.size() + a.size() + 1 + b.size());
-    out.append(a);
-    if (!detail::is_sep(a.back())) {
-        out.push_back('/');
-    }
-    usize b_start = 0;
-    while (b_start < b.size() && detail::is_sep(b[b_start])) {
-        ++b_start;
-    }
-    out.append(b.substr(b_start));
     for (usize i = 0; i < out.size(); ++i) {
         if (out[i] == '\\') out[i] = '/';
     }
@@ -142,6 +172,29 @@ void path_join_into(String& out, StringRef a, StringRef b) {
 String path_join(StringRef a, StringRef b, Allocator* alloc) {
     String out(alloc);
     path_join_into(out, a, b);
+    return out;
+}
+
+String path_join(StringRef a, StringRef b, StringRef c, Allocator* alloc) {
+    const StringRef parts[3] = {a, b, c};
+    return path_join_parts(ArrayRef<StringRef>(parts, 3), alloc);
+}
+
+String path_join(StringRef a, StringRef b, StringRef c, StringRef d, Allocator* alloc) {
+    const StringRef parts[4] = {a, b, c, d};
+    return path_join_parts(ArrayRef<StringRef>(parts, 4), alloc);
+}
+
+String path_join_parts(ArrayRef<StringRef> parts, Allocator* alloc) {
+    String out(alloc);
+    usize total_hint = 0;
+    for (usize i = 0; i < parts.size(); ++i) {
+        total_hint += parts[i].size() + 1;
+    }
+    if (total_hint > 0) out.reserve(total_hint);
+    for (usize i = 0; i < parts.size(); ++i) {
+        path_append(out, parts[i]);
+    }
     return out;
 }
 
@@ -225,6 +278,16 @@ bool fs_exists(StringRef path) noexcept {
     struct stat st {};
     return ::stat(cpath.c_str(), &st) == 0;
 #endif
+}
+
+bool fs_is_dir(StringRef path) noexcept {
+    auto st = fs_stat(path);
+    return st.is_ok() && st->is_dir;
+}
+
+bool fs_is_file(StringRef path) noexcept {
+    auto st = fs_stat(path);
+    return st.is_ok() && st->is_file;
 }
 
 Result<FileStat> fs_stat(StringRef path) noexcept {
@@ -383,6 +446,110 @@ Error fs_remove(StringRef path) noexcept {
 #endif
 }
 
+Error fs_remove_all(StringRef path) noexcept {
+    if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(_WIN32)
+    SmallArray<wchar_t, 260> wpath;
+    if (!detail::utf8_path_to_win32_wide(path, wpath)) return Error{ErrorCode::InvalidArgument, 0};
+    const DWORD attrs = GetFileAttributesW(wpath.data());
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        const DWORD e = GetLastError();
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return Error::ok();
+        return detail::win32_error_to_keel(e);
+    }
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        if ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+            PathBuf pattern;
+            path_join_into(pattern, path, "*");
+            SmallArray<wchar_t, 260> wpattern;
+            if (!detail::utf8_path_to_win32_wide(pattern, wpattern)) {
+                return Error{ErrorCode::InvalidArgument, 0};
+            }
+            WIN32_FIND_DATAW fdata{};
+            HANDLE hFind = FindFirstFileW(wpattern.data(), &fdata);
+            if (hFind != INVALID_HANDLE_VALUE) {
+                do {
+                    if (fdata.cFileName[0] == L'.' &&
+                        (fdata.cFileName[1] == L'\0' ||
+                         (fdata.cFileName[1] == L'.' && fdata.cFileName[2] == L'\0'))) {
+                        continue;
+                    }
+                    String name_str;
+                    usize wlen = 0;
+                    while (fdata.cFileName[wlen] != L'\0') ++wlen;
+                    detail::win32_wide_to_utf8_path(fdata.cFileName, wlen, name_str);
+                    PathBuf child;
+                    path_join_into(child, path, name_str);
+                    const Error child_err = fs_remove_all(child);
+                    if (child_err.is_err()) {
+                        FindClose(hFind);
+                        return child_err;
+                    }
+                } while (FindNextFileW(hFind, &fdata));
+                FindClose(hFind);
+            } else {
+                const DWORD find_err = GetLastError();
+                if (find_err != ERROR_FILE_NOT_FOUND && find_err != ERROR_PATH_NOT_FOUND) {
+                    return detail::win32_error_to_keel(find_err);
+                }
+            }
+        }
+        if ((attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+            SetFileAttributesW(wpath.data(), attrs & ~static_cast<DWORD>(FILE_ATTRIBUTE_READONLY));
+        }
+        if (!RemoveDirectoryW(wpath.data())) {
+            const DWORD e = GetLastError();
+            if (e != ERROR_FILE_NOT_FOUND && e != ERROR_PATH_NOT_FOUND) {
+                return detail::win32_error_to_keel(e);
+            }
+        }
+        return Error::ok();
+    }
+    if ((attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+        SetFileAttributesW(wpath.data(), attrs & ~static_cast<DWORD>(FILE_ATTRIBUTE_READONLY));
+    }
+    if (!DeleteFileW(wpath.data())) {
+        const DWORD e = GetLastError();
+        if (e != ERROR_FILE_NOT_FOUND && e != ERROR_PATH_NOT_FOUND) {
+            return detail::win32_error_to_keel(e);
+        }
+    }
+    return Error::ok();
+#else
+    PathBuf cpath(path);
+    struct stat st {};
+    if (::lstat(cpath.c_str(), &st) != 0) {
+        return errno == ENOENT ? Error::ok() : detail::errno_to_keel(errno);
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        if (::unlink(cpath.c_str()) != 0 && errno != ENOENT) {
+            return detail::errno_to_keel(errno);
+        }
+        return Error::ok();
+    }
+    DIR* dir = ::opendir(cpath.c_str());
+    if (!dir) {
+        return errno == ENOENT ? Error::ok() : detail::errno_to_keel(errno);
+    }
+    while (struct dirent* ent = ::readdir(dir)) {
+        const StringRef name(ent->d_name);
+        if (name == "." || name == "..") continue;
+        PathBuf child;
+        path_join_into(child, path, name);
+        const Error err = fs_remove_all(child);
+        if (err.is_err()) {
+            ::closedir(dir);
+            return err;
+        }
+    }
+    ::closedir(dir);
+    if (::rmdir(cpath.c_str()) != 0 && errno != ENOENT) {
+        return detail::errno_to_keel(errno);
+    }
+    return Error::ok();
+#endif
+}
+
 Error fs_rename(StringRef from, StringRef to) noexcept {
     if (from.empty() || to.empty()) return Error{ErrorCode::InvalidArgument, 0};
 #if defined(_WIN32)
@@ -507,6 +674,93 @@ Result<String> fs_exe_path(Allocator* alloc) {
 #endif
 }
 
+Result<String> fs_absolute(StringRef path, Allocator* alloc) {
+    if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch(alloc);
+    SmallArray<wchar_t, 260> wpath(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(path, wpath)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    const DWORD needed = GetFullPathNameW(wpath.data(), 0, nullptr, nullptr);
+    if (needed == 0) return detail::win32_error_to_keel(GetLastError());
+    SmallArray<wchar_t, 260> wbuf(scratch.allocator());
+    wbuf.reserve(static_cast<usize>(needed) + 1);
+    const DWORD len = GetFullPathNameW(wpath.data(), needed, wbuf.data(), nullptr);
+    if (len == 0) return detail::win32_error_to_keel(GetLastError());
+    String out(alloc);
+    detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<usize>(len), out);
+    return out;
+#else
+    if (path_is_absolute(path)) {
+        return path_normalize(path, alloc);
+    }
+    ArenaTemp scratch = get_scratch(alloc);
+    KEEL_TRY_ASSIGN(String cwd, fs_current_dir(scratch.allocator()));
+    PathBuf joined(scratch.allocator());
+    path_join_into(joined, cwd, path);
+    return path_normalize(joined, alloc);
+#endif
+}
+
+Result<String> fs_realpath(StringRef path, Allocator* alloc) {
+    if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch(alloc);
+    SmallArray<wchar_t, 260> wpath(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(path, wpath)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    HANDLE hFile = CreateFileW(wpath.data(), 0,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    const DWORD needed = GetFinalPathNameByHandleW(hFile, nullptr, 0, VOLUME_NAME_DOS);
+    if (needed == 0) {
+        const DWORD err = GetLastError();
+        CloseHandle(hFile);
+        return detail::win32_error_to_keel(err);
+    }
+    SmallArray<wchar_t, 260> wbuf(scratch.allocator());
+    wbuf.reserve(static_cast<usize>(needed) + 1);
+    const DWORD len = GetFinalPathNameByHandleW(hFile, wbuf.data(), needed, VOLUME_NAME_DOS);
+    const DWORD last_err = GetLastError();
+    CloseHandle(hFile);
+    if (len == 0) {
+        return detail::win32_error_to_keel(last_err);
+    }
+    const wchar_t* start = wbuf.data();
+    usize wlen = static_cast<usize>(len);
+    String out(alloc);
+    if (wlen >= 8 && start[0] == L'\\' && start[1] == L'\\' && start[2] == L'?' && start[3] == L'\\' &&
+        (start[4] == L'U' || start[4] == L'u') && (start[5] == L'N' || start[5] == L'n') &&
+        (start[6] == L'C' || start[6] == L'c') && start[7] == L'\\') {
+        out.append("//");
+        String tail(scratch.allocator());
+        detail::win32_wide_to_utf8_path(start + 8, wlen - 8, tail);
+        out.append(tail);
+        return out;
+    }
+    if (wlen >= 4 && start[0] == L'\\' && start[1] == L'\\' && start[2] == L'?' && start[3] == L'\\') {
+        start += 4;
+        wlen -= 4;
+    }
+    detail::win32_wide_to_utf8_path(start, wlen, out);
+    return out;
+#else
+    PathBuf cpath(path);
+    char* rp = ::realpath(cpath.c_str(), nullptr);
+    if (!rp) {
+        return detail::errno_to_keel(errno);
+    }
+    String out = String::from(StringRef(rp), alloc);
+    std::free(rp);
+    return out;
+#endif
+}
+
 Error fs_read_dir(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callback) {
     if (dir_path.empty() || !callback) return Error{ErrorCode::InvalidArgument, 0};
 
@@ -593,6 +847,120 @@ Error fs_read_dir(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callbac
     ::closedir(dir);
     return Error::ok();
 #endif
+}
+
+namespace {
+Error walk_dir_impl(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callback, bool& keep_going) {
+#if defined(_WIN32)
+    PathBuf pattern;
+    path_join_into(pattern, dir_path, "*");
+    SmallArray<wchar_t, 260> wpattern;
+    if (!detail::utf8_path_to_win32_wide(pattern, wpattern)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+
+    WIN32_FIND_DATAW fdata{};
+    HANDLE hFind = FindFirstFileW(wpattern.data(), &fdata);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        const DWORD err = GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND) return Error::ok();
+        return detail::win32_error_to_keel(err);
+    }
+
+    Error result = Error::ok();
+    do {
+        if (fdata.cFileName[0] == L'.' &&
+            (fdata.cFileName[1] == L'\0' || (fdata.cFileName[1] == L'.' && fdata.cFileName[2] == L'\0'))) {
+            continue;
+        }
+        String name_str;
+        usize wlen = 0;
+        while (fdata.cFileName[wlen] != L'\0') ++wlen;
+        detail::win32_wide_to_utf8_path(fdata.cFileName, wlen, name_str);
+
+        PathBuf full_str;
+        path_join_into(full_str, dir_path, name_str);
+
+        const bool is_dir = (fdata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        const bool is_reparse = (fdata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+
+        DirEntry entry{};
+        entry.name = name_str.as_ref();
+        entry.full_path = full_str.as_ref();
+        entry.is_dir = is_dir;
+        entry.is_file = !is_dir;
+
+        if (!callback(entry)) {
+            keep_going = false;
+            break;
+        }
+        if (is_dir && !is_reparse) {
+            result = walk_dir_impl(full_str, callback, keep_going);
+            if (result.is_err() || !keep_going) {
+                break;
+            }
+        }
+    } while (FindNextFileW(hFind, &fdata));
+
+    FindClose(hFind);
+    return result;
+#else
+    PathBuf cdir(dir_path);
+    DIR* dir = ::opendir(cdir.c_str());
+    if (!dir) {
+        return detail::errno_to_keel(errno);
+    }
+
+    Error result = Error::ok();
+    while (struct dirent* ent = ::readdir(dir)) {
+        const StringRef name(ent->d_name);
+        if (name == "." || name == "..") continue;
+
+        PathBuf full_str;
+        path_join_into(full_str, dir_path, name);
+
+        bool recurse_subdir = false;
+        DirEntry entry{};
+        entry.name = name;
+        entry.full_path = full_str.as_ref();
+
+        struct stat lst {};
+        if (::lstat(full_str.c_str(), &lst) == 0) {
+            if (S_ISDIR(lst.st_mode)) {
+                entry.is_dir = true;
+                recurse_subdir = true;
+            } else if (S_ISREG(lst.st_mode)) {
+                entry.is_file = true;
+            } else if (S_ISLNK(lst.st_mode)) {
+                struct stat st {};
+                if (::stat(full_str.c_str(), &st) == 0) {
+                    entry.is_dir = S_ISDIR(st.st_mode);
+                    entry.is_file = S_ISREG(st.st_mode);
+                }
+            }
+        }
+
+        if (!callback(entry)) {
+            keep_going = false;
+            break;
+        }
+        if (recurse_subdir) {
+            result = walk_dir_impl(full_str, callback, keep_going);
+            if (result.is_err() || !keep_going) {
+                break;
+            }
+        }
+    }
+    ::closedir(dir);
+    return result;
+#endif
+}
+} // namespace
+
+Error fs_walk_dir(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callback) {
+    if (dir_path.empty() || !callback) return Error{ErrorCode::InvalidArgument, 0};
+    bool keep_going = true;
+    return walk_dir_impl(dir_path, callback, keep_going);
 }
 
 } // namespace keel

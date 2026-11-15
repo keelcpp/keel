@@ -7,4 +7,5 @@
 #include "format.cpp"
 #include "io.cpp"
 #include "fs.cpp"
+#include "thread_pool.cpp"
 #include "time.cpp"
