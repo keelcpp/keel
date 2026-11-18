@@ -194,15 +194,18 @@ template <typename T>
 inline constexpr bool IsFloatingPoint =
     IsSame<RemoveCv<T>, float> || IsSame<RemoveCv<T>, double> || IsSame<RemoveCv<T>, long double>;
 
-template <typename T>
-inline constexpr bool IsSigned = (IsIntegral<T> || IsFloatingPoint<T>) && !IsSame<RemoveCv<T>, bool> &&
-                                 (static_cast<RemoveCv<T>>(-1) < static_cast<RemoveCv<T>>(0));
-
-template <typename T> inline constexpr bool IsUnsigned = IsIntegral<T> && !IsSigned<T>;
-
 template <typename Base, typename Derived> inline constexpr bool IsBaseOf = __is_base_of(Base, Derived);
 
 namespace detail {
+template <typename T, bool = (IsIntegral<T> || IsFloatingPoint<T>) && !IsSame<RemoveCv<T>, bool>>
+struct IsSignedImpl {
+    static constexpr bool value = false;
+};
+template <typename T>
+struct IsSignedImpl<T, true> {
+    static constexpr bool value = static_cast<keel::RemoveCv<T>>(-1) < static_cast<keel::RemoveCv<T>>(0);
+};
+
 template <typename T, bool = IsEnum<T>> struct UnderlyingTypeImpl {
     using Type = T;
 };
@@ -220,6 +223,10 @@ template <typename T> struct TypeIdAnchor {
     static inline constexpr char kTag = 0;
 };
 } // namespace detail
+
+template <typename T> inline constexpr bool IsSigned = detail::IsSignedImpl<T>::value;
+
+template <typename T> inline constexpr bool IsUnsigned = IsIntegral<T> && !IsSigned<T>;
 
 template <typename E>
     requires IsEnum<E>
