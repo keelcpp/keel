@@ -157,6 +157,38 @@ void test_vocabulary() {
     opt.reset();
     TEST_CHECK(!opt.has_value());
 
+    // Optional<T&> lvalue reference specialization (rebind on assign, non-owning, zero overhead, rvalue blocked)
+    static_assert(sizeof(Optional<int&>) == sizeof(int*));
+    static_assert(sizeof(Optional<const int&>) == sizeof(const int*));
+    static_assert(IsTriviallyCopyable<Optional<int&>>);
+    static_assert(IsTriviallyDestructible<Optional<int&>>);
+    static_assert(!IsConstructible<Optional<const int&>, int&&>);
+
+    int x = 10;
+    int y = 20;
+    Optional<int&> refOpt;
+    TEST_CHECK(!refOpt.has_value());
+    TEST_CHECK(refOpt == kNullOpt);
+    TEST_CHECK(refOpt.value_or(99) == 99);
+
+    refOpt = x;
+    TEST_CHECK(refOpt.has_value());
+    TEST_CHECK(&(*refOpt) == &x);
+    *refOpt = 15;
+    TEST_CHECK(x == 15);
+    TEST_CHECK(refOpt == 15);
+
+    refOpt = y; // rebinds reference, does NOT overwrite x
+    TEST_CHECK(x == 15);
+    TEST_CHECK(&(*refOpt) == &y);
+
+    Optional<const int&> crefOpt = refOpt; // converting Optional<int&> -> Optional<const int&>
+    TEST_CHECK(crefOpt.has_value() && &(*crefOpt) == &y);
+    crefOpt = x;
+    TEST_CHECK(&(*crefOpt) == &x);
+    crefOpt = kNullOpt;
+    TEST_CHECK(!crefOpt.has_value());
+
     TrackedObj::live_count = 0;
     {
         Optional<TrackedObj> tobj(TrackedObj(7));

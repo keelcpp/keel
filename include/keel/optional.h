@@ -213,6 +213,103 @@ private:
     bool m_has_value = false;
 };
 
+// Partial specialization for lvalue references (`sizeof(Optional<T&>) == sizeof(T*)`, zero-overhead, rebinding on assign).
+template <typename T> class Optional<T&> {
+public:
+    constexpr Optional() noexcept = default;
+    constexpr Optional(NullOptT) noexcept : m_ptr(nullptr) {}
+    constexpr Optional(const Optional&) noexcept = default;
+    constexpr Optional(Optional&&) noexcept = default;
+
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>) && IsConvertible<U*, T*>
+    constexpr Optional(U& val) noexcept : m_ptr(keel::addressof(val)) {}
+
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>) && IsConvertible<U*, T*>
+    constexpr Optional(const Optional<U&>& other) noexcept
+        : m_ptr(other.has_value() ? keel::addressof(*other) : nullptr) {}
+
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>)
+    Optional(const U&&) = delete;
+
+    constexpr ~Optional() noexcept = default;
+
+    constexpr Optional& operator=(const Optional&) noexcept = default;
+    constexpr Optional& operator=(Optional&&) noexcept = default;
+
+    constexpr Optional& operator=(NullOptT) noexcept {
+        reset();
+        return *this;
+    }
+
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>) && IsConvertible<U*, T*>
+    constexpr Optional& operator=(U& val) noexcept {
+        m_ptr = keel::addressof(val);
+        return *this;
+    }
+
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>)
+    Optional& operator=(const U&&) = delete;
+
+    template <typename U>
+        requires IsConvertible<U*, T*>
+    constexpr T& emplace(U& val) noexcept {
+        m_ptr = keel::addressof(val);
+        return *m_ptr;
+    }
+
+    template <typename U> void emplace(const U&&) = delete;
+
+    constexpr void reset() noexcept { m_ptr = nullptr; }
+
+    [[nodiscard]] constexpr bool has_value() const noexcept { return m_ptr != nullptr; }
+    [[nodiscard]] explicit constexpr operator bool() const noexcept { return m_ptr != nullptr; }
+
+    [[nodiscard]] constexpr T& value() const noexcept {
+        KEEL_ASSERT(m_ptr != nullptr);
+        return *m_ptr;
+    }
+
+    [[nodiscard]] constexpr T& operator*() const noexcept { return value(); }
+
+    [[nodiscard]] constexpr T* operator->() const noexcept {
+        KEEL_ASSERT(m_ptr != nullptr);
+        return m_ptr;
+    }
+
+    template <typename U> [[nodiscard]] constexpr RemoveCv<T> value_or(U&& fallback) const {
+        return (m_ptr != nullptr) ? *m_ptr : static_cast<RemoveCv<T>>(keel::forward<U>(fallback));
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(const Optional& a, const Optional& b) noexcept {
+        if (a.m_ptr == nullptr || b.m_ptr == nullptr) {
+            return a.m_ptr == b.m_ptr;
+        }
+        return *a.m_ptr == *b.m_ptr;
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(const Optional& a, NullOptT) noexcept {
+        return a.m_ptr == nullptr;
+    }
+
+    template <typename U>
+        requires(!IsSame<RemoveCvRef<U>, Optional>) && (!IsSame<RemoveCvRef<U>, NullOptT>) &&
+                requires(const T& x, const U& y) { static_cast<bool>(x == y); }
+    [[nodiscard]] friend constexpr bool operator==(const Optional& a, const U& val) noexcept {
+        return (a.m_ptr != nullptr) && (*a.m_ptr == val);
+    }
+
+private:
+    T* m_ptr{nullptr};
+};
+
+// Rvalue-reference optionals are disallowed to prevent dangling references.
+template <typename T> class Optional<T&&>;
+
 // Zero-overhead optional storing a reserved sentinel value inside T itself (sizeof == sizeof(T)).
 template <typename T, T Sentinel> class SentinelOptional {
 public:

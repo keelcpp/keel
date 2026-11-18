@@ -273,6 +273,12 @@ template <typename T> [[nodiscard]] constexpr RemoveReference<T>&& move(T&& val)
     return static_cast<RemoveReference<T>&&>(val);
 }
 
+template <typename T> [[nodiscard]] constexpr T* addressof(T& val) noexcept {
+    return __builtin_addressof(val);
+}
+
+template <typename T> void addressof(const T&&) = delete;
+
 template <typename T> [[nodiscard]] constexpr T&& forward(RemoveReference<T>& val) noexcept {
     return static_cast<T&&>(val);
 }

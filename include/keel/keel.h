@@ -18,6 +18,7 @@
 #include "keel/io.h"
 #include "keel/lru_cache.h"
 #include "keel/math.h"
+#include "keel/md_ref.h"
 #include "keel/memory.h"
 #include "keel/number.h"
 #include "keel/optional.h"
