@@ -2003,6 +2003,83 @@ void test_env_process_and_dynlib() {
 #endif
 }
 
+void test_md_ref_layouts() {
+    // 1. Row-major (LayoutRight default) vs Column-major (LayoutLeft / ColMdRef)
+    {
+        // Column-major 2x3 matrix:
+        //   [10  30  50]
+        //   [20  40  60]
+        // Memory: [10, 20, 30, 40, 50, 60]
+        f64 buf[6] = {10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+        ColMdRef<f64, 2> colView(ArrayRef<f64>(buf, 6), 2, 3);
+        TEST_CHECK(colView && !colView.empty());
+        TEST_CHECK(colView.is_col_major() && !colView.is_row_major());
+        TEST_CHECK(colView.extent(0) == 2 && colView.extent(1) == 3 && colView.size() == 6);
+        TEST_CHECK(colView.stride(0) == 1 && colView.stride(1) == 2);
+        TEST_CHECK(colView(0, 0) == 10.0 && colView(1, 0) == 20.0);
+        TEST_CHECK(colView(0, 1) == 30.0 && colView(1, 1) == 40.0);
+        TEST_CHECK(colView(0, 2) == 50.0 && colView(1, 2) == 60.0);
+
+        // Contiguous column extraction (Rank == 2, LayoutLeft)
+        ArrayRef<f64> c1 = colView.col(1);
+        TEST_CHECK(c1.size() == 2 && c1[0] == 30.0 && c1[1] == 40.0);
+
+        // subview & slice along outermost axis (columns for LayoutLeft)
+        ColMdRef<f64, 1> sub2 = colView.subview(2);
+        TEST_CHECK(sub2.extent(0) == 2 && sub2(0) == 50.0 && sub2(1) == 60.0);
+        ColMdRef<f64, 2> sl = colView.slice(1, 2);
+        TEST_CHECK(sl.extent(0) == 2 && sl.extent(1) == 2);
+        TEST_CHECK(sl(0, 0) == 30.0 && sl(1, 1) == 60.0);
+
+        // Strided conversion & zero-copy transpose between LayoutLeft <-> LayoutRight
+        StridedMdRef<f64, 2> st = colView.strided();
+        TEST_CHECK(st.stride(0) == 1 && st.stride(1) == 2);
+        TEST_CHECK(!st.is_contiguous<LayoutRight>() && st.is_contiguous<LayoutLeft>());
+        ColMdRef<f64, 2> backCol = st.as_contiguous<LayoutLeft>();
+        TEST_CHECK(backCol == colView);
+        TEST_CHECK(!st.as_contiguous<LayoutRight>());
+
+        StridedMdRef<f64, 2> stT = st.transpose();
+        TEST_CHECK(stT.extent(0) == 3 && stT.extent(1) == 2);
+        TEST_CHECK(stT.is_contiguous<LayoutRight>() && !stT.is_contiguous<LayoutLeft>());
+        MdRef<f64, 2> rowT = stT.as_contiguous<LayoutRight>();
+        TEST_CHECK(rowT && rowT.is_row_major());
+        TEST_CHECK(rowT(0, 0) == 10.0 && rowT(0, 1) == 20.0 && rowT(2, 1) == 60.0);
+        TEST_CHECK(rowT.row(1)[0] == 30.0 && rowT.row(1)[1] == 40.0);
+    }
+
+    // 2. Mutable LayoutLeft 3D volume: rows x cols x pages (page = outermost axis)
+    {
+        i32 vol[24]{};
+        MutColMdRef<i32, 3> mv(MutArrayRef<i32>(vol, 24), 2, 3, 4);
+        TEST_CHECK(mv.stride(0) == 1 && mv.stride(1) == 2 && mv.stride(2) == 6);
+        for (usize p = 0; p < 4; ++p) {
+            for (usize c = 0; c < 3; ++c) {
+                for (usize r = 0; r < 2; ++r) {
+                    mv(r, c, p) = static_cast<i32>(p * 100 + c * 10 + r);
+                }
+            }
+        }
+        TEST_CHECK(vol[0] == 0 && vol[1] == 1 && vol[2] == 10 && vol[6] == 100 && vol[23] == 321);
+        MutColMdRef<i32, 2> page2 = mv.subview(2);
+        TEST_CHECK(page2.extent(0) == 2 && page2.extent(1) == 3);
+        TEST_CHECK(page2(1, 2) == 221);
+        page2.col(0)[1] = 999;
+        TEST_CHECK(mv(1, 0, 2) == 999);
+
+        MutStridedMdRef<i32, 3> msv = mv.strided();
+        TEST_CHECK(msv.is_contiguous<LayoutLeft>() && !msv.is_contiguous<LayoutRight>());
+        TEST_CHECK(msv.as_contiguous<LayoutLeft>().data() == vol);
+    }
+
+    // 3. Constexpr verification for LayoutLeft
+    static constexpr i32 kData[6] = {1, 2, 3, 4, 5, 6};
+    constexpr ColMdRef<i32, 2> kCol(ArrayRef<i32>(kData, 6), 2, 3);
+    static_assert(kCol(0, 0) == 1 && kCol(1, 0) == 2 && kCol(0, 2) == 5 && kCol(1, 2) == 6);
+    static_assert(kCol.col(1)[0] == 3 && kCol.col(1)[1] == 4);
+    static_assert(kCol.strided().transpose().as_contiguous<LayoutRight>()(2, 1) == 6);
+}
+
 } // namespace
 
 int main() {
@@ -2023,6 +2100,7 @@ int main() {
     test_step0_checked_sat_and_endian();
     test_stage0_fs_thread_pool_and_array_init();
     test_env_process_and_dynlib();
+    test_md_ref_layouts();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

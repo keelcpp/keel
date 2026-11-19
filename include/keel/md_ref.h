@@ -6,6 +6,15 @@
 
 namespace keel {
 
+// Contiguous memory layouts (mirrors std::layout_right / std::layout_left):
+//   - LayoutRight: row-major (C / GUI / image); last axis has unit stride.
+//   - LayoutLeft:  column-major (Fortran / BLAS / LAPACK / NumKit); first axis has unit stride.
+struct LayoutRight {};
+struct LayoutLeft {};
+
+template <typename L>
+concept IsMdLayout = IsSame<L, LayoutRight> || IsSame<L, LayoutLeft>;
+
 namespace detail {
 [[nodiscard]] constexpr bool checked_mul_usize(usize a, usize b, usize& out) noexcept {
     if (a == 0 || b == 0) {
@@ -48,16 +57,23 @@ template <usize Rank>
     return true;
 }
 
-template <usize Rank>
+template <usize Rank, IsMdLayout Layout = LayoutRight>
 [[nodiscard]] constexpr StaticArray<usize, Rank> compute_contiguous_strides(
     const StaticArray<usize, Rank>& shape
 ) noexcept {
     StaticArray<usize, Rank> strides{};
     usize s = 1;
-    for (usize idx = Rank; idx > 0; --idx) {
-        const usize d = idx - 1;
-        strides[d] = s;
-        s *= shape[d];
+    if constexpr (IsSame<Layout, LayoutRight>) {
+        for (usize idx = Rank; idx > 0; --idx) {
+            const usize d = idx - 1;
+            strides[d] = s;
+            s *= shape[d];
+        }
+    } else {
+        for (usize d = 0; d < Rank; ++d) {
+            strides[d] = s;
+            s *= shape[d];
+        }
     }
     return strides;
 }
@@ -86,15 +102,23 @@ template <usize Rank>
     return maxOffset < bufSize;
 }
 
-template <usize Rank>
+template <usize Rank, IsMdLayout Layout = LayoutRight>
 [[nodiscard]] constexpr usize compute_md_offset(
     const StaticArray<usize, Rank>& extents,
     const StaticArray<usize, Rank>& coords
 ) noexcept {
     usize offset = 0;
-    for (usize d = 0; d < Rank; ++d) {
-        KEEL_BOUNDS_ASSERT(coords[d] < extents[d]);
-        offset = offset * extents[d] + coords[d];
+    if constexpr (IsSame<Layout, LayoutRight>) {
+        for (usize d = 0; d < Rank; ++d) {
+            KEEL_BOUNDS_ASSERT(coords[d] < extents[d]);
+            offset = offset * extents[d] + coords[d];
+        }
+    } else {
+        for (usize idx = Rank; idx > 0; --idx) {
+            const usize d = idx - 1;
+            KEEL_BOUNDS_ASSERT(coords[d] < extents[d]);
+            offset = offset * extents[d] + coords[d];
+        }
     }
     return offset;
 }
@@ -152,15 +176,22 @@ constexpr void fill_strided_impl(
 }
 } // namespace detail
 
-template <typename T, usize Rank> class MutMdRef;
+template <typename T, usize Rank, IsMdLayout Layout = LayoutRight> class MdRef;
+template <typename T, usize Rank, IsMdLayout Layout = LayoutRight> class MutMdRef;
 template <typename T, usize Rank> class StridedMdRef;
 template <typename T, usize Rank> class MutStridedMdRef;
 
-// Non-owning contiguous row-major N-dimensional view (overflow-safe shape validation on construction).
-template <typename T, usize Rank> class MdRef {
+template <typename T, usize Rank> using ColMdRef = MdRef<T, Rank, LayoutLeft>;
+template <typename T, usize Rank> using MutColMdRef = MutMdRef<T, Rank, LayoutLeft>;
+
+// Non-owning contiguous N-dimensional view (LayoutRight = row-major default; LayoutLeft = column-major).
+template <typename T, usize Rank, IsMdLayout Layout> class MdRef {
     static_assert(Rank >= 1, "MdRef requires Rank >= 1");
 
 public:
+    using ValueType = T;
+    using LayoutType = Layout;
+
     constexpr MdRef() noexcept = default;
     constexpr MdRef(decltype(nullptr)) noexcept {}
 
@@ -187,6 +218,8 @@ public:
         : MdRef(buf, StaticArray<usize, Rank>{{detail::normalize_extent(dims)...}}) {}
 
     [[nodiscard]] static constexpr usize rank() noexcept { return Rank; }
+    [[nodiscard]] static constexpr bool is_row_major() noexcept { return IsSame<Layout, LayoutRight>; }
+    [[nodiscard]] static constexpr bool is_col_major() noexcept { return IsSame<Layout, LayoutLeft>; }
     [[nodiscard]] constexpr bool empty() const noexcept { return m_data == nullptr || m_extents[0] == 0; }
     [[nodiscard]] constexpr explicit operator bool() const noexcept { return !empty(); }
 
@@ -211,8 +244,14 @@ public:
         KEEL_BOUNDS_ASSERT(axis < Rank);
         if (empty()) return 0;
         usize s = 1;
-        for (usize d = axis + 1; d < Rank; ++d) {
-            s *= m_extents[d];
+        if constexpr (IsSame<Layout, LayoutRight>) {
+            for (usize d = axis + 1; d < Rank; ++d) {
+                s *= m_extents[d];
+            }
+        } else {
+            for (usize d = 0; d < axis; ++d) {
+                s *= m_extents[d];
+            }
         }
         return s;
     }
@@ -228,7 +267,7 @@ public:
     [[nodiscard]] constexpr const T& at(Indices... idx) const noexcept {
         KEEL_BOUNDS_ASSERT(!empty());
         const StaticArray<usize, Rank> coords{{detail::normalize_extent(idx)...}};
-        return m_data[detail::compute_md_offset(m_extents, coords)];
+        return m_data[detail::compute_md_offset<Rank, Layout>(m_extents, coords)];
     }
 
     template <typename... Indices>
@@ -237,50 +276,71 @@ public:
         return at(idx...);
     }
 
-    [[nodiscard]] constexpr MdRef<T, Rank - 1> subview(usize i) const noexcept
+    // Fixes the outermost (contiguous-slice) axis: axis 0 for LayoutRight, axis Rank-1 for LayoutLeft.
+    [[nodiscard]] constexpr MdRef<T, Rank - 1, Layout> subview(usize i) const noexcept
         requires(Rank >= 2)
     {
-        KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[0]);
-        const usize outerStride = stride(0);
-        StaticArray<usize, Rank - 1> subShape{};
-        for (usize d = 1; d < Rank; ++d) {
-            subShape[d - 1] = m_extents[d];
+        if constexpr (IsSame<Layout, LayoutRight>) {
+            KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[0]);
+            const usize outerStride = stride(0);
+            StaticArray<usize, Rank - 1> subShape{};
+            for (usize d = 1; d < Rank; ++d) {
+                subShape[d - 1] = m_extents[d];
+            }
+            return MdRef<T, Rank - 1, Layout>(ArrayRef<T>(m_data + i * outerStride, outerStride), subShape);
+        } else {
+            constexpr usize kOuter = Rank - 1;
+            KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[kOuter]);
+            const usize outerStride = stride(kOuter);
+            StaticArray<usize, Rank - 1> subShape{};
+            for (usize d = 0; d < kOuter; ++d) {
+                subShape[d] = m_extents[d];
+            }
+            return MdRef<T, Rank - 1, Layout>(ArrayRef<T>(m_data + i * outerStride, outerStride), subShape);
         }
-        return MdRef<T, Rank - 1>(ArrayRef<T>(m_data + i * outerStride, outerStride), subShape);
     }
 
     [[nodiscard]] constexpr ArrayRef<T> row(usize i) const noexcept
-        requires(Rank == 2)
+        requires(Rank == 2 && IsSame<Layout, LayoutRight>)
     {
         KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[0]);
         return ArrayRef<T>(m_data + i * m_extents[1], m_extents[1]);
     }
 
-    [[nodiscard]] constexpr MdRef<T, Rank> slice(usize start, usize count = kInvalidIndex) const noexcept {
+    [[nodiscard]] constexpr ArrayRef<T> col(usize j) const noexcept
+        requires(Rank == 2 && IsSame<Layout, LayoutLeft>)
+    {
+        KEEL_BOUNDS_ASSERT(!empty() && j < m_extents[1]);
+        return ArrayRef<T>(m_data + j * m_extents[0], m_extents[0]);
+    }
+
+    // Slices along the outermost axis (axis 0 for LayoutRight, axis Rank-1 for LayoutLeft).
+    [[nodiscard]] constexpr MdRef<T, Rank, Layout> slice(usize start, usize count = kInvalidIndex) const noexcept {
         if (empty()) return {};
-        KEEL_BOUNDS_ASSERT(start <= m_extents[0]);
-        const usize rem = m_extents[0] - start;
+        constexpr usize kOuter = IsSame<Layout, LayoutRight> ? 0 : (Rank - 1);
+        KEEL_BOUNDS_ASSERT(start <= m_extents[kOuter]);
+        const usize rem = m_extents[kOuter] - start;
         const usize len = (count > rem) ? rem : count;
         if (len == 0) return {};
-        const usize outerStride = stride(0);
+        const usize outerStride = stride(kOuter);
         StaticArray<usize, Rank> newShape = m_extents;
-        newShape[0] = len;
-        return MdRef<T, Rank>(ArrayRef<T>(m_data + start * outerStride, len * outerStride), newShape);
+        newShape[kOuter] = len;
+        return MdRef<T, Rank, Layout>(ArrayRef<T>(m_data + start * outerStride, len * outerStride), newShape);
     }
 
     template <usize NewRank>
-    [[nodiscard]] constexpr MdRef<T, NewRank> reshape(const StaticArray<usize, NewRank>& newShape) const noexcept {
+    [[nodiscard]] constexpr MdRef<T, NewRank, Layout> reshape(const StaticArray<usize, NewRank>& newShape) const noexcept {
         if (empty()) return {};
         usize newTotal = 0;
         if (!detail::compute_md_extents(newShape, newTotal) || newTotal != size()) {
             return {};
         }
-        return MdRef<T, NewRank>(flat(), newShape);
+        return MdRef<T, NewRank, Layout>(flat(), newShape);
     }
 
     template <typename... Extents>
         requires(sizeof...(Extents) >= 1) && (IsIntegral<RemoveCvRef<Extents>> && ...)
-    [[nodiscard]] constexpr MdRef<T, sizeof...(Extents)> reshape(Extents... dims) const noexcept {
+    [[nodiscard]] constexpr MdRef<T, sizeof...(Extents), Layout> reshape(Extents... dims) const noexcept {
         return reshape(StaticArray<usize, sizeof...(Extents)>{{detail::normalize_extent(dims)...}});
     }
 
@@ -306,11 +366,14 @@ private:
     StaticArray<usize, Rank> m_extents{};
 };
 
-// Mutable non-owning contiguous row-major N-dimensional view.
-template <typename T, usize Rank> class MutMdRef {
+// Mutable non-owning contiguous N-dimensional view (LayoutRight = row-major default; LayoutLeft = column-major).
+template <typename T, usize Rank, IsMdLayout Layout> class MutMdRef {
     static_assert(Rank >= 1, "MutMdRef requires Rank >= 1");
 
 public:
+    using ValueType = T;
+    using LayoutType = Layout;
+
     constexpr MutMdRef() noexcept = default;
     constexpr MutMdRef(decltype(nullptr)) noexcept {}
 
@@ -336,17 +399,19 @@ public:
     constexpr MutMdRef(MutArrayRef<T> buf, Extents... dims) noexcept
         : MutMdRef(buf, StaticArray<usize, Rank>{{detail::normalize_extent(dims)...}}) {}
 
-    [[nodiscard]] constexpr operator MdRef<T, Rank>() const noexcept {
-        return MdRef<T, Rank>(ArrayRef<T>(m_data, size()), m_extents);
+    [[nodiscard]] constexpr operator MdRef<T, Rank, Layout>() const noexcept {
+        return MdRef<T, Rank, Layout>(ArrayRef<T>(m_data, size()), m_extents);
     }
 
-    [[nodiscard]] constexpr MdRef<T, Rank> as_ref() const noexcept {
-        return static_cast<MdRef<T, Rank>>(*this);
+    [[nodiscard]] constexpr MdRef<T, Rank, Layout> as_ref() const noexcept {
+        return static_cast<MdRef<T, Rank, Layout>>(*this);
     }
 
     [[nodiscard]] constexpr MutStridedMdRef<T, Rank> strided() const noexcept;
 
     [[nodiscard]] static constexpr usize rank() noexcept { return Rank; }
+    [[nodiscard]] static constexpr bool is_row_major() noexcept { return IsSame<Layout, LayoutRight>; }
+    [[nodiscard]] static constexpr bool is_col_major() noexcept { return IsSame<Layout, LayoutLeft>; }
     [[nodiscard]] constexpr bool empty() const noexcept { return m_data == nullptr || m_extents[0] == 0; }
     [[nodiscard]] constexpr explicit operator bool() const noexcept { return !empty(); }
 
@@ -371,8 +436,14 @@ public:
         KEEL_BOUNDS_ASSERT(axis < Rank);
         if (empty()) return 0;
         usize s = 1;
-        for (usize d = axis + 1; d < Rank; ++d) {
-            s *= m_extents[d];
+        if constexpr (IsSame<Layout, LayoutRight>) {
+            for (usize d = axis + 1; d < Rank; ++d) {
+                s *= m_extents[d];
+            }
+        } else {
+            for (usize d = 0; d < axis; ++d) {
+                s *= m_extents[d];
+            }
         }
         return s;
     }
@@ -386,7 +457,7 @@ public:
     [[nodiscard]] constexpr T& at(Indices... idx) const noexcept {
         KEEL_BOUNDS_ASSERT(!empty());
         const StaticArray<usize, Rank> coords{{detail::normalize_extent(idx)...}};
-        return m_data[detail::compute_md_offset(m_extents, coords)];
+        return m_data[detail::compute_md_offset<Rank, Layout>(m_extents, coords)];
     }
 
     template <typename... Indices>
@@ -395,50 +466,69 @@ public:
         return at(idx...);
     }
 
-    [[nodiscard]] constexpr MutMdRef<T, Rank - 1> subview(usize i) const noexcept
+    [[nodiscard]] constexpr MutMdRef<T, Rank - 1, Layout> subview(usize i) const noexcept
         requires(Rank >= 2)
     {
-        KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[0]);
-        const usize outerStride = stride(0);
-        StaticArray<usize, Rank - 1> subShape{};
-        for (usize d = 1; d < Rank; ++d) {
-            subShape[d - 1] = m_extents[d];
+        if constexpr (IsSame<Layout, LayoutRight>) {
+            KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[0]);
+            const usize outerStride = stride(0);
+            StaticArray<usize, Rank - 1> subShape{};
+            for (usize d = 1; d < Rank; ++d) {
+                subShape[d - 1] = m_extents[d];
+            }
+            return MutMdRef<T, Rank - 1, Layout>(MutArrayRef<T>(m_data + i * outerStride, outerStride), subShape);
+        } else {
+            constexpr usize kOuter = Rank - 1;
+            KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[kOuter]);
+            const usize outerStride = stride(kOuter);
+            StaticArray<usize, Rank - 1> subShape{};
+            for (usize d = 0; d < kOuter; ++d) {
+                subShape[d] = m_extents[d];
+            }
+            return MutMdRef<T, Rank - 1, Layout>(MutArrayRef<T>(m_data + i * outerStride, outerStride), subShape);
         }
-        return MutMdRef<T, Rank - 1>(MutArrayRef<T>(m_data + i * outerStride, outerStride), subShape);
     }
 
     [[nodiscard]] constexpr MutArrayRef<T> row(usize i) const noexcept
-        requires(Rank == 2)
+        requires(Rank == 2 && IsSame<Layout, LayoutRight>)
     {
         KEEL_BOUNDS_ASSERT(!empty() && i < m_extents[0]);
         return MutArrayRef<T>(m_data + i * m_extents[1], m_extents[1]);
     }
 
-    [[nodiscard]] constexpr MutMdRef<T, Rank> slice(usize start, usize count = kInvalidIndex) const noexcept {
+    [[nodiscard]] constexpr MutArrayRef<T> col(usize j) const noexcept
+        requires(Rank == 2 && IsSame<Layout, LayoutLeft>)
+    {
+        KEEL_BOUNDS_ASSERT(!empty() && j < m_extents[1]);
+        return MutArrayRef<T>(m_data + j * m_extents[0], m_extents[0]);
+    }
+
+    [[nodiscard]] constexpr MutMdRef<T, Rank, Layout> slice(usize start, usize count = kInvalidIndex) const noexcept {
         if (empty()) return {};
-        KEEL_BOUNDS_ASSERT(start <= m_extents[0]);
-        const usize rem = m_extents[0] - start;
+        constexpr usize kOuter = IsSame<Layout, LayoutRight> ? 0 : (Rank - 1);
+        KEEL_BOUNDS_ASSERT(start <= m_extents[kOuter]);
+        const usize rem = m_extents[kOuter] - start;
         const usize len = (count > rem) ? rem : count;
         if (len == 0) return {};
-        const usize outerStride = stride(0);
+        const usize outerStride = stride(kOuter);
         StaticArray<usize, Rank> newShape = m_extents;
-        newShape[0] = len;
-        return MutMdRef<T, Rank>(MutArrayRef<T>(m_data + start * outerStride, len * outerStride), newShape);
+        newShape[kOuter] = len;
+        return MutMdRef<T, Rank, Layout>(MutArrayRef<T>(m_data + start * outerStride, len * outerStride), newShape);
     }
 
     template <usize NewRank>
-    [[nodiscard]] constexpr MutMdRef<T, NewRank> reshape(const StaticArray<usize, NewRank>& newShape) const noexcept {
+    [[nodiscard]] constexpr MutMdRef<T, NewRank, Layout> reshape(const StaticArray<usize, NewRank>& newShape) const noexcept {
         if (empty()) return {};
         usize newTotal = 0;
         if (!detail::compute_md_extents(newShape, newTotal) || newTotal != size()) {
             return {};
         }
-        return MutMdRef<T, NewRank>(flat(), newShape);
+        return MutMdRef<T, NewRank, Layout>(flat(), newShape);
     }
 
     template <typename... Extents>
         requires(sizeof...(Extents) >= 1) && (IsIntegral<RemoveCvRef<Extents>> && ...)
-    [[nodiscard]] constexpr MutMdRef<T, sizeof...(Extents)> reshape(Extents... dims) const noexcept {
+    [[nodiscard]] constexpr MutMdRef<T, sizeof...(Extents), Layout> reshape(Extents... dims) const noexcept {
         return reshape(StaticArray<usize, sizeof...(Extents)>{{detail::normalize_extent(dims)...}});
     }
 
@@ -459,14 +549,17 @@ template <typename T, usize Rank> class StridedMdRef {
     static_assert(Rank >= 1, "StridedMdRef requires Rank >= 1");
 
 public:
+    using ValueType = T;
+
     constexpr StridedMdRef() noexcept = default;
     constexpr StridedMdRef(decltype(nullptr)) noexcept {}
 
-    constexpr StridedMdRef(MdRef<T, Rank> contiguous) noexcept {
+    template <IsMdLayout Layout>
+    constexpr StridedMdRef(MdRef<T, Rank, Layout> contiguous) noexcept {
         if (!contiguous.empty()) {
             m_data = contiguous.data();
             m_extents = contiguous.shape();
-            m_strides = detail::compute_contiguous_strides(m_extents);
+            m_strides = detail::compute_contiguous_strides<Rank, Layout>(m_extents);
         }
     }
 
@@ -509,22 +602,33 @@ public:
         return total;
     }
 
+    template <IsMdLayout Layout = LayoutRight>
     [[nodiscard]] constexpr bool is_contiguous() const noexcept {
         if (empty()) return false;
         usize expected = 1;
-        for (usize idx = Rank; idx > 0; --idx) {
-            const usize d = idx - 1;
-            if (m_strides[d] != expected) {
-                return false;
+        if constexpr (IsSame<Layout, LayoutRight>) {
+            for (usize idx = Rank; idx > 0; --idx) {
+                const usize d = idx - 1;
+                if (m_strides[d] != expected) {
+                    return false;
+                }
+                expected *= m_extents[d];
             }
-            expected *= m_extents[d];
+        } else {
+            for (usize d = 0; d < Rank; ++d) {
+                if (m_strides[d] != expected) {
+                    return false;
+                }
+                expected *= m_extents[d];
+            }
         }
         return true;
     }
 
-    [[nodiscard]] constexpr MdRef<T, Rank> as_contiguous() const noexcept {
-        if (!is_contiguous()) return {};
-        return MdRef<T, Rank>(ArrayRef<T>(m_data, size()), m_extents);
+    template <IsMdLayout Layout = LayoutRight>
+    [[nodiscard]] constexpr MdRef<T, Rank, Layout> as_contiguous() const noexcept {
+        if (!is_contiguous<Layout>()) return {};
+        return MdRef<T, Rank, Layout>(ArrayRef<T>(m_data, size()), m_extents);
     }
 
     template <typename... Indices>
@@ -641,14 +745,17 @@ template <typename T, usize Rank> class MutStridedMdRef {
     static_assert(Rank >= 1, "MutStridedMdRef requires Rank >= 1");
 
 public:
+    using ValueType = T;
+
     constexpr MutStridedMdRef() noexcept = default;
     constexpr MutStridedMdRef(decltype(nullptr)) noexcept {}
 
-    constexpr MutStridedMdRef(MutMdRef<T, Rank> contiguous) noexcept {
+    template <IsMdLayout Layout>
+    constexpr MutStridedMdRef(MutMdRef<T, Rank, Layout> contiguous) noexcept {
         if (!contiguous.empty()) {
             m_data = contiguous.data();
             m_extents = contiguous.shape();
-            m_strides = detail::compute_contiguous_strides(m_extents);
+            m_strides = detail::compute_contiguous_strides<Rank, Layout>(m_extents);
         }
     }
 
@@ -699,22 +806,33 @@ public:
         return total;
     }
 
+    template <IsMdLayout Layout = LayoutRight>
     [[nodiscard]] constexpr bool is_contiguous() const noexcept {
         if (empty()) return false;
         usize expected = 1;
-        for (usize idx = Rank; idx > 0; --idx) {
-            const usize d = idx - 1;
-            if (m_strides[d] != expected) {
-                return false;
+        if constexpr (IsSame<Layout, LayoutRight>) {
+            for (usize idx = Rank; idx > 0; --idx) {
+                const usize d = idx - 1;
+                if (m_strides[d] != expected) {
+                    return false;
+                }
+                expected *= m_extents[d];
             }
-            expected *= m_extents[d];
+        } else {
+            for (usize d = 0; d < Rank; ++d) {
+                if (m_strides[d] != expected) {
+                    return false;
+                }
+                expected *= m_extents[d];
+            }
         }
         return true;
     }
 
-    [[nodiscard]] constexpr MutMdRef<T, Rank> as_contiguous() const noexcept {
-        if (!is_contiguous()) return {};
-        return MutMdRef<T, Rank>(MutArrayRef<T>(m_data, size()), m_extents);
+    template <IsMdLayout Layout = LayoutRight>
+    [[nodiscard]] constexpr MutMdRef<T, Rank, Layout> as_contiguous() const noexcept {
+        if (!is_contiguous<Layout>()) return {};
+        return MutMdRef<T, Rank, Layout>(MutArrayRef<T>(m_data, size()), m_extents);
     }
 
     template <typename... Indices>
@@ -829,13 +947,13 @@ private:
     StaticArray<usize, Rank> m_strides{};
 };
 
-template <typename T, usize Rank>
-constexpr StridedMdRef<T, Rank> MdRef<T, Rank>::strided() const noexcept {
+template <typename T, usize Rank, IsMdLayout Layout>
+constexpr StridedMdRef<T, Rank> MdRef<T, Rank, Layout>::strided() const noexcept {
     return StridedMdRef<T, Rank>(*this);
 }
 
-template <typename T, usize Rank>
-constexpr MutStridedMdRef<T, Rank> MutMdRef<T, Rank>::strided() const noexcept {
+template <typename T, usize Rank, IsMdLayout Layout>
+constexpr MutStridedMdRef<T, Rank> MutMdRef<T, Rank, Layout>::strided() const noexcept {
     return MutStridedMdRef<T, Rank>(*this);
 }
 
