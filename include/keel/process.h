@@ -47,4 +47,7 @@ struct ProcessOutput {
 // Returns the current process resident set size (physical RAM in bytes), or 0 if unavailable.
 [[nodiscard]] u64 process_rss_bytes() noexcept;
 
+// Returns cumulative user + kernel CPU time consumed by the current process in nanoseconds, or 0 if unavailable.
+[[nodiscard]] u64 process_cpu_time_ns() noexcept;
+
 } // namespace keel

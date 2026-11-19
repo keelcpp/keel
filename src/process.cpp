@@ -7,6 +7,8 @@
 
 #if defined(__EMSCRIPTEN__)
 
+#include <malloc.h>
+
 namespace keel {
 
 Result<ProcessOutput> process_run(ArrayRef<StringRef> /*argv*/, const ProcessOptions& /*opts*/, Allocator* /*alloc*/) {
@@ -19,7 +21,15 @@ Result<ProcessOutput> process_run_shell(StringRef /*command*/, const ProcessOpti
 
 Optional<String> process_which(StringRef /*program*/, Allocator* /*alloc*/) { return kNullOpt; }
 
-u64 process_rss_bytes() noexcept { return 0; }
+u64 process_rss_bytes() noexcept {
+    const struct mallinfo mi = mallinfo();
+    if (mi.uordblks > 0) {
+        return static_cast<u64>(static_cast<u32>(mi.uordblks));
+    }
+    return static_cast<u64>(__builtin_wasm_memory_size(0)) * 65536ULL;
+}
+
+u64 process_cpu_time_ns() noexcept { return 0; }
 
 } // namespace keel
 
@@ -396,6 +406,19 @@ u64 process_rss_bytes() noexcept {
     return 0;
 }
 
+u64 process_cpu_time_ns() noexcept {
+    FILETIME creation{}, exit_t{}, kernel{}, user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit_t, &kernel, &user)) {
+        return 0;
+    }
+    ULARGE_INTEGER k{}, u{};
+    k.LowPart = kernel.dwLowDateTime;
+    k.HighPart = kernel.dwHighDateTime;
+    u.LowPart = user.dwLowDateTime;
+    u.HighPart = user.dwHighDateTime;
+    return static_cast<u64>(k.QuadPart + u.QuadPart) * 100ULL;
+}
+
 } // namespace keel
 
 #else // POSIX
@@ -406,6 +429,7 @@ u64 process_rss_bytes() noexcept {
 #include <poll.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -716,6 +740,17 @@ u64 process_rss_bytes() noexcept {
 #else
     return 0;
 #endif
+}
+
+u64 process_cpu_time_ns() noexcept {
+    struct timespec ts {};
+    if (::clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0) {
+        return 0;
+    }
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0) {
+        return 0;
+    }
+    return static_cast<u64>(ts.tv_sec) * 1000000000ULL + static_cast<u64>(ts.tv_nsec);
 }
 
 } // namespace keel

@@ -15,11 +15,22 @@
 #include <malloc.h>
 #include <windows.h>
 #elif !defined(__EMSCRIPTEN__)
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
 
 namespace keel {
+
+void memory_trim() noexcept {
+#if defined(_WIN32)
+    (void)_heapmin();
+#elif defined(__GLIBC__)
+    (void)::malloc_trim(0);
+#endif
+}
 
 void mem_copy(void* dst, const void* src, usize bytes) noexcept {
     if (bytes > 0) {

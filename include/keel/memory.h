@@ -127,6 +127,9 @@ struct Allocator {
 [[nodiscard]] Allocator* default_allocator() noexcept;
 void set_default_allocator(Allocator* alloc) noexcept;
 
+// Hints the OS heap allocator to release unused free memory pages back to the system.
+void memory_trim() noexcept;
+
 // Raw memory primitives without <cstring> in public headers
 void mem_copy(void* dst, const void* src, usize bytes) noexcept;
 void mem_move(void* dst, const void* src, usize bytes) noexcept;

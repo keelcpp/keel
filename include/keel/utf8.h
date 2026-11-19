@@ -6,6 +6,25 @@ namespace keel {
 
 inline constexpr u32 kReplacementChar = 0xFFFDu;
 
+// Locale-independent, UB-free ASCII character classification and case folding.
+[[nodiscard]] constexpr bool is_ascii_digit(char c) noexcept { return c >= '0' && c <= '9'; }
+[[nodiscard]] constexpr bool is_ascii_hex_digit(char c) noexcept {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+[[nodiscard]] constexpr bool is_ascii_upper(char c) noexcept { return c >= 'A' && c <= 'Z'; }
+[[nodiscard]] constexpr bool is_ascii_lower(char c) noexcept { return c >= 'a' && c <= 'z'; }
+[[nodiscard]] constexpr bool is_ascii_alpha(char c) noexcept { return is_ascii_upper(c) || is_ascii_lower(c); }
+[[nodiscard]] constexpr bool is_ascii_alnum(char c) noexcept { return is_ascii_alpha(c) || is_ascii_digit(c); }
+[[nodiscard]] constexpr bool is_ascii_space(char c) noexcept {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+[[nodiscard]] constexpr char to_ascii_lower(char c) noexcept {
+    return is_ascii_upper(c) ? static_cast<char>(c + ('a' - 'A')) : c;
+}
+[[nodiscard]] constexpr char to_ascii_upper(char c) noexcept {
+    return is_ascii_lower(c) ? static_cast<char>(c - ('a' - 'A')) : c;
+}
+
 // Returns true if `str` is valid UTF-8 (no overlong encodings, surrogates, or out-of-range codepoints).
 [[nodiscard]] bool utf8_validate(StringRef str) noexcept;
 

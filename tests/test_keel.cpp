@@ -2090,6 +2090,64 @@ void test_md_ref_layouts() {
     static_assert(kCol.strided().transpose().as_contiguous<LayoutRight>()(2, 1) == 6);
 }
 
+void test_process_time_memory_trim_and_ascii() {
+    // 1. process_cpu_time_ns() should be monotonic and non-zero on native desktop OSes
+    const u64 cpu0 = process_cpu_time_ns();
+    volatile u64 sink = 0;
+    for (u64 i = 0; i < 200000ULL; ++i) {
+        sink += i * 3ULL;
+    }
+    (void)sink;
+    const u64 cpu1 = process_cpu_time_ns();
+#if defined(__EMSCRIPTEN__)
+    TEST_CHECK(cpu0 == 0 && cpu1 == 0);
+#else
+    TEST_CHECK(cpu1 >= cpu0 && cpu1 > 0);
+#endif
+
+    // 2. memory_trim() should be safe to call before and after heap allocations
+    {
+        Array<u8> tmp;
+        tmp.resize(1024u * 1024u);
+    }
+    memory_trim();
+
+    // 3. wall_clock_ns(), local_time(), utc_time()
+    const i64 wall_ns = wall_clock_ns();
+    TEST_CHECK(wall_ns > 1577836800000000000LL); // After 2020-01-01 UTC
+    TEST_CHECK(wall_clock_sec() == wall_ns / 1000000000LL || wall_clock_sec() >= 1577836800LL);
+
+    const CalendarTime loc = local_time();
+    TEST_CHECK(loc.year >= 2020 && loc.year <= 2200);
+    TEST_CHECK(loc.month >= 1 && loc.month <= 12);
+    TEST_CHECK(loc.day >= 1 && loc.day <= 31);
+    TEST_CHECK(loc.hour >= 0 && loc.hour <= 23);
+    TEST_CHECK(loc.minute >= 0 && loc.minute <= 59);
+    TEST_CHECK(loc.second >= 0 && loc.second <= 59);
+    TEST_CHECK(loc.millisecond >= 0 && loc.millisecond <= 999);
+    TEST_CHECK(loc.day_of_week >= 0 && loc.day_of_week <= 6);
+    TEST_CHECK(loc.day_of_year >= 1 && loc.day_of_year <= 366);
+
+    const CalendarTime utc = utc_time();
+    TEST_CHECK(utc.year >= 2020 && utc.year <= 2200);
+    TEST_CHECK(utc.month >= 1 && utc.month <= 12);
+    TEST_CHECK(utc.day >= 1 && utc.day <= 31);
+    TEST_CHECK(utc.day_of_week >= 0 && utc.day_of_week <= 6);
+    TEST_CHECK(utc.day_of_year >= 1 && utc.day_of_year <= 366);
+
+    // 4. Constexpr ASCII helpers (including negative char safety)
+    static_assert(is_ascii_digit('0') && is_ascii_digit('9') && !is_ascii_digit('a'));
+    static_assert(is_ascii_hex_digit('a') && is_ascii_hex_digit('F') && !is_ascii_hex_digit('g'));
+    static_assert(is_ascii_upper('A') && !is_ascii_upper('a'));
+    static_assert(is_ascii_lower('z') && !is_ascii_lower('Z'));
+    static_assert(is_ascii_alpha('M') && is_ascii_alpha('m') && !is_ascii_alpha('5'));
+    static_assert(is_ascii_alnum('9') && is_ascii_alnum('K') && !is_ascii_alnum('_'));
+    static_assert(is_ascii_space(' ') && is_ascii_space('\t') && is_ascii_space('\n') && !is_ascii_space('x'));
+    static_assert(!is_ascii_digit(static_cast<char>(-1)) && !is_ascii_alpha(static_cast<char>(-128)));
+    static_assert(to_ascii_lower('A') == 'a' && to_ascii_lower('z') == 'z' && to_ascii_lower('7') == '7');
+    static_assert(to_ascii_upper('a') == 'A' && to_ascii_upper('Z') == 'Z' && to_ascii_upper('!') == '!');
+}
+
 } // namespace
 
 int main() {
@@ -2111,6 +2169,7 @@ int main() {
     test_stage0_fs_thread_pool_and_array_init();
     test_env_process_and_dynlib();
     test_md_ref_layouts();
+    test_process_time_memory_trim_and_ascii();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;
