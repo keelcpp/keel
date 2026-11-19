@@ -13,6 +13,7 @@ if(KEEL_UNITY_BUILD)
 else()
     set(KEEL_SOURCES
         src/core.cpp
+        src/math.cpp
         src/complex.cpp
         src/memory.cpp
         src/utf8.cpp

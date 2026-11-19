@@ -1394,11 +1394,96 @@ void test_math() {
     static_assert(floor_i32(-0.1f) == -1 && floor_i32(2.9f) == 2);
     static_assert(ceil_i32(0.1f) == 1 && ceil_i32(-2.9f) == -2);
 
-    // 5. Interpolation
+    // 5. IEEE-754 signbit, copysign, fmin, fmax, trunc, floor, ceil, round, fract, is_integer (constexpr + runtime)
+    constexpr f32 kPredHalfF = __builtin_bit_cast(f32, 0x3EFFFFFFu); // 0.49999997f
+    static_assert(!keel::signbit(0.0f) && keel::signbit(-0.0f));
+    static_assert(!keel::signbit(0.0) && keel::signbit(-0.0));
+    static_assert(keel::signbit(keel::copysign(1.0f, -0.0f)) && !keel::signbit(keel::copysign(-1.0f, 0.0f)));
+    static_assert(keel::signbit(keel::copysign(1.0, -0.0)) && !keel::signbit(keel::copysign(-1.0, 0.0)));
+    static_assert(keel::fmin(2.0f, 5.0f) == 2.0f && keel::fmax(2.0f, 5.0f) == 5.0f);
+    static_assert(keel::fmin(Limits<f64>::quiet_nan(), 3.0) == 3.0 && keel::fmax(3.0, Limits<f64>::quiet_nan()) == 3.0);
+    static_assert(keel::signbit(keel::fmin(-0.0, 0.0)) && !keel::signbit(keel::fmax(-0.0, 0.0)));
+
+    static_assert(keel::trunc(2.9f) == 2.0f && keel::trunc(-2.9f) == -2.0f);
+    static_assert(keel::signbit(keel::trunc(-0.5f)) && keel::trunc(-0.5f) == 0.0f);
+    static_assert(keel::trunc(2.9) == 2.0 && keel::trunc(-2.9) == -2.0);
+    static_assert(keel::signbit(keel::trunc(-0.5)) && keel::trunc(-0.5) == 0.0);
+    static_assert(keel::trunc(1e20) == 1e20 && keel::is_inf(keel::trunc(Limits<f64>::infinity())));
+    static_assert(keel::is_nan(keel::trunc(Limits<f64>::quiet_nan())));
+
+    static_assert(keel::floor(2.9f) == 2.0f && keel::floor(-2.1f) == -3.0f && keel::floor(-2.0f) == -2.0f);
+    static_assert(keel::signbit(keel::floor(-0.0f)) && keel::floor(-0.5f) == -1.0f);
+    static_assert(keel::floor(2.9) == 2.0 && keel::floor(-2.1) == -3.0 && keel::floor(1e20) == 1e20);
+    static_assert(keel::ceil(2.1f) == 3.0f && keel::ceil(-2.9f) == -2.0f);
+    static_assert(keel::signbit(keel::ceil(-0.5f)) && keel::ceil(-0.5f) == 0.0f);
+    static_assert(keel::ceil(2.1) == 3.0 && keel::ceil(-2.9) == -2.0 && keel::ceil(1e20) == 1e20);
+
+    static_assert(keel::round(kPredHalfF) == 0.0f && keel::round(-kPredHalfF) == 0.0f && keel::signbit(keel::round(-kPredHalfF)));
+    static_assert(keel::round(kPredHalf) == 0.0 && keel::round(-kPredHalf) == 0.0 && keel::signbit(keel::round(-kPredHalf)));
+    static_assert(keel::round(0.5f) == 1.0f && keel::round(-0.5f) == -1.0f);
+    static_assert(keel::round(2.5) == 3.0 && keel::round(-2.5) == -3.0);
+    static_assert(approx_eq(keel::fract(3.25), 0.25, 1e-15) && approx_eq(keel::fract(-0.25), 0.75, 1e-15));
+    static_assert(keel::is_integer(0.0) && keel::is_integer(-42.0) && keel::is_integer(1e20));
+    static_assert(!keel::is_integer(1.5) && !keel::is_integer(Limits<f64>::infinity()) && !keel::is_integer(Limits<f64>::quiet_nan()));
+    static_assert(keel::is_integer(1e10f) && !keel::is_integer(1.25f));
+
+    // Runtime verification of rounding (exercises hardware-builtin branch on GCC/Clang)
+    volatile f64 rv_neg = -2.3;
+    volatile f64 rv_big = 1e20;
+    volatile f32 rvf = -0.5f;
+    TEST_CHECK(keel::floor(rv_neg) == -3.0 && keel::ceil(rv_neg) == -2.0 && keel::trunc(rv_neg) == -2.0);
+    TEST_CHECK(keel::round(rv_neg) == -2.0 && keel::floor(rv_big) == 1e20 && keel::is_integer(rv_big));
+    TEST_CHECK(!keel::is_integer(rv_neg) && keel::floor(rvf) == -1.0f && keel::ceil(rvf) == 0.0f && keel::signbit(keel::ceil(rvf)));
+    TEST_CHECK(keel::fmin(rv_neg, 1.0) == rv_neg && keel::fmax(rv_neg, 1.0) == 1.0);
+
+    // 6. Elementary scalar math (f32 / f64, symmetric with complex.h)
+    TEST_CHECK(approx_eq(keel::sqrt(9.0f), 3.0f, 1e-6f) && approx_eq(keel::sqrt(9.0), 3.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::cbrt(27.0f), 3.0f, 1e-5f) && approx_eq(keel::cbrt(-27.0), -3.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::hypot(3.0f, 4.0f), 5.0f, 1e-6f) && approx_eq(keel::hypot(3.0, 4.0), 5.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::pow(2.0f, 10.0f), 1024.0f, 1e-4f) && approx_eq(keel::pow(2.0, 10.0), 1024.0, 1e-12));
+    TEST_CHECK(approx_eq(keel::fma(2.0f, 3.0f, 4.0f), 10.0f, 1e-6f) && approx_eq(keel::fma(2.0, 3.0, 4.0), 10.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::fmod(5.5f, 2.0f), 1.5f, 1e-6f) && approx_eq(keel::fmod(5.5, 2.0), 1.5, 1e-14));
+    TEST_CHECK(approx_eq(keel::remainder(5.5f, 2.0f), -0.5f, 1e-6f) && approx_eq(keel::remainder(5.5, 2.0), -0.5, 1e-14));
+
+    TEST_CHECK(approx_eq(keel::exp(1.0f), kEF, 1e-5f) && approx_eq(keel::exp(1.0), kE, 1e-14));
+    TEST_CHECK(approx_eq(keel::exp2(8.0f), 256.0f, 1e-4f) && approx_eq(keel::exp2(8.0), 256.0, 1e-12));
+    TEST_CHECK(approx_eq(keel::expm1(0.0), 0.0, 1e-15) && approx_eq(keel::expm1(1e-7f), 1e-7f, 1e-12f));
+    TEST_CHECK(approx_eq(keel::log(kEF), 1.0f, 1e-5f) && approx_eq(keel::log(kE), 1.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::log2(256.0f), 8.0f, 1e-5f) && approx_eq(keel::log2(256.0), 8.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::log10(1000.0f), 3.0f, 1e-5f) && approx_eq(keel::log10(1000.0), 3.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::log1p(0.0), 0.0, 1e-15) && approx_eq(keel::log1p(1e-7f), 1e-7f, 1e-12f));
+
+    TEST_CHECK(approx_eq(keel::sin(kHalfPiF), 1.0f, 1e-6f) && approx_eq(keel::sin(kHalfPi), 1.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::cos(kPiF), -1.0f, 1e-6f) && approx_eq(keel::cos(kPi), -1.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::tan(kPiF * 0.25f), 1.0f, 1e-5f) && approx_eq(keel::tan(kPi * 0.25), 1.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::asin(1.0f), kHalfPiF, 1e-5f) && approx_eq(keel::asin(1.0), kHalfPi, 1e-14));
+    TEST_CHECK(approx_eq(keel::acos(-1.0f), kPiF, 1e-5f) && approx_eq(keel::acos(-1.0), kPi, 1e-14));
+    TEST_CHECK(approx_eq(keel::atan(1.0f), kPiF * 0.25f, 1e-5f) && approx_eq(keel::atan(1.0), kPi * 0.25, 1e-14));
+    TEST_CHECK(approx_eq(keel::atan2(1.0f, 1.0f), kPiF * 0.25f, 1e-5f) && approx_eq(keel::atan2(1.0, -1.0), 3.0 * kPi * 0.25, 1e-14));
+
+    TEST_CHECK(approx_eq(keel::sinh(0.0f), 0.0f, 1e-6f) && approx_eq(keel::cosh(0.0), 1.0, 1e-14));
+    TEST_CHECK(approx_eq(keel::tanh(0.0), 0.0, 1e-14) && approx_eq(keel::asinh(keel::sinh(1.2)), 1.2, 1e-14));
+    TEST_CHECK(approx_eq(keel::acosh(keel::cosh(1.5f)), 1.5f, 1e-5f) && approx_eq(keel::atanh(keel::tanh(0.5)), 0.5, 1e-14));
+
+    i32 exp_f = 0;
+    i32 exp_d = 0;
+    const f32 mf = keel::frexp(12.0f, &exp_f);
+    const f64 md = keel::frexp(12.0, &exp_d);
+    TEST_CHECK(approx_eq(mf, 0.75f, 1e-6f) && exp_f == 4 && approx_eq(keel::ldexp(mf, exp_f), 12.0f, 1e-6f));
+    TEST_CHECK(approx_eq(md, 0.75, 1e-14) && exp_d == 4 && approx_eq(keel::ldexp(md, exp_d), 12.0, 1e-14));
+    f32 ipf = 0.0f;
+    f64 ipd = 0.0;
+    TEST_CHECK(approx_eq(keel::modf(3.75f, &ipf), 0.75f, 1e-6f) && ipf == 3.0f);
+    TEST_CHECK(approx_eq(keel::modf(-3.75, &ipd), -0.75, 1e-14) && ipd == -3.0);
+
+    // 7. Interpolation & smoothstep
     static_assert(approx_eq(lerp(10.0f, 20.0f, 0.25f), 12.5f));
     static_assert(approx_eq(inverse_lerp(10.0f, 20.0f, 15.0f), 0.5f));
     static_assert(inverse_lerp(5.0f, 5.0f, 5.0f) == 0.0f);
     static_assert(approx_eq(remap(5.0f, 0.0f, 10.0f, 100.0f, 200.0f), 150.0f));
+    static_assert(smoothstep(0.0f, 1.0f, -1.0f) == 0.0f && smoothstep(0.0f, 1.0f, 2.0f) == 1.0f);
+    static_assert(approx_eq(smoothstep(0.0, 10.0, 5.0), 0.5, 1e-15));
+    static_assert(smoothstep(2.0f, 2.0f, 1.0f) == 0.0f && smoothstep(2.0f, 2.0f, 2.0f) == 1.0f);
     TEST_CHECK(round_i32(123.6f) == 124 && floor_i64(-4.01) == -5 && ceil_i64(4.01) == 5);
 }
 
