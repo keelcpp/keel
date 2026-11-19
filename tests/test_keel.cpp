@@ -1786,6 +1786,138 @@ void test_stage0_fs_thread_pool_and_array_init() {
     TEST_CHECK(pf_buf[0] == 0u && pf_buf[4095] == 8190u);
 }
 
+void test_env_process_and_dynlib() {
+    // 1. Environment variables (env_get / env_get_or_empty / env_has / env_set / env_unset)
+    const char* kKey = "KEEL_TEST_ENV_VAR_9F3A";
+    TEST_CHECK(env_unset(kKey).is_ok());
+    TEST_CHECK(!env_has(kKey));
+    TEST_CHECK(!env_get(kKey).has_value());
+    TEST_CHECK(env_get_or_empty(kKey).empty());
+
+    // Invalid names rejected
+    TEST_CHECK(env_set("", "x").code == ErrorCode::InvalidArgument);
+    TEST_CHECK(env_set("BAD=NAME", "x").code == ErrorCode::InvalidArgument);
+    TEST_CHECK(env_unset("").code == ErrorCode::InvalidArgument);
+    TEST_CHECK(env_unset("BAD=NAME").code == ErrorCode::InvalidArgument);
+
+    // Non-empty value with custom allocator tracking
+    CountingUpstream env_stats{};
+    Allocator env_alloc = env_stats.make_allocator();
+    {
+        TEST_CHECK(env_set(kKey, "hello_keel_42").is_ok());
+        TEST_CHECK(env_has(kKey));
+        Optional<String> v = env_get(kKey, &env_alloc);
+        TEST_CHECK(v.has_value() && *v == "hello_keel_42");
+        String v2 = env_get_or_empty(kKey, &env_alloc);
+        TEST_CHECK(v2 == "hello_keel_42");
+
+        // Distinguish explicitly empty value "" from unset (kNullOpt)
+        TEST_CHECK(env_set(kKey, "").is_ok());
+        TEST_CHECK(env_has(kKey));
+        Optional<String> empty_v = env_get(kKey, &env_alloc);
+        TEST_CHECK(empty_v.has_value() && empty_v->empty());
+
+        TEST_CHECK(env_unset(kKey).is_ok());
+        TEST_CHECK(!env_has(kKey));
+        TEST_CHECK(!env_get(kKey, &env_alloc).has_value());
+    }
+    TEST_CHECK(env_stats.live_blocks == 0 && env_stats.live_bytes == 0);
+
+    // 2. Process execution (process_which / process_run / process_run_shell)
+#if !defined(__EMSCRIPTEN__)
+#if defined(_WIN32)
+    TEST_CHECK(process_which("cmd").has_value());
+#else
+    Optional<String> sh_path = process_which("sh");
+    TEST_CHECK(sh_path.has_value() && !sh_path->empty());
+    TEST_CHECK(!process_which("keel_definitely_nonexistent_cmd_987654").has_value());
+    TEST_CHECK(!process_which("-v").has_value());
+    TEST_CHECK(!process_which("").has_value());
+
+    // Direct argv execution without shell (spaces & metacharacters stay literal)
+    {
+        const StringRef argv[] = {"/bin/sh", "-c", "printf '%s' \"$1\"", "sh", "a b; echo injected"};
+        Result<ProcessOutput> r = process_run(ArrayRef<StringRef>(argv, 5));
+        TEST_CHECK(r.is_ok() && r->ok());
+        TEST_CHECK(r->stdout_text == "a b; echo injected");
+        TEST_CHECK(r->stderr_text.empty());
+    }
+
+    // Separate stdout vs stderr capture, plus merge_stderr
+    {
+        Result<ProcessOutput> sep = process_run_shell("printf out_msg; printf err_msg >&2");
+        TEST_CHECK(sep.is_ok() && sep->ok());
+        TEST_CHECK(sep->stdout_text == "out_msg");
+        TEST_CHECK(sep->stderr_text == "err_msg");
+
+        ProcessOptions merged_opts;
+        merged_opts.merge_stderr = true;
+        Result<ProcessOutput> mrg = process_run_shell("printf out_msg; printf err_msg >&2", merged_opts);
+        TEST_CHECK(mrg.is_ok() && mrg->ok());
+        TEST_CHECK(mrg->stdout_text.contains("out_msg"));
+        TEST_CHECK(mrg->stdout_text.contains("err_msg"));
+        TEST_CHECK(mrg->stderr_text.empty());
+    }
+
+    // Non-zero exit code + child env override + cwd + max_output_bytes cap
+    {
+        const ProcessEnvVar child_env[] = {{"KEEL_CHILD_ONLY_VAR", "child_val_77"}};
+        ProcessOptions opts;
+        opts.env = ArrayRef<ProcessEnvVar>(child_env, 1);
+        opts.cwd = "/tmp";
+        Result<ProcessOutput> r = process_run_shell("printf '%s|%s' \"$KEEL_CHILD_ONLY_VAR\" \"$(pwd -P)\"; exit 7", opts);
+        TEST_CHECK(r.is_ok() && !r->ok() && r->exit_code == 7);
+        TEST_CHECK(r->stdout_text.starts_with("child_val_77|"));
+        TEST_CHECK(!env_has("KEEL_CHILD_ONLY_VAR")); // Parent env untouched
+
+        ProcessOptions cap_opts;
+        cap_opts.max_output_bytes = 5;
+        Result<ProcessOutput> capped = process_run_shell("printf '0123456789abcdef'", cap_opts);
+        TEST_CHECK(capped.is_ok() && capped->ok());
+        TEST_CHECK(capped->stdout_text == "01234");
+    }
+
+    // Nonexistent program returns NotFound error
+    {
+        const StringRef bad_argv[] = {"keel_definitely_nonexistent_binary_987654"};
+        Result<ProcessOutput> r = process_run(ArrayRef<StringRef>(bad_argv, 1));
+        TEST_CHECK(r.is_err() && r.error().code == ErrorCode::NotFound);
+    }
+#endif
+
+    // 3. DynLib (dlopen / LoadLibraryW wrapper)
+    TEST_CHECK(!dynlib_extension().empty());
+    {
+        String err_msg;
+        Result<DynLib> empty_res = DynLib::open("", DynLibFlags::Local, &err_msg);
+        TEST_CHECK(empty_res.is_err() && empty_res.error().code == ErrorCode::InvalidArgument);
+        TEST_CHECK(!err_msg.empty());
+
+        err_msg.clear();
+        Result<DynLib> bad_res = DynLib::open("/nonexistent/keel_missing_lib_987654.so", DynLibFlags::Local, &err_msg);
+        TEST_CHECK(bad_res.is_err() && !err_msg.empty());
+
+#if defined(__linux__)
+        Result<DynLib> libm = DynLib::open("libm.so.6", DynLibFlags::Local | DynLibFlags::Lazy);
+        TEST_CHECK(libm.is_ok() && libm->is_open());
+        using CosFn = double (*)(double);
+        CosFn cos_fn = libm->symbol<CosFn>("cos");
+        TEST_CHECK(cos_fn != nullptr);
+        if (cos_fn) {
+            TEST_CHECK(cos_fn(0.0) == 1.0);
+        }
+        TEST_CHECK(libm->symbol_raw("keel_nonexistent_sym_987654") == nullptr);
+
+        // Move semantics & close
+        DynLib moved = keel::move(*libm);
+        TEST_CHECK(!libm->is_open() && moved.is_open());
+        moved.close();
+        TEST_CHECK(!moved.is_open());
+#endif
+    }
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -1805,6 +1937,7 @@ int main() {
     test_step0_memory_and_arena_spillover();
     test_step0_checked_sat_and_endian();
     test_stage0_fs_thread_pool_and_array_init();
+    test_env_process_and_dynlib();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

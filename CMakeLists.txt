@@ -20,6 +20,9 @@ else()
         src/format.cpp
         src/io.cpp
         src/fs.cpp
+        src/env.cpp
+        src/process.cpp
+        src/dynlib.cpp
         src/thread_pool.cpp
         src/time.cpp
     )
@@ -31,7 +34,7 @@ add_library(keel::keel ALIAS keel)
 if(NOT WIN32 AND NOT EMSCRIPTEN)
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
-    target_link_libraries(keel PUBLIC Threads::Threads)
+    target_link_libraries(keel PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 
 target_compile_features(keel PUBLIC cxx_std_20)

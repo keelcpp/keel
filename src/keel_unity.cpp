@@ -7,5 +7,8 @@
 #include "format.cpp"
 #include "io.cpp"
 #include "fs.cpp"
+#include "env.cpp"
+#include "process.cpp"
+#include "dynlib.cpp"
 #include "thread_pool.cpp"
 #include "time.cpp"
