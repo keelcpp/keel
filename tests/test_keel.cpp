@@ -2000,6 +2000,16 @@ void test_env_process_and_dynlib() {
         TEST_CHECK(!moved.is_open());
 #endif
     }
+
+    // 4. process_rss_bytes()
+    {
+        const u64 rss = process_rss_bytes();
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+        TEST_CHECK(rss > 0 && rss < (1ULL << 44));
+#else
+        (void)rss;
+#endif
+    }
 #endif
 }
 

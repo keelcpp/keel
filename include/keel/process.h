@@ -44,4 +44,7 @@ struct ProcessOutput {
 // Searches PATH (and PATHEXT on Win32) for an executable `program` without spawning a shell.
 [[nodiscard]] Optional<String> process_which(StringRef program, Allocator* alloc = nullptr);
 
+// Returns the current process resident set size (physical RAM in bytes), or 0 if unavailable.
+[[nodiscard]] u64 process_rss_bytes() noexcept;
+
 } // namespace keel

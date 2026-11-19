@@ -1,6 +1,7 @@
 #include "keel/process.h"
 #include "keel/env.h"
 #include "keel/fs.h"
+#include "keel/number.h"
 #include "keel/small_array.h"
 #include "keel/utf8.h"
 
@@ -18,6 +19,8 @@ Result<ProcessOutput> process_run_shell(StringRef /*command*/, const ProcessOpti
 
 Optional<String> process_which(StringRef /*program*/, Allocator* /*alloc*/) { return kNullOpt; }
 
+u64 process_rss_bytes() noexcept { return 0; }
+
 } // namespace keel
 
 #elif defined(_WIN32)
@@ -28,7 +31,11 @@ Optional<String> process_which(StringRef /*program*/, Allocator* /*alloc*/) { re
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifndef PSAPI_VERSION
+#define PSAPI_VERSION 2
+#endif
 #include <windows.h>
+#include <psapi.h>
 
 namespace keel {
 
@@ -380,6 +387,15 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
     return kNullOpt;
 }
 
+u64 process_rss_bytes() noexcept {
+    PROCESS_MEMORY_COUNTERS pmc{};
+    pmc.cb = sizeof(pmc);
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        return static_cast<u64>(pmc.WorkingSetSize);
+    }
+    return 0;
+}
+
 } // namespace keel
 
 #else // POSIX
@@ -391,6 +407,9 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
 
 namespace keel {
 
@@ -658,6 +677,45 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
         pos = sep + 1;
     }
     return kNullOpt;
+}
+
+u64 process_rss_bytes() noexcept {
+#if defined(__APPLE__)
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
+        return static_cast<u64>(info.resident_size);
+    }
+    return 0;
+#elif defined(__linux__)
+    const int fd = ::open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[256];
+    ssize_t n = 0;
+    do {
+        n = ::read(fd, buf, sizeof(buf));
+    } while (n < 0 && errno == EINTR);
+    ::close(fd);
+    if (n <= 0) return 0;
+
+    const StringRef view(buf, static_cast<usize>(n));
+    usize pos = 0;
+    while (pos < view.size() && view[pos] == ' ') ++pos;
+    while (pos < view.size() && view[pos] >= '0' && view[pos] <= '9') ++pos;
+    while (pos < view.size() && view[pos] == ' ') ++pos;
+    const usize rss_start = pos;
+    while (pos < view.size() && view[pos] >= '0' && view[pos] <= '9') ++pos;
+    if (pos <= rss_start) return 0;
+
+    const auto rss_pages = parse_u64(view.substr(rss_start, pos - rss_start));
+    if (rss_pages.is_err()) return 0;
+    const long page_size = ::sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return 0;
+    return (*rss_pages) * static_cast<u64>(page_size);
+#else
+    return 0;
+#endif
 }
 
 } // namespace keel
