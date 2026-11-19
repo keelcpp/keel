@@ -2143,7 +2143,13 @@ void test_process_time_memory_trim_and_ascii() {
     static_assert(is_ascii_alpha('M') && is_ascii_alpha('m') && !is_ascii_alpha('5'));
     static_assert(is_ascii_alnum('9') && is_ascii_alnum('K') && !is_ascii_alnum('_'));
     static_assert(is_ascii_space(' ') && is_ascii_space('\t') && is_ascii_space('\n') && !is_ascii_space('x'));
+    static_assert(is_ascii_blank(' ') && is_ascii_blank('\t') && !is_ascii_blank('\n'));
+    static_assert(is_ascii_cntrl('\0') && is_ascii_cntrl('\n') && is_ascii_cntrl('\x7F') && !is_ascii_cntrl(' '));
+    static_assert(is_ascii_print(' ') && is_ascii_print('~') && !is_ascii_print('\x7F') && !is_ascii_print('\n'));
+    static_assert(is_ascii_graph('!') && is_ascii_graph('~') && !is_ascii_graph(' ') && !is_ascii_graph('\n'));
+    static_assert(is_ascii_punct('!') && is_ascii_punct('_') && !is_ascii_punct('A') && !is_ascii_punct(' '));
     static_assert(!is_ascii_digit(static_cast<char>(-1)) && !is_ascii_alpha(static_cast<char>(-128)));
+    static_assert(!is_ascii_print(static_cast<char>(-1)) && !is_ascii_cntrl(static_cast<char>(-1)));
     static_assert(to_ascii_lower('A') == 'a' && to_ascii_lower('z') == 'z' && to_ascii_lower('7') == '7');
     static_assert(to_ascii_upper('a') == 'A' && to_ascii_upper('Z') == 'Z' && to_ascii_upper('!') == '!');
 }

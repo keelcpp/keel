@@ -18,6 +18,22 @@ inline constexpr u32 kReplacementChar = 0xFFFDu;
 [[nodiscard]] constexpr bool is_ascii_space(char c) noexcept {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
 }
+[[nodiscard]] constexpr bool is_ascii_blank(char c) noexcept { return c == ' ' || c == '\t'; }
+[[nodiscard]] constexpr bool is_ascii_cntrl(char c) noexcept {
+    const u8 uc = static_cast<u8>(c);
+    return uc < 0x20u || uc == 0x7Fu;
+}
+[[nodiscard]] constexpr bool is_ascii_print(char c) noexcept {
+    const u8 uc = static_cast<u8>(c);
+    return uc >= 0x20u && uc <= 0x7Eu;
+}
+[[nodiscard]] constexpr bool is_ascii_graph(char c) noexcept {
+    const u8 uc = static_cast<u8>(c);
+    return uc >= 0x21u && uc <= 0x7Eu;
+}
+[[nodiscard]] constexpr bool is_ascii_punct(char c) noexcept {
+    return is_ascii_graph(c) && !is_ascii_alnum(c);
+}
 [[nodiscard]] constexpr char to_ascii_lower(char c) noexcept {
     return is_ascii_upper(c) ? static_cast<char>(c + ('a' - 'A')) : c;
 }
