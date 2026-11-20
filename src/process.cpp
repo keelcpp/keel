@@ -74,16 +74,10 @@ void ProcessLock::release() noexcept { m_handle = 0; }
 
 #elif defined(_WIN32)
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #ifndef PSAPI_VERSION
 #define PSAPI_VERSION 2
 #endif
-#include <windows.h>
+#include "win32_compat.h"
 #include <processthreadsapi.h>
 #include <psapi.h>
 
@@ -451,7 +445,7 @@ Optional<usize> thread_stack_remaining_bytes() noexcept {
     static thread_local bool s_resolved = false;
     if (!s_resolved) {
         MEMORY_BASIC_INFORMATION mbi{};
-        if (VirtualQuery(const_cast<char*>(&marker), &mbi, sizeof(mbi)) == sizeof(mbi) &&
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(cur), &mbi, sizeof(mbi)) == sizeof(mbi) &&
             mbi.AllocationBase != nullptr) {
             s_cached_low = reinterpret_cast<ULONG_PTR>(mbi.AllocationBase);
         }

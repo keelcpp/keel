@@ -5,14 +5,8 @@
 #define KEEL_TP_BACKEND_NONE 1
 #elif defined(_WIN32)
 #define KEEL_TP_BACKEND_WIN32 1
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
+#include "win32_compat.h"
 #include <intrin.h>
-#include <windows.h>
 #else
 #define KEEL_TP_BACKEND_POSIX 1
 #include <pthread.h>

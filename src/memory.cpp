@@ -6,14 +6,8 @@
 #include <cstring>
 
 #if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
+#include "win32_compat.h"
 #include <malloc.h>
-#include <windows.h>
 #elif !defined(__EMSCRIPTEN__)
 #if defined(__GLIBC__)
 #include <malloc.h>

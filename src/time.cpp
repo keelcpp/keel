@@ -1,10 +1,7 @@
 #include "keel/time.h"
 
 #if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
+#include "win32_compat.h"
 #else
 #include <time.h>
 #endif
