@@ -120,6 +120,18 @@ if(KEEL_BUILD_TESTS)
             "-DCMAKE_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckHeaderPurity.cmake"
     )
+
+    add_test(
+        NAME test_guidelines
+        COMMAND ${CMAKE_COMMAND}
+            "-DCHECK_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/cmake/KeelCheckGuidelines.cmake"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/guidelines_selftest"
+            "-DKEEL_INCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "-DCOMPILER_PATH=${CMAKE_CXX_COMPILER}"
+            "-DCOMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
+            "-DSTD_INC_DIRS=${CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_guidelines.cmake"
+    )
 endif()
 
 if(KEEL_BUILD_BENCHMARKS)

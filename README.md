@@ -57,13 +57,15 @@ Downstream targets can voluntarily enforce `keel` coding guidelines (`keel::*` f
 find_package(keel REQUIRED) # or add_subdirectory(keel)
 
 keel_enforce_guidelines(my_target
-    SCOPE ALL
+    SCOPE ALL                        # ALL | HEADERS_ONLY
+    BAN_RAW_INTS ALL                 # ALL (ON) | HEADERS_ONLY | OFF
     HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    ALLOWED_ANGLE_PREFIXES "myproj/" # `keel/` is always allowed
     STANDALONE_HEADERS ON
 )
 ```
 
-Annotate unavoidable C/OS ABI boundary lines with `// keel-lint: ignore`.
+Violations are collected across all files and reported with exact `file:line:` diagnostics; clean files are cached by `(mtime, size)` per file for fast incremental rebuilds. Annotate unavoidable C/OS ABI boundary lines with `// keel-lint: ignore`.
 
 ## Building & Running Tests
 
