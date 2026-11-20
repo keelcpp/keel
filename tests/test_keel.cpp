@@ -2154,6 +2154,78 @@ void test_process_time_memory_trim_and_ascii() {
     static_assert(to_ascii_upper('a') == 'A' && to_ascii_upper('Z') == 'Z' && to_ascii_upper('!') == '!');
 }
 
+void test_user_dirs_and_process_lock() {
+    // 1. User & executable directories
+    auto exe = fs_exe_path();
+    TEST_CHECK(exe.is_ok() && !exe->empty());
+    auto exe_dir = fs_exe_dir();
+    TEST_CHECK(exe_dir.is_ok() && !exe_dir->empty());
+    if (exe.is_ok() && exe_dir.is_ok()) {
+        TEST_CHECK(exe_dir->as_ref() == path_dirname(exe->as_ref()));
+    }
+
+    auto home = fs_home_dir();
+    TEST_CHECK(home.is_ok() && !home->empty() && path_is_absolute(home->as_ref()));
+    auto cfg = fs_config_dir();
+    TEST_CHECK(cfg.is_ok() && !cfg->empty() && path_is_absolute(cfg->as_ref()));
+    auto data = fs_data_dir();
+    TEST_CHECK(data.is_ok() && !data->empty() && path_is_absolute(data->as_ref()));
+    auto cache = fs_cache_dir();
+    TEST_CHECK(cache.is_ok() && !cache->empty() && path_is_absolute(cache->as_ref()));
+
+    // 2. fs_set_current_dir round-trip
+    auto orig_cwd = fs_current_dir();
+    auto tmp_dir = fs_temp_dir();
+    TEST_CHECK(orig_cwd.is_ok() && tmp_dir.is_ok());
+    if (orig_cwd.is_ok() && tmp_dir.is_ok()) {
+        TEST_CHECK(fs_set_current_dir(StringRef{}).code == ErrorCode::InvalidArgument);
+        TEST_CHECK(fs_set_current_dir(tmp_dir->as_ref()).is_ok());
+        TEST_CHECK(fs_set_current_dir(orig_cwd->as_ref()).is_ok());
+        auto restored = fs_current_dir();
+        TEST_CHECK(restored.is_ok() && restored->as_ref() == orig_cwd->as_ref());
+    }
+
+    // 3. process_id() & ProcessLock exclusive single-instance locking
+    const u64 pid = process_id();
+    TEST_CHECK(pid > 0);
+
+    TEST_CHECK(ProcessLock::try_acquire(StringRef{}).error().code == ErrorCode::InvalidArgument);
+
+    const String app_id = format("keel.test.single_instance.{}", pid);
+#if defined(__EMSCRIPTEN__)
+    TEST_CHECK(ProcessLock::try_acquire(app_id.as_ref()).error().code == ErrorCode::NotSupported);
+#else
+    auto lock1 = ProcessLock::try_acquire(app_id.as_ref());
+    TEST_CHECK(lock1.is_ok() && lock1->is_locked() && static_cast<bool>(*lock1));
+
+    // Second acquisition while held must fail with AlreadyExists
+    auto lock2 = ProcessLock::try_acquire(app_id.as_ref());
+    TEST_CHECK(lock2.is_err() && lock2.error().code == ErrorCode::AlreadyExists);
+
+    // Move transfer preserves lock without unlocking
+    ProcessLock moved = keel::move(*lock1);
+    TEST_CHECK(!lock1->is_locked() && moved.is_locked());
+    auto lock3 = ProcessLock::try_acquire(app_id.as_ref());
+    TEST_CHECK(lock3.is_err() && lock3.error().code == ErrorCode::AlreadyExists);
+
+    // Distinct IDs that sanitize to the same prefix must not collide
+    const String slash_id = format("keel/test/{}", pid);
+    const String under_id = format("keel_test_{}", pid);
+    auto lock_slash = ProcessLock::try_acquire(slash_id.as_ref());
+    auto lock_under = ProcessLock::try_acquire(under_id.as_ref());
+    TEST_CHECK(lock_slash.is_ok() && lock_under.is_ok());
+    lock_slash->release();
+    lock_under->release();
+
+    // Release unlocks immediately so re-acquire succeeds
+    moved.release();
+    TEST_CHECK(!moved.is_locked());
+    auto lock4 = ProcessLock::try_acquire(app_id.as_ref());
+    TEST_CHECK(lock4.is_ok() && lock4->is_locked());
+    lock4->release();
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -2176,6 +2248,7 @@ int main() {
     test_env_process_and_dynlib();
     test_md_ref_layouts();
     test_process_time_memory_trim_and_ascii();
+    test_user_dirs_and_process_lock();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

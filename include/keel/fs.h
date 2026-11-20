@@ -123,8 +123,14 @@ Error fs_rename(StringRef from, StringRef to) noexcept;
 Error fs_copy_file(StringRef from, StringRef to) noexcept;
 
 [[nodiscard]] Result<String> fs_current_dir(Allocator* alloc = nullptr);
+Error fs_set_current_dir(StringRef path) noexcept;
 [[nodiscard]] Result<String> fs_temp_dir(Allocator* alloc = nullptr);
+[[nodiscard]] Result<String> fs_home_dir(Allocator* alloc = nullptr);
+[[nodiscard]] Result<String> fs_config_dir(Allocator* alloc = nullptr);
+[[nodiscard]] Result<String> fs_data_dir(Allocator* alloc = nullptr);
+[[nodiscard]] Result<String> fs_cache_dir(Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_exe_path(Allocator* alloc = nullptr);
+[[nodiscard]] Result<String> fs_exe_dir(Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_absolute(StringRef path, Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_realpath(StringRef path, Allocator* alloc = nullptr);
 

@@ -1,9 +1,35 @@
 #include "keel/process.h"
+#include "keel/arena.h"
 #include "keel/env.h"
 #include "keel/fs.h"
+#include "keel/hash.h"
 #include "keel/number.h"
 #include "keel/small_array.h"
 #include "keel/utf8.h"
+
+namespace keel::detail {
+
+[[nodiscard]] static SmallString<96> build_process_lock_key(StringRef app_id) noexcept {
+    SmallString<96> key;
+    const usize prefix_len = min(app_id.size(), usize{48});
+    for (usize i = 0; i < prefix_len; ++i) {
+        const char c = app_id[i];
+        if (is_ascii_alnum(c) || c == '.' || c == '-' || c == '_') {
+            key.push_back(c);
+        } else {
+            key.push_back('_');
+        }
+    }
+    key.push_back('_');
+    const u64 h = hash_bytes(app_id.data(), app_id.size());
+    static constexpr char kHex[] = "0123456789abcdef";
+    for (i32 shift = 60; shift >= 0; shift -= 4) {
+        key.push_back(kHex[(h >> static_cast<u32>(shift)) & 0xFu]);
+    }
+    return key;
+}
+
+} // namespace keel::detail
 
 #if defined(__EMSCRIPTEN__)
 
@@ -21,6 +47,8 @@ Result<ProcessOutput> process_run_shell(StringRef /*command*/, const ProcessOpti
 
 Optional<String> process_which(StringRef /*program*/, Allocator* /*alloc*/) { return kNullOpt; }
 
+u64 process_id() noexcept { return 1; }
+
 u64 process_rss_bytes() noexcept {
     const struct mallinfo mi = mallinfo();
     if (mi.uordblks > 0) {
@@ -30,6 +58,12 @@ u64 process_rss_bytes() noexcept {
 }
 
 u64 process_cpu_time_ns() noexcept { return 0; }
+
+Result<ProcessLock> ProcessLock::try_acquire(StringRef /*app_id*/, LockScope /*scope*/) noexcept {
+    return Error{ErrorCode::NotSupported, 0};
+}
+
+void ProcessLock::release() noexcept { m_handle = 0; }
 
 } // namespace keel
 
@@ -397,6 +431,8 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
     return kNullOpt;
 }
 
+u64 process_id() noexcept { return static_cast<u64>(GetCurrentProcessId()); }
+
 u64 process_rss_bytes() noexcept {
     PROCESS_MEMORY_COUNTERS pmc{};
     pmc.cb = sizeof(pmc);
@@ -419,6 +455,40 @@ u64 process_cpu_time_ns() noexcept {
     return static_cast<u64>(k.QuadPart + u.QuadPart) * 100ULL;
 }
 
+Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) noexcept {
+    if (app_id.empty()) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    const SmallString<96> key = detail::build_process_lock_key(app_id);
+    SmallString<128> name;
+    name.append((scope == LockScope::System) ? StringRef("Global\\keel_lock_") : StringRef("Local\\keel_lock_"));
+    name.append(key.as_ref());
+
+    wchar_t wname[128];
+    const usize n = min(name.size(), usize{127});
+    for (usize i = 0; i < n; ++i) {
+        wname[i] = static_cast<wchar_t>(static_cast<u8>(name[i]));
+    }
+    wname[n] = L'\0';
+
+    HANDLE h = CreateMutexW(nullptr, FALSE, wname);
+    if (!h) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(h);
+        return Error{ErrorCode::AlreadyExists, static_cast<i32>(ERROR_ALREADY_EXISTS)};
+    }
+    return ProcessLock(reinterpret_cast<usize>(h));
+}
+
+void ProcessLock::release() noexcept {
+    if (m_handle != 0) {
+        CloseHandle(reinterpret_cast<HANDLE>(m_handle));
+        m_handle = 0;
+    }
+}
+
 } // namespace keel
 
 #else // POSIX
@@ -427,6 +497,7 @@ u64 process_cpu_time_ns() noexcept {
 #include <cstdlib>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -703,6 +774,8 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
     return kNullOpt;
 }
 
+u64 process_id() noexcept { return static_cast<u64>(::getpid()); }
+
 u64 process_rss_bytes() noexcept {
 #if defined(__APPLE__)
     mach_task_basic_info_data_t info{};
@@ -751,6 +824,81 @@ u64 process_cpu_time_ns() noexcept {
         return 0;
     }
     return static_cast<u64>(ts.tv_sec) * 1000000000ULL + static_cast<u64>(ts.tv_nsec);
+}
+
+Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) noexcept {
+    if (app_id.empty()) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+
+    ArenaTemp scratch = get_scratch();
+    String base_dir(scratch.allocator());
+    if (scope == LockScope::User) {
+        if (auto rt = env_get("XDG_RUNTIME_DIR", scratch.allocator());
+            rt.has_value() && !rt->empty() && fs_is_dir(rt->as_ref())) {
+            base_dir = keel::move(*rt);
+        }
+    }
+    if (base_dir.empty()) {
+        auto tmp = fs_temp_dir(scratch.allocator());
+        if (tmp.is_err()) {
+            return tmp.error();
+        }
+        base_dir = keel::move(*tmp);
+    }
+
+    const SmallString<96> key = detail::build_process_lock_key(app_id);
+    SmallString<144> filename;
+    if (scope == LockScope::User) {
+        filename.append("keel_lock_u");
+        char uid_buf[24];
+        const usize uid_len = format_u64(uid_buf, sizeof(uid_buf), static_cast<u64>(::getuid()));
+        filename.append(StringRef(uid_buf, uid_len));
+        filename.push_back('_');
+    } else {
+        filename.append("keel_lock_sys_");
+    }
+    filename.append(key.as_ref());
+    filename.append(".lock");
+
+    const String full_path = path_join(base_dir.as_ref(), filename.as_ref(), scratch.allocator());
+    const mode_t mode = (scope == LockScope::System) ? static_cast<mode_t>(0666) : static_cast<mode_t>(0600);
+    const int fd = ::open(full_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, mode);
+    if (fd < 0) {
+        return detail::errno_to_keel(errno);
+    }
+
+    int rc = 0;
+    do {
+        rc = ::flock(fd, LOCK_EX | LOCK_NB);
+    } while (rc != 0 && errno == EINTR);
+    if (rc != 0) {
+        const int err = errno;
+        ::close(fd);
+        if (err == EWOULDBLOCK || err == EAGAIN) {
+            return Error{ErrorCode::AlreadyExists, err};
+        }
+        return detail::errno_to_keel(err);
+    }
+
+    // Best-effort diagnostic PID stamp inside the lock file (never unlink on release to avoid inode races).
+    char pid_buf[32];
+    const usize pid_len = format_u64(pid_buf, sizeof(pid_buf) - 1, process_id());
+    pid_buf[pid_len] = '\n';
+    if (::ftruncate(fd, 0) == 0) {
+        (void)::lseek(fd, 0, SEEK_SET);
+        const ssize_t ignored = ::write(fd, pid_buf, pid_len + 1);
+        (void)ignored;
+    }
+
+    return ProcessLock(static_cast<usize>(fd) + 1u);
+}
+
+void ProcessLock::release() noexcept {
+    if (m_handle != 0) {
+        ::close(static_cast<int>(m_handle - 1u));
+        m_handle = 0;
+    }
 }
 
 } // namespace keel

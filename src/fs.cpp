@@ -1,5 +1,6 @@
 #include "keel/fs.h"
 #include "keel/arena.h"
+#include "keel/env.h"
 #include "keel/io.h"
 #include "keel/small_array.h"
 
@@ -16,6 +17,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <dirent.h>
+#if !defined(__EMSCRIPTEN__)
+#include <pwd.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #if defined(__APPLE__)
@@ -621,6 +625,44 @@ Result<String> fs_current_dir(Allocator* alloc) {
 #endif
 }
 
+Error fs_set_current_dir(StringRef path) noexcept {
+    if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch();
+    SmallArray<wchar_t, 260> wpath(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(path, wpath)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    if (!SetCurrentDirectoryW(wpath.data())) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    return Error::ok();
+#else
+    ArenaTemp scratch = get_scratch();
+    String cpath = String::from(path, scratch.allocator());
+    if (::chdir(cpath.c_str()) != 0) {
+        return detail::errno_to_keel(errno);
+    }
+    return Error::ok();
+#endif
+}
+
+namespace {
+
+[[nodiscard]] String normalize_dir_result(StringRef raw, Allocator* alloc) {
+    String out = String::from(raw, alloc);
+    for (usize i = 0; i < out.size(); ++i) {
+        if (out[i] == '\\') out[i] = '/';
+    }
+    const usize trimmed = detail::strip_trailing_seps(out.as_ref());
+    if (trimmed < out.size()) {
+        out.resize(trimmed);
+    }
+    return out;
+}
+
+} // namespace
+
 Result<String> fs_temp_dir(Allocator* alloc) {
 #if defined(_WIN32)
     wchar_t wbuf[MAX_PATH + 2];
@@ -633,7 +675,111 @@ Result<String> fs_temp_dir(Allocator* alloc) {
 #else
     const char* env_tmp = std::getenv("TMPDIR");
     if (!env_tmp || env_tmp[0] == '\0') env_tmp = "/tmp";
-    return String::from(StringRef(env_tmp), alloc);
+    return normalize_dir_result(StringRef(env_tmp), alloc);
+#endif
+}
+
+Result<String> fs_home_dir(Allocator* alloc) {
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch(alloc);
+    if (auto up = env_get("USERPROFILE", scratch.allocator()); up.has_value() && !up->empty()) {
+        return normalize_dir_result(up->as_ref(), alloc);
+    }
+    auto hd = env_get("HOMEDRIVE", scratch.allocator());
+    auto hp = env_get("HOMEPATH", scratch.allocator());
+    if (hd.has_value() && hp.has_value() && !hd->empty() && !hp->empty()) {
+        String combined(scratch.allocator());
+        combined.reserve(hd->size() + hp->size());
+        combined.append(hd->as_ref());
+        combined.append(hp->as_ref());
+        return normalize_dir_result(combined.as_ref(), alloc);
+    }
+    if (auto h = env_get("HOME", scratch.allocator()); h.has_value() && !h->empty()) {
+        return normalize_dir_result(h->as_ref(), alloc);
+    }
+    return Error{ErrorCode::NotFound, 0};
+#elif defined(__EMSCRIPTEN__)
+    ArenaTemp scratch = get_scratch(alloc);
+    if (auto h = env_get("HOME", scratch.allocator()); h.has_value() && !h->empty()) {
+        return normalize_dir_result(h->as_ref(), alloc);
+    }
+    return String::from("/", alloc);
+#else
+    ArenaTemp scratch = get_scratch(alloc);
+    if (auto h = env_get("HOME", scratch.allocator()); h.has_value() && !h->empty()) {
+        return normalize_dir_result(h->as_ref(), alloc);
+    }
+    struct passwd pw {};
+    struct passwd* result = nullptr;
+    char buf[4096];
+    if (::getpwuid_r(::getuid(), &pw, buf, sizeof(buf), &result) == 0 && result && result->pw_dir &&
+        result->pw_dir[0] != '\0') {
+        return normalize_dir_result(StringRef(result->pw_dir), alloc);
+    }
+    return Error{ErrorCode::NotFound, 0};
+#endif
+}
+
+Result<String> fs_config_dir(Allocator* alloc) {
+    ArenaTemp scratch = get_scratch(alloc);
+#if defined(_WIN32)
+    if (auto ad = env_get("APPDATA", scratch.allocator()); ad.has_value() && !ad->empty()) {
+        return normalize_dir_result(ad->as_ref(), alloc);
+    }
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), "AppData/Roaming", alloc);
+#elif defined(__APPLE__)
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), "Library/Application Support", alloc);
+#else
+    if (auto xdg = env_get("XDG_CONFIG_HOME", scratch.allocator());
+        xdg.has_value() && !xdg->empty() && path_is_absolute(xdg->as_ref())) {
+        return normalize_dir_result(xdg->as_ref(), alloc);
+    }
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), ".config", alloc);
+#endif
+}
+
+Result<String> fs_data_dir(Allocator* alloc) {
+    ArenaTemp scratch = get_scratch(alloc);
+#if defined(_WIN32)
+    if (auto lad = env_get("LOCALAPPDATA", scratch.allocator()); lad.has_value() && !lad->empty()) {
+        return normalize_dir_result(lad->as_ref(), alloc);
+    }
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), "AppData/Local", alloc);
+#elif defined(__APPLE__)
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), "Library/Application Support", alloc);
+#else
+    if (auto xdg = env_get("XDG_DATA_HOME", scratch.allocator());
+        xdg.has_value() && !xdg->empty() && path_is_absolute(xdg->as_ref())) {
+        return normalize_dir_result(xdg->as_ref(), alloc);
+    }
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), ".local/share", alloc);
+#endif
+}
+
+Result<String> fs_cache_dir(Allocator* alloc) {
+    ArenaTemp scratch = get_scratch(alloc);
+#if defined(_WIN32)
+    if (auto lad = env_get("LOCALAPPDATA", scratch.allocator()); lad.has_value() && !lad->empty()) {
+        return normalize_dir_result(lad->as_ref(), alloc);
+    }
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), "AppData/Local", alloc);
+#elif defined(__APPLE__)
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), "Library/Caches", alloc);
+#else
+    if (auto xdg = env_get("XDG_CACHE_HOME", scratch.allocator());
+        xdg.has_value() && !xdg->empty() && path_is_absolute(xdg->as_ref())) {
+        return normalize_dir_result(xdg->as_ref(), alloc);
+    }
+    KEEL_TRY_ASSIGN(String home, fs_home_dir(scratch.allocator()));
+    return path_join(home.as_ref(), ".cache", alloc);
 #endif
 }
 
@@ -672,6 +818,12 @@ Result<String> fs_exe_path(Allocator* alloc) {
     buf[len] = '\0';
     return String::from(StringRef(buf, static_cast<usize>(len)), alloc);
 #endif
+}
+
+Result<String> fs_exe_dir(Allocator* alloc) {
+    ArenaTemp scratch = get_scratch(alloc);
+    KEEL_TRY_ASSIGN(String exe, fs_exe_path(scratch.allocator()));
+    return String::from(path_dirname(exe.as_ref()), alloc);
 }
 
 Result<String> fs_absolute(StringRef path, Allocator* alloc) {
