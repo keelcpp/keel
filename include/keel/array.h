@@ -21,7 +21,10 @@ public:
 
     template <typename A>
         requires(IsSame<Decay<A>, Allocator*> || IsSame<Decay<A>, decltype(nullptr)>)
-    Array(usize count, A alloc) : m_alloc(alloc ? static_cast<Allocator*>(alloc) : default_allocator()) {
+    Array(usize count, A alloc) : m_alloc(default_allocator()) {
+        if constexpr (IsSame<Decay<A>, Allocator*>) {
+            if (alloc) m_alloc = alloc;
+        }
         resize(count);
     }
 
