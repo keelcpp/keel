@@ -50,7 +50,7 @@ Optional<String> process_which(StringRef /*program*/, Allocator* /*alloc*/) { re
 
 u64 process_id() noexcept { return 1; }
 
-usize thread_stack_remaining_bytes() noexcept {
+Optional<usize> thread_stack_remaining_bytes() noexcept {
     return static_cast<usize>(emscripten_stack_get_free());
 }
 
@@ -84,6 +84,7 @@ void ProcessLock::release() noexcept { m_handle = 0; }
 #define PSAPI_VERSION 2
 #endif
 #include <windows.h>
+#include <processthreadsapi.h>
 #include <psapi.h>
 
 namespace keel {
@@ -438,14 +439,28 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
 
 u64 process_id() noexcept { return static_cast<u64>(GetCurrentProcessId()); }
 
-usize thread_stack_remaining_bytes() noexcept {
-    ULONG_PTR low_limit = 0;
-    ULONG_PTR high_limit = 0;
-    GetCurrentThreadStackLimits(&low_limit, &high_limit);
+Optional<usize> thread_stack_remaining_bytes() noexcept {
     volatile char marker = 0;
     const ULONG_PTR cur = reinterpret_cast<ULONG_PTR>(&marker);
-    if (low_limit == 0 || cur <= low_limit) return 0;
-    return static_cast<usize>(cur - low_limit);
+    ULONG_PTR low_limit = 0;
+#if defined(_WIN32_WINNT) && (_WIN32_WINNT >= 0x0602)
+    ULONG_PTR high_limit = 0;
+    GetCurrentThreadStackLimits(&low_limit, &high_limit);
+#else
+    static thread_local ULONG_PTR s_cached_low = 0;
+    static thread_local bool s_resolved = false;
+    if (!s_resolved) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(const_cast<char*>(&marker), &mbi, sizeof(mbi)) == sizeof(mbi) &&
+            mbi.AllocationBase != nullptr) {
+            s_cached_low = reinterpret_cast<ULONG_PTR>(mbi.AllocationBase);
+        }
+        s_resolved = true;
+    }
+    low_limit = s_cached_low;
+#endif
+    if (low_limit == 0) return kNullOpt;
+    return (cur > low_limit) ? static_cast<usize>(cur - low_limit) : usize{0};
 }
 
 u64 process_rss_bytes() noexcept {
@@ -917,16 +932,18 @@ void ProcessLock::release() noexcept {
     }
 }
 
-usize thread_stack_remaining_bytes() noexcept {
+Optional<usize> thread_stack_remaining_bytes() noexcept {
 #if defined(__APPLE__)
     const pthread_t self = ::pthread_self();
     void* stack_addr = ::pthread_get_stackaddr_np(self);
     const usize stack_size = static_cast<usize>(::pthread_get_stacksize_np(self));
+    if (!stack_addr || stack_size == 0) return kNullOpt;
     const usize high_limit = reinterpret_cast<usize>(stack_addr);
-    const usize low_limit = (high_limit > stack_size) ? (high_limit - stack_size) : 0;
+    if (high_limit <= stack_size) return kNullOpt;
+    const usize low_limit = high_limit - stack_size;
     volatile char marker = 0;
     const usize cur = reinterpret_cast<usize>(&marker);
-    return (low_limit != 0 && cur > low_limit) ? (cur - low_limit) : 0;
+    return (cur > low_limit) ? (cur - low_limit) : usize{0};
 #elif defined(__linux__) || defined(__unix__) || defined(_POSIX_VERSION)
     static thread_local usize s_cached_low = 0;
     static thread_local bool s_resolved = false;
@@ -942,11 +959,12 @@ usize thread_stack_remaining_bytes() noexcept {
         }
         s_resolved = true;
     }
+    if (s_cached_low == 0) return kNullOpt;
     volatile char marker = 0;
     const usize cur = reinterpret_cast<usize>(&marker);
-    return (s_cached_low != 0 && cur > s_cached_low) ? (cur - s_cached_low) : 0;
+    return (cur > s_cached_low) ? (cur - s_cached_low) : usize{0};
 #else
-    return 0;
+    return kNullOpt;
 #endif
 }
 

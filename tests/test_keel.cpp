@@ -2267,8 +2267,8 @@ void test_user_dirs_and_process_lock() {
 #endif
 
     // thread_stack_remaining_bytes
-    const usize rem_stack = thread_stack_remaining_bytes();
-    TEST_CHECK(rem_stack > 16u * 1024u);
+    const Optional<usize> rem_stack = thread_stack_remaining_bytes();
+    TEST_CHECK(rem_stack.has_value() && *rem_stack > 16u * 1024u);
 }
 
 } // namespace

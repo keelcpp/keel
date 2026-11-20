@@ -56,8 +56,8 @@ struct ProcessOutput {
 // Returns the current OS process identifier (PID).
 [[nodiscard]] u64 process_id() noexcept;
 
-// Returns remaining stack space in bytes for the calling thread, or 0 if unavailable on the platform.
-[[nodiscard]] usize thread_stack_remaining_bytes() noexcept;
+// Returns remaining stack space in bytes for the calling thread, or kNullOpt if unavailable on the platform.
+[[nodiscard]] Optional<usize> thread_stack_remaining_bytes() noexcept;
 
 // Returns the current process resident set size (physical RAM in bytes), or 0 if unavailable.
 [[nodiscard]] u64 process_rss_bytes() noexcept;
