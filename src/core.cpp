@@ -10,7 +10,7 @@ namespace keel {
 
 namespace detail {
 
-[[noreturn]] void assert_fail(const char* expr, const char* file, int line) noexcept {
+[[noreturn]] void assert_fail(const char* expr, const char* file, i32 line) noexcept {
     stderr_write("KEEL_ASSERT failed: ");
     stderr_write(expr ? expr : "<unknown>");
     stderr_write(" at ");

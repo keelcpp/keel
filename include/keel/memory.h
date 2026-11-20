@@ -135,7 +135,7 @@ void mem_copy(void* dst, const void* src, usize bytes) noexcept;
 void mem_move(void* dst, const void* src, usize bytes) noexcept;
 void mem_set(void* dst, u8 val, usize bytes) noexcept;
 inline void mem_zero(void* dst, usize bytes) noexcept { mem_set(dst, 0, bytes); }
-[[nodiscard]] int mem_cmp(const void* a, const void* b, usize bytes) noexcept;
+[[nodiscard]] i32 mem_cmp(const void* a, const void* b, usize bytes) noexcept;
 [[nodiscard]] inline bool mem_eq(const void* a, const void* b, usize bytes) noexcept {
     return bytes == 0 || mem_cmp(a, b, bytes) == 0;
 }

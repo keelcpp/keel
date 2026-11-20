@@ -49,7 +49,7 @@ inline constexpr usize kInvalidIndex = ~usize{0};
 inline constexpr usize npos = ~usize{0};
 
 namespace detail {
-[[noreturn]] void assert_fail(const char* expr, const char* file, int line) noexcept;
+[[noreturn]] void assert_fail(const char* expr, const char* file, i32 line) noexcept;
 } // namespace detail
 
 #if defined(KEEL_DISABLE_ASSERTS)

@@ -198,7 +198,7 @@ else()
 endif()
 
 set(FORBIDDEN_RAW_INT_REGEX
-    "(^|[^A-Za-z0-9_])(u?int(8|16|32|64|ptr|max)_t|size_t|ptrdiff_t|short|long|unsigned|signed|int)([^A-Za-z0-9_]|$)"
+    "(^|[^A-Za-z0-9_])(u?int((_fast|_least)?(8|16|32|64)|ptr|max)_t|s?size_t|ptrdiff_t|short|long|unsigned|signed|int)([^A-Za-z0-9_]|$)"
 )
 
 foreach(FILE_PATH IN LISTS KG_FILES)

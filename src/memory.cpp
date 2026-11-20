@@ -50,9 +50,9 @@ void mem_set(void* dst, u8 val, usize bytes) noexcept {
     }
 }
 
-int mem_cmp(const void* a, const void* b, usize bytes) noexcept {
+i32 mem_cmp(const void* a, const void* b, usize bytes) noexcept {
     if (bytes == 0) return 0;
-    return std::memcmp(a, b, bytes);
+    return static_cast<i32>(std::memcmp(a, b, bytes));
 }
 
 namespace {

@@ -23,10 +23,10 @@ concept ConvertibleTo = requires(From (*f)()) { static_cast<To>(f()); };
 #endif
 }
 
-[[nodiscard]] constexpr int char_cmp(const char* a, const char* b, usize n) noexcept {
+[[nodiscard]] constexpr i32 char_cmp(const char* a, const char* b, usize n) noexcept {
     if (n == 0) return 0;
 #if defined(__clang__) || defined(__GNUC__)
-    return __builtin_memcmp(a, b, n);
+    return static_cast<i32>(__builtin_memcmp(a, b, n));
 #else
     for (usize i = 0; i < n; ++i) {
         const u8 ca = static_cast<u8>(a[i]);
@@ -200,9 +200,9 @@ public:
         return true;
     }
 
-    [[nodiscard]] constexpr int compare(StringRef other) const noexcept {
+    [[nodiscard]] constexpr i32 compare(StringRef other) const noexcept {
         const usize common = keel::min(m_size, other.m_size);
-        const int cmp = detail::char_cmp(m_data, other.m_data, common);
+        const i32 cmp = detail::char_cmp(m_data, other.m_data, common);
         if (cmp != 0) return cmp;
         return (m_size < other.m_size) ? -1 : ((m_size > other.m_size) ? 1 : 0);
     }

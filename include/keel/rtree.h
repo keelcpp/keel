@@ -28,9 +28,9 @@ namespace detail {
     if (n <= 1) return 1;
     if (root <= 1) return n;
     const u64 target = static_cast<u64>(n);
-    const int bits = 64 - countl_zero(target);
+    const i32 bits = 64 - countl_zero(target);
     u64 lo = 1;
-    u64 hi = u64{1} << ((bits + static_cast<int>(root) - 1) / static_cast<int>(root));
+    u64 hi = u64{1} << ((bits + static_cast<i32>(root) - 1) / static_cast<i32>(root));
     while (lo < hi) {
         const u64 mid = lo + ((hi - lo) >> 1);
         if (upow_saturating(mid, root) < target) {

@@ -669,6 +669,6 @@ private:
     }
 };
 
-static_assert(IsTriviallyDestructible<ArenaArray<int>>, "ArenaArray<T> must remain trivially destructible for POD T");
+static_assert(IsTriviallyDestructible<ArenaArray<i32>>, "ArenaArray<T> must remain trivially destructible for POD T");
 
 } // namespace keel

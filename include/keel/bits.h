@@ -5,12 +5,12 @@
 
 namespace keel {
 
-[[nodiscard]] constexpr int countl_zero(u32 x) noexcept {
+[[nodiscard]] constexpr i32 countl_zero(u32 x) noexcept {
     if (x == 0) return 32;
 #if defined(__clang__) || defined(__GNUC__)
-    return __builtin_clz(x);
+    return static_cast<i32>(__builtin_clz(x));
 #else
-    int n = 0;
+    i32 n = 0;
     if ((x & 0xFFFF0000u) == 0) {
         n += 16;
         x <<= 16;
@@ -34,22 +34,22 @@ namespace keel {
 #endif
 }
 
-[[nodiscard]] constexpr int countl_zero(u64 x) noexcept {
+[[nodiscard]] constexpr i32 countl_zero(u64 x) noexcept {
     if (x == 0) return 64;
 #if defined(__clang__) || defined(__GNUC__)
-    return __builtin_clzll(x);
+    return static_cast<i32>(__builtin_clzll(x));
 #else
     const u32 hi = static_cast<u32>(x >> 32);
     return (hi != 0) ? countl_zero(hi) : (32 + countl_zero(static_cast<u32>(x)));
 #endif
 }
 
-[[nodiscard]] constexpr int countr_zero(u32 x) noexcept {
+[[nodiscard]] constexpr i32 countr_zero(u32 x) noexcept {
     if (x == 0) return 32;
 #if defined(__clang__) || defined(__GNUC__)
-    return __builtin_ctz(x);
+    return static_cast<i32>(__builtin_ctz(x));
 #else
-    int n = 0;
+    i32 n = 0;
     if ((x & 0x0000FFFFu) == 0) {
         n += 16;
         x >>= 16;
@@ -73,37 +73,37 @@ namespace keel {
 #endif
 }
 
-[[nodiscard]] constexpr int countr_zero(u64 x) noexcept {
+[[nodiscard]] constexpr i32 countr_zero(u64 x) noexcept {
     if (x == 0) return 64;
 #if defined(__clang__) || defined(__GNUC__)
-    return __builtin_ctzll(x);
+    return static_cast<i32>(__builtin_ctzll(x));
 #else
     const u32 lo = static_cast<u32>(x);
     return (lo != 0) ? countr_zero(lo) : (32 + countr_zero(static_cast<u32>(x >> 32)));
 #endif
 }
 
-[[nodiscard]] constexpr int popcount(u32 x) noexcept {
+[[nodiscard]] constexpr i32 popcount(u32 x) noexcept {
 #if defined(__clang__) || defined(__GNUC__)
-    return __builtin_popcount(x);
+    return static_cast<i32>(__builtin_popcount(x));
 #else
     x = x - ((x >> 1) & 0x55555555u);
     x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
-    return static_cast<int>((((x + (x >> 4)) & 0x0F0F0F0Fu) * 0x01010101u) >> 24);
+    return static_cast<i32>((((x + (x >> 4)) & 0x0F0F0F0Fu) * 0x01010101u) >> 24);
 #endif
 }
 
-[[nodiscard]] constexpr int popcount(u64 x) noexcept {
+[[nodiscard]] constexpr i32 popcount(u64 x) noexcept {
 #if defined(__clang__) || defined(__GNUC__)
-    return __builtin_popcountll(x);
+    return static_cast<i32>(__builtin_popcountll(x));
 #else
     x = x - ((x >> 1) & 0x5555555555555555ULL);
     x = (x & 0x3333333333333333ULL) + ((x >> 2) & 0x3333333333333333ULL);
-    return static_cast<int>((((x + (x >> 4)) & 0x0F0F0F0F0F0F0F0FULL) * 0x0101010101010101ULL) >> 56);
+    return static_cast<i32>((((x + (x >> 4)) & 0x0F0F0F0F0F0F0F0FULL) * 0x0101010101010101ULL) >> 56);
 #endif
 }
 
-[[nodiscard]] constexpr int bit_width(u64 x) noexcept { return 64 - countl_zero(x); }
+[[nodiscard]] constexpr i32 bit_width(u64 x) noexcept { return 64 - countl_zero(x); }
 
 [[nodiscard]] constexpr bool is_power_of_two(u64 x) noexcept { return x != 0 && (x & (x - 1)) == 0; }
 
@@ -118,23 +118,23 @@ namespace keel {
     return u64{1} << (bit_width(x) - 1);
 }
 
-[[nodiscard]] constexpr u32 rotl(u32 x, int s) noexcept {
-    const unsigned int r = static_cast<unsigned int>(s) & 31u;
+[[nodiscard]] constexpr u32 rotl(u32 x, i32 s) noexcept {
+    const u32 r = static_cast<u32>(s) & 31u;
     return (r == 0) ? x : ((x << r) | (x >> (32u - r)));
 }
 
-[[nodiscard]] constexpr u64 rotl(u64 x, int s) noexcept {
-    const unsigned int r = static_cast<unsigned int>(s) & 63u;
+[[nodiscard]] constexpr u64 rotl(u64 x, i32 s) noexcept {
+    const u32 r = static_cast<u32>(s) & 63u;
     return (r == 0) ? x : ((x << r) | (x >> (64u - r)));
 }
 
-[[nodiscard]] constexpr u32 rotr(u32 x, int s) noexcept {
-    const unsigned int r = static_cast<unsigned int>(s) & 31u;
+[[nodiscard]] constexpr u32 rotr(u32 x, i32 s) noexcept {
+    const u32 r = static_cast<u32>(s) & 31u;
     return (r == 0) ? x : ((x >> r) | (x << (32u - r)));
 }
 
-[[nodiscard]] constexpr u64 rotr(u64 x, int s) noexcept {
-    const unsigned int r = static_cast<unsigned int>(s) & 63u;
+[[nodiscard]] constexpr u64 rotr(u64 x, i32 s) noexcept {
+    const u32 r = static_cast<u32>(s) & 63u;
     return (r == 0) ? x : ((x >> r) | (x << (64u - r)));
 }
 

@@ -196,7 +196,7 @@ f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated
 
 } // namespace
 
-Result<i64, ParseError> parse_i64(StringRef str, int base) noexcept {
+Result<i64, ParseError> parse_i64(StringRef str, i32 base) noexcept {
     if (base < 2 || base > 36) return ParseError{ErrorCode::InvalidArgument, 0};
     if (str.empty()) return ParseError{ErrorCode::InvalidData, 0};
 
@@ -233,7 +233,7 @@ Result<i64, ParseError> parse_i64(StringRef str, int base) noexcept {
     return static_cast<i64>(acc);
 }
 
-Result<u64, ParseError> parse_u64(StringRef str, int base) noexcept {
+Result<u64, ParseError> parse_u64(StringRef str, i32 base) noexcept {
     if (base < 2 || base > 36) return ParseError{ErrorCode::InvalidArgument, 0};
     if (str.empty()) return ParseError{ErrorCode::InvalidData, 0};
 
@@ -361,7 +361,7 @@ Result<f32, ParseError> parse_f32(StringRef str) noexcept {
     return f;
 }
 
-usize format_u64(char* buf, usize cap, u64 value, int base, bool uppercase) noexcept {
+usize format_u64(char* buf, usize cap, u64 value, i32 base, bool uppercase) noexcept {
     if (cap == 0 || base < 2 || base > 36) return 0;
     const char* digits = uppercase ? "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "0123456789abcdefghijklmnopqrstuvwxyz";
     char tmp[68];
@@ -379,7 +379,7 @@ usize format_u64(char* buf, usize cap, u64 value, int base, bool uppercase) noex
     return out_len;
 }
 
-usize format_i64(char* buf, usize cap, i64 value, int base, bool uppercase) noexcept {
+usize format_i64(char* buf, usize cap, i64 value, i32 base, bool uppercase) noexcept {
     if (cap == 0) return 0;
     if (value < 0 && base == 10) {
         buf[0] = '-';
@@ -640,7 +640,7 @@ usize format_f32(char* buf, usize cap, f32 value) noexcept {
     return emit_decimal_sci_or_fixed(buf, cap, negative, dec, num_digits, exp10);
 }
 
-usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept {
+usize format_f64_fixed(char* buf, usize cap, f64 value, i32 precision) noexcept {
     if (cap == 0) return 0;
     if (precision < 0) precision = 6;
     if (precision > 18) precision = 18;
@@ -743,7 +743,7 @@ usize format_f64_fixed(char* buf, usize cap, f64 value, int precision) noexcept 
     return copy_len;
 }
 
-usize format_f64_general(char* buf, usize cap, f64 value, int precision, bool uppercase) noexcept {
+usize format_f64_general(char* buf, usize cap, f64 value, i32 precision, bool uppercase) noexcept {
     if (cap == 0) return 0;
     if (precision < 0) precision = 6;
     if (precision == 0) precision = 1;
@@ -790,7 +790,7 @@ usize format_f64_general(char* buf, usize cap, f64 value, int precision, bool up
     return emit_decimal_sci_or_fixed(buf, cap, negative, dec, num_digits, exp10, precision, uppercase);
 }
 
-usize format_f64_scientific(char* buf, usize cap, f64 value, int precision, bool uppercase) noexcept {
+usize format_f64_scientific(char* buf, usize cap, f64 value, i32 precision, bool uppercase) noexcept {
     if (cap == 0) return 0;
     if (precision < 0) precision = 6;
     if (precision > 16) precision = 16;

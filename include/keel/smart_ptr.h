@@ -38,7 +38,7 @@ struct ArcControlBlock {
 };
 
 template <typename U> struct ArcInlineNode final : ArcControlBlock {
-    alignas(U) unsigned char storage[sizeof(U)];
+    alignas(U) u8 storage[sizeof(U)];
 
     [[nodiscard]] U* ptr() noexcept { return reinterpret_cast<U*>(storage); }
 };

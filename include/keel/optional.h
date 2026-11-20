@@ -5,7 +5,7 @@
 namespace keel {
 
 struct NullOptT {
-    explicit constexpr NullOptT(int) noexcept {}
+    explicit constexpr NullOptT(i32) noexcept {}
 };
 
 inline constexpr NullOptT kNullOpt{0};
