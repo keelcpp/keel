@@ -2,7 +2,12 @@
 #include "keel/arena.h"
 #include "keel/env.h"
 #include "keel/io.h"
+#include "keel/number.h"
+#include "keel/process.h"
 #include "keel/small_array.h"
+#include "keel/time.h"
+
+#include <atomic>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -17,10 +22,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <dirent.h>
+#include <fcntl.h>
 #if !defined(__EMSCRIPTEN__)
 #include <pwd.h>
 #endif
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -1113,6 +1120,89 @@ Error fs_walk_dir(StringRef dir_path, FunctionRef<bool(const DirEntry&)> callbac
     if (dir_path.empty() || !callback) return Error{ErrorCode::InvalidArgument, 0};
     bool keep_going = true;
     return walk_dir_impl(dir_path, callback, keep_going);
+}
+
+Error fs_set_mtime_now(StringRef path) noexcept {
+    if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch();
+    SmallArray<wchar_t, 260> wpath(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(path, wpath)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    HANDLE h = CreateFileW(wpath.data(), FILE_WRITE_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    const BOOL ok = SetFileTime(h, nullptr, &ft, &ft);
+    const DWORD err = ok ? 0 : GetLastError();
+    CloseHandle(h);
+    return ok ? Error::ok() : detail::win32_error_to_keel(err);
+#else
+    ArenaTemp scratch = get_scratch();
+    String cpath = String::from(path, scratch.allocator());
+    struct timespec ts[2];
+    if (::clock_gettime(CLOCK_REALTIME, &ts[0]) != 0) {
+        return detail::errno_to_keel(errno);
+    }
+    ts[1] = ts[0];
+    if (::utimensat(AT_FDCWD, cpath.c_str(), ts, 0) != 0) {
+        return detail::errno_to_keel(errno);
+    }
+    return Error::ok();
+#endif
+}
+
+Result<String> fs_create_temp_dir(StringRef prefix, Allocator* alloc) {
+    for (usize i = 0; i < prefix.size(); ++i) {
+        if (prefix[i] == '/' || prefix[i] == '\\') {
+            return Error{ErrorCode::InvalidArgument, 0};
+        }
+    }
+    const StringRef pfx = prefix.empty() ? StringRef("keel_") : prefix;
+    ArenaTemp scratch = get_scratch(alloc);
+    KEEL_TRY_ASSIGN(String tmp_root, fs_temp_dir(scratch.allocator()));
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+    String leaf(scratch.allocator());
+    leaf.reserve(pfx.size() + 6);
+    leaf.append(pfx);
+    leaf.append("XXXXXX");
+    String tmpl = path_join(tmp_root.as_ref(), leaf.as_ref(), scratch.allocator());
+    if (!::mkdtemp(tmpl.data())) {
+        return detail::errno_to_keel(errno);
+    }
+    return path_normalize(tmpl.as_ref(), alloc);
+#else
+    static std::atomic<u64> s_temp_dir_seq{0};
+    const u64 pid = process_id();
+    for (u32 attempt = 0; attempt < 64u; ++attempt) {
+        const u64 seq = s_temp_dir_seq.fetch_add(1, std::memory_order_relaxed);
+        const u64 ns = monotonic_ns();
+        char hex_buf[32];
+        String leaf(scratch.allocator());
+        leaf.reserve(pfx.size() + 48);
+        leaf.append(pfx);
+        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), pid, 16, false)));
+        leaf.push_back('_');
+        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), ns, 16, false)));
+        leaf.push_back('_');
+        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), seq, 16, false)));
+        String cand = path_join(tmp_root.as_ref(), leaf.as_ref(), scratch.allocator());
+        const Error err = fs_create_dir(cand.as_ref());
+        if (err.is_ok()) {
+            return path_normalize(cand.as_ref(), alloc);
+        }
+        if (err.code != ErrorCode::AlreadyExists) {
+            return err;
+        }
+    }
+    return Error{ErrorCode::AlreadyExists, 0};
+#endif
 }
 
 } // namespace keel

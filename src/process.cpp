@@ -33,6 +33,7 @@ namespace keel::detail {
 
 #if defined(__EMSCRIPTEN__)
 
+#include <emscripten/stack.h>
 #include <malloc.h>
 
 namespace keel {
@@ -48,6 +49,10 @@ Result<ProcessOutput> process_run_shell(StringRef /*command*/, const ProcessOpti
 Optional<String> process_which(StringRef /*program*/, Allocator* /*alloc*/) { return kNullOpt; }
 
 u64 process_id() noexcept { return 1; }
+
+usize thread_stack_remaining_bytes() noexcept {
+    return static_cast<usize>(emscripten_stack_get_free());
+}
 
 u64 process_rss_bytes() noexcept {
     const struct mallinfo mi = mallinfo();
@@ -433,6 +438,16 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
 
 u64 process_id() noexcept { return static_cast<u64>(GetCurrentProcessId()); }
 
+usize thread_stack_remaining_bytes() noexcept {
+    ULONG_PTR low_limit = 0;
+    ULONG_PTR high_limit = 0;
+    GetCurrentThreadStackLimits(&low_limit, &high_limit);
+    volatile char marker = 0;
+    const ULONG_PTR cur = reinterpret_cast<ULONG_PTR>(&marker);
+    if (low_limit == 0 || cur <= low_limit) return 0;
+    return static_cast<usize>(cur - low_limit);
+}
+
 u64 process_rss_bytes() noexcept {
     PROCESS_MEMORY_COUNTERS pmc{};
     pmc.cb = sizeof(pmc);
@@ -497,6 +512,7 @@ void ProcessLock::release() noexcept {
 #include <cstdlib>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -899,6 +915,39 @@ void ProcessLock::release() noexcept {
         ::close(static_cast<int>(m_handle - 1u));
         m_handle = 0;
     }
+}
+
+usize thread_stack_remaining_bytes() noexcept {
+#if defined(__APPLE__)
+    const pthread_t self = ::pthread_self();
+    void* stack_addr = ::pthread_get_stackaddr_np(self);
+    const usize stack_size = static_cast<usize>(::pthread_get_stacksize_np(self));
+    const usize high_limit = reinterpret_cast<usize>(stack_addr);
+    const usize low_limit = (high_limit > stack_size) ? (high_limit - stack_size) : 0;
+    volatile char marker = 0;
+    const usize cur = reinterpret_cast<usize>(&marker);
+    return (low_limit != 0 && cur > low_limit) ? (cur - low_limit) : 0;
+#elif defined(__linux__) || defined(__unix__) || defined(_POSIX_VERSION)
+    static thread_local usize s_cached_low = 0;
+    static thread_local bool s_resolved = false;
+    if (!s_resolved) {
+        pthread_attr_t attr;
+        if (::pthread_getattr_np(::pthread_self(), &attr) == 0) {
+            void* stack_addr = nullptr;
+            size_t stack_size = 0;
+            if (::pthread_attr_getstack(&attr, &stack_addr, &stack_size) == 0 && stack_addr != nullptr) {
+                s_cached_low = reinterpret_cast<usize>(stack_addr);
+            }
+            ::pthread_attr_destroy(&attr);
+        }
+        s_resolved = true;
+    }
+    volatile char marker = 0;
+    const usize cur = reinterpret_cast<usize>(&marker);
+    return (s_cached_low != 0 && cur > s_cached_low) ? (cur - s_cached_low) : 0;
+#else
+    return 0;
+#endif
 }
 
 } // namespace keel

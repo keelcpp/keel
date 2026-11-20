@@ -44,8 +44,20 @@ struct ProcessOutput {
 // Searches PATH (and PATHEXT on Win32) for an executable `program` without spawning a shell.
 [[nodiscard]] Optional<String> process_which(StringRef program, Allocator* alloc = nullptr);
 
+// Platform default executable filename extension (".exe" on Win32, "" elsewhere).
+[[nodiscard]] constexpr StringRef process_exe_extension() noexcept {
+#if defined(_WIN32)
+    return ".exe";
+#else
+    return "";
+#endif
+}
+
 // Returns the current OS process identifier (PID).
 [[nodiscard]] u64 process_id() noexcept;
+
+// Returns remaining stack space in bytes for the calling thread, or 0 if unavailable on the platform.
+[[nodiscard]] usize thread_stack_remaining_bytes() noexcept;
 
 // Returns the current process resident set size (physical RAM in bytes), or 0 if unavailable.
 [[nodiscard]] u64 process_rss_bytes() noexcept;

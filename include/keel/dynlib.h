@@ -46,6 +46,9 @@ enum class DynLibFlags : u32 {
 #endif
 }
 
+// Resolves the filesystem path of the shared library or executable containing `addr`.
+[[nodiscard]] Result<String> dynlib_path_from_address(const void* addr, Allocator* alloc = nullptr);
+
 // Move-only RAII handle for an OS dynamic library (`dlopen` on POSIX, `LoadLibraryW` on Win32).
 class DynLib {
 public:

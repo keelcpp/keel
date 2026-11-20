@@ -2224,6 +2224,51 @@ void test_user_dirs_and_process_lock() {
     TEST_CHECK(lock4.is_ok() && lock4->is_locked());
     lock4->release();
 #endif
+
+    // 4. Platform convention constants, fs_create_temp_dir, fs_set_mtime_now, dynlib_path_from_address, stack remaining
+#if defined(_WIN32)
+    static_assert(fs_native_sep() == '\\');
+    static_assert(fs_path_list_sep() == ';');
+    static_assert(fs_line_ending() == "\r\n");
+    static_assert(process_exe_extension() == ".exe");
+#else
+    static_assert(fs_native_sep() == '/');
+    static_assert(fs_path_list_sep() == ':');
+    static_assert(fs_line_ending() == "\n");
+    static_assert(process_exe_extension() == "");
+#endif
+
+    // fs_create_temp_dir & fs_set_mtime_now
+    TEST_CHECK(fs_create_temp_dir("bad/prefix").error().code == ErrorCode::InvalidArgument);
+    auto tdir1 = fs_create_temp_dir("keel_td_");
+    auto tdir2 = fs_create_temp_dir("keel_td_");
+    TEST_CHECK(tdir1.is_ok() && tdir2.is_ok());
+    if (tdir1.is_ok() && tdir2.is_ok()) {
+        TEST_CHECK(fs_is_dir(tdir1->as_ref()));
+        TEST_CHECK(fs_is_dir(tdir2->as_ref()));
+        TEST_CHECK(tdir1->as_ref() != tdir2->as_ref());
+
+        const String fpath = path_join(tdir1->as_ref(), "stamp.txt");
+        TEST_CHECK(fs_write_text(fpath.as_ref(), "hello").is_ok());
+        TEST_CHECK(fs_set_mtime_now(fpath.as_ref()).is_ok());
+        TEST_CHECK(fs_set_mtime_now(StringRef{}).code == ErrorCode::InvalidArgument);
+
+        TEST_CHECK(fs_remove_all(tdir1->as_ref()).is_ok());
+        TEST_CHECK(fs_remove_all(tdir2->as_ref()).is_ok());
+    }
+
+    // dynlib_path_from_address
+    TEST_CHECK(dynlib_path_from_address(nullptr).error().code == ErrorCode::InvalidArgument);
+    auto self_mod = dynlib_path_from_address(reinterpret_cast<const void*>(&test_user_dirs_and_process_lock));
+#if defined(__EMSCRIPTEN__)
+    TEST_CHECK(self_mod.is_err() && self_mod.error().code == ErrorCode::NotSupported);
+#else
+    TEST_CHECK(self_mod.is_ok() && !self_mod->empty() && fs_is_file(self_mod->as_ref()));
+#endif
+
+    // thread_stack_remaining_bytes
+    const usize rem_stack = thread_stack_remaining_bytes();
+    TEST_CHECK(rem_stack > 16u * 1024u);
 }
 
 } // namespace

@@ -10,6 +10,32 @@ namespace keel {
 // Stack-first UTF-8 path buffer (255 inline bytes before spilling to Allocator*).
 using PathBuf = SmallString<256>;
 
+// Platform native path separator ('\\' on Win32, '/' elsewhere), PATH list separator (';' / ':'),
+// and native text line ending ("\r\n" / "\n").
+[[nodiscard]] constexpr char fs_native_sep() noexcept {
+#if defined(_WIN32)
+    return '\\';
+#else
+    return '/';
+#endif
+}
+
+[[nodiscard]] constexpr char fs_path_list_sep() noexcept {
+#if defined(_WIN32)
+    return ';';
+#else
+    return ':';
+#endif
+}
+
+[[nodiscard]] constexpr StringRef fs_line_ending() noexcept {
+#if defined(_WIN32)
+    return "\r\n";
+#else
+    return "\n";
+#endif
+}
+
 // Pure UTF-8 string path manipulation (paths always use `/` separator across all platforms).
 [[nodiscard]] StringRef path_dirname(StringRef path) noexcept;
 [[nodiscard]] StringRef path_basename(StringRef path) noexcept;
@@ -121,10 +147,12 @@ Error fs_remove(StringRef path) noexcept;
 Error fs_remove_all(StringRef path) noexcept;
 Error fs_rename(StringRef from, StringRef to) noexcept;
 Error fs_copy_file(StringRef from, StringRef to) noexcept;
+Error fs_set_mtime_now(StringRef path) noexcept;
 
 [[nodiscard]] Result<String> fs_current_dir(Allocator* alloc = nullptr);
 Error fs_set_current_dir(StringRef path) noexcept;
 [[nodiscard]] Result<String> fs_temp_dir(Allocator* alloc = nullptr);
+[[nodiscard]] Result<String> fs_create_temp_dir(StringRef prefix = "keel_", Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_home_dir(Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_config_dir(Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_data_dir(Allocator* alloc = nullptr);
