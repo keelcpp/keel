@@ -264,4 +264,36 @@ if(NOT RES_SA EQUAL 0)
     message(FATAL_ERROR "Case 5 (STANDALONE_HEADERS with COMPILE_DEFS) failed:\n${OUT_SA}\n${ERR_SA}")
 endif()
 
+# ---------------------------------------------------------------------------
+# Case 6: BAN_RAW_FLOATS rejects float/double, allows keel::f32/f64 and keel-lint: ignore
+# ---------------------------------------------------------------------------
+file(WRITE "${WORK_DIR}/src/bad_float.cpp"
+"#include <keel/core.h>
+double bad_val = 1.0;
+float bad_f = 2.0f;
+keel::f64 ok_val = 3.0;
+double ignored_val = 4.0; // keel-lint: ignore
+")
+file(WRITE "${WORK_DIR}/cfg_bad_float.cmake"
+"set(KG_TARGET \"test_bad_float\")
+set(KG_SCOPE \"ALL\")
+set(KG_BAN_STL ON)
+set(KG_BAN_RAW_INTS \"ALL\")
+set(KG_BAN_RAW_FLOATS \"ALL\")
+set(KG_ALLOW_STDEXCEPT ON)
+set(KG_ALLOW_STDEXCEPT_IN_HEADERS OFF)
+set(KG_SOURCE_ROOT \"${WORK_DIR}\")
+set(KG_BINARY_DIR \"${WORK_DIR}/bin\")
+set(KG_ALLOWED_ANGLE_PREFIXES \"keel/;myproj/\")
+set(KG_FILES \"${WORK_DIR}/src/bad_float.cpp\")
+")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DCONFIG_FILE=${WORK_DIR}/cfg_bad_float.cmake" "-DRUN_STANDALONE_HEADERS=OFF" -P "${CHECK_SCRIPT}"
+    OUTPUT_VARIABLE OUT_BF ERROR_VARIABLE ERR_BF RESULT_VARIABLE RES_BF
+)
+set(COMBINED_BF "${OUT_BF}\n${ERR_BF}")
+if(RES_BF EQUAL 0 OR NOT COMBINED_BF MATCHES "src/bad_float.cpp:2:" OR NOT COMBINED_BF MATCHES "src/bad_float.cpp:3:" OR COMBINED_BF MATCHES "src/bad_float.cpp:5:")
+    message(FATAL_ERROR "Case 6 (BAN_RAW_FLOATS) failed:\n${COMBINED_BF}")
+endif()
+
 message(STATUS "All KeelGuidelines self-tests passed.")

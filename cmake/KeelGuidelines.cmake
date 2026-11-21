@@ -4,6 +4,7 @@
 # and downstream applications:
 #   - Zero-STL & zero-<cstdint>/<cstddef> discipline (`keel::*` types & containers)
 #   - Fixed/pointer-sized integer discipline (`BAN_RAW_INTS ON|ALL|HEADERS_ONLY|OFF`)
+#   - Fixed-width float discipline (`BAN_RAW_FLOATS ON|ALL|HEADERS_ONLY|OFF`)
 #   - First-class C++ exception support (`<exception>` / `keel::Exception` allowed;
 #     never forces `-fno-exceptions`; `<stdexcept>` allowed in `.cpp` by default)
 #   - Angle-bracket project includes via `ALLOWED_ANGLE_PREFIXES` (`keel/` by default)
@@ -105,6 +106,7 @@ function(keel_enforce_guidelines TARGET_NAME)
         SCOPE
         BAN_STL
         BAN_RAW_INTS
+        BAN_RAW_FLOATS
         ALLOW_STDEXCEPT
         ALLOW_STDEXCEPT_IN_HEADERS
         STANDALONE_HEADERS
@@ -146,6 +148,21 @@ function(keel_enforce_guidelines TARGET_NAME)
             set(KG_BAN_RAW_INTS "OFF")
         else()
             message(FATAL_ERROR "keel_enforce_guidelines(${TARGET_NAME}): BAN_RAW_INTS must be ON/ALL, HEADERS_ONLY, or OFF (got '${KG_BAN_RAW_INTS}').")
+        endif()
+    endif()
+
+    if(NOT DEFINED KG_BAN_RAW_FLOATS)
+        set(KG_BAN_RAW_FLOATS "ALL")
+    else()
+        string(TOUPPER "${KG_BAN_RAW_FLOATS}" _RAW_FLTS_UPPER)
+        if(_RAW_FLTS_UPPER STREQUAL "ON" OR _RAW_FLTS_UPPER STREQUAL "TRUE" OR _RAW_FLTS_UPPER STREQUAL "1" OR _RAW_FLTS_UPPER STREQUAL "ALL")
+            set(KG_BAN_RAW_FLOATS "ALL")
+        elseif(_RAW_FLTS_UPPER STREQUAL "HEADERS_ONLY")
+            set(KG_BAN_RAW_FLOATS "HEADERS_ONLY")
+        elseif(_RAW_FLTS_UPPER STREQUAL "OFF" OR _RAW_FLTS_UPPER STREQUAL "FALSE" OR _RAW_FLTS_UPPER STREQUAL "0")
+            set(KG_BAN_RAW_FLOATS "OFF")
+        else()
+            message(FATAL_ERROR "keel_enforce_guidelines(${TARGET_NAME}): BAN_RAW_FLOATS must be ON/ALL, HEADERS_ONLY, or OFF (got '${KG_BAN_RAW_FLOATS}').")
         endif()
     endif()
 
@@ -295,6 +312,7 @@ function(keel_enforce_guidelines TARGET_NAME)
     string(APPEND _CFG_CONTENT "set(KG_SCOPE \"${KG_SCOPE}\")\n")
     string(APPEND _CFG_CONTENT "set(KG_BAN_STL ${KG_BAN_STL})\n")
     string(APPEND _CFG_CONTENT "set(KG_BAN_RAW_INTS \"${KG_BAN_RAW_INTS}\")\n")
+    string(APPEND _CFG_CONTENT "set(KG_BAN_RAW_FLOATS \"${KG_BAN_RAW_FLOATS}\")\n")
     string(APPEND _CFG_CONTENT "set(KG_ALLOW_STDEXCEPT ${KG_ALLOW_STDEXCEPT})\n")
     string(APPEND _CFG_CONTENT "set(KG_ALLOW_STDEXCEPT_IN_HEADERS ${KG_ALLOW_STDEXCEPT_IN_HEADERS})\n")
     string(APPEND _CFG_CONTENT "set(KG_SOURCE_ROOT \"${_NORM_SRC_ROOT}\")\n")

@@ -29,6 +29,20 @@ else()
     endif()
 endif()
 
+# Normalize KG_BAN_RAW_FLOATS to ALL / HEADERS_ONLY / OFF
+if(NOT DEFINED KG_BAN_RAW_FLOATS)
+    set(_BAN_RAW_FLOATS_MODE "ALL")
+else()
+    string(TOUPPER "${KG_BAN_RAW_FLOATS}" _BRF_UPPER)
+    if(_BRF_UPPER STREQUAL "ON" OR _BRF_UPPER STREQUAL "TRUE" OR _BRF_UPPER STREQUAL "1" OR _BRF_UPPER STREQUAL "ALL")
+        set(_BAN_RAW_FLOATS_MODE "ALL")
+    elseif(_BRF_UPPER STREQUAL "HEADERS_ONLY")
+        set(_BAN_RAW_FLOATS_MODE "HEADERS_ONLY")
+    else()
+        set(_BAN_RAW_FLOATS_MODE "OFF")
+    endif()
+endif()
+
 if(NOT DEFINED KG_ALLOWED_ANGLE_PREFIXES)
     set(KG_ALLOWED_ANGLE_PREFIXES "keel/")
 endif()
@@ -320,6 +334,9 @@ endif()
 set(FORBIDDEN_RAW_INT_REGEX
     "(^|[^A-Za-z0-9_])(u?int((_fast|_least)?(8|16|32|64)|ptr|max)_t|s?size_t|ptrdiff_t|short|long|unsigned|signed|int)([^A-Za-z0-9_]|$)"
 )
+set(FORBIDDEN_RAW_FLOAT_REGEX
+    "(^|[^A-Za-z0-9_])(float|double)([^A-Za-z0-9_]|$)"
+)
 
 # Per-file incremental mtime/size cache (enabled when STAMP_FILE is provided and not running standalone headers)
 set(USE_FILE_CACHE FALSE)
@@ -347,7 +364,7 @@ set(CHECKED_COUNT 0)
 set(CACHED_COUNT 0)
 
 # Collect all violations inside a single file with exact 1-based line numbers
-function(keel_collect_file_violations REL_FILE IS_HEADER CHECK_RAW_INTS NO_RAW_CONTENT PRE_CLEAN OUT_VIOLATIONS)
+function(keel_collect_file_violations REL_FILE IS_HEADER CHECK_RAW_INTS CHECK_RAW_FLOATS NO_RAW_CONTENT PRE_CLEAN OUT_VIOLATIONS)
     set(_FILE_VIOLS "")
 
     # Preserve exact line numbers even if multiline /* ... */ comments exist
@@ -487,6 +504,18 @@ function(keel_collect_file_violations REL_FILE IS_HEADER CHECK_RAW_INTS NO_RAW_C
                 )
             endif()
         endif()
+
+        if(CHECK_RAW_FLOATS)
+            set(_FLT_LINE "${_LINE}")
+            string(REGEX REPLACE "(^|[^A-Za-z0-9_])long[ \t]+double([^A-Za-z0-9_]|$)" "\\1keel_long_double\\2" _FLT_LINE "${_FLT_LINE}")
+            if(_FLT_LINE MATCHES "${FORBIDDEN_RAW_FLOAT_REGEX}")
+                string(REGEX MATCH "${FORBIDDEN_RAW_FLOAT_REGEX}" _MFLT "${_FLT_LINE}")
+                string(STRIP "${_MFLT}" _MFLT)
+                list(APPEND _FILE_VIOLS
+                    "${REL_FILE}:${_LNO}: forbidden raw float token '${_MFLT}'. Use keel::f32 or keel::f64 (annotate true C/OS ABI boundary lines with '// keel-lint: ignore')."
+                )
+            endif()
+        endif()
     endforeach()
 
     set(${OUT_VIOLATIONS} "${_FILE_VIOLS}" PARENT_SCOPE)
@@ -511,6 +540,11 @@ foreach(FILE_PATH IN LISTS KG_FILES)
     set(CHECK_RAW_INTS FALSE)
     if(_BAN_RAW_INTS_MODE STREQUAL "ALL" OR (_BAN_RAW_INTS_MODE STREQUAL "HEADERS_ONLY" AND IS_HEADER))
         set(CHECK_RAW_INTS TRUE)
+    endif()
+
+    set(CHECK_RAW_FLOATS FALSE)
+    if(_BAN_RAW_FLOATS_MODE STREQUAL "ALL" OR (_BAN_RAW_FLOATS_MODE STREQUAL "HEADERS_ONLY" AND IS_HEADER))
+        set(CHECK_RAW_FLOATS TRUE)
     endif()
 
     # Check per-file incremental mtime/size cache
@@ -606,8 +640,16 @@ foreach(FILE_PATH IN LISTS KG_FILES)
         endif()
     endif()
 
+    if(NOT FILE_HAS_VIOLATION AND CHECK_RAW_FLOATS)
+        set(FLT_CHECK_CODE "${CLEAN_CODE}")
+        string(REGEX REPLACE "(^|[^A-Za-z0-9_])long[ \t]+double([^A-Za-z0-9_]|$)" "\\1keel_long_double\\2" FLT_CHECK_CODE "${FLT_CHECK_CODE}")
+        if(FLT_CHECK_CODE MATCHES "${FORBIDDEN_RAW_FLOAT_REGEX}")
+            set(FILE_HAS_VIOLATION TRUE)
+        endif()
+    endif()
+
     if(FILE_HAS_VIOLATION)
-        keel_collect_file_violations("${REL_FILE}" ${IS_HEADER} ${CHECK_RAW_INTS} "${NO_RAW_CONTENT}" "${PRE_CLEAN}" FILE_VIOLS)
+        keel_collect_file_violations("${REL_FILE}" ${IS_HEADER} ${CHECK_RAW_INTS} ${CHECK_RAW_FLOATS} "${NO_RAW_CONTENT}" "${PRE_CLEAN}" FILE_VIOLS)
         if(FILE_VIOLS)
             list(APPEND ALL_VIOLATIONS ${FILE_VIOLS})
         else()
