@@ -16,7 +16,7 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 
 | Header | Contents |
 | :--- | :--- |
-| `keel/core.h` | `i8`..`u64`, `f32`/`f64`, `isize`, `usize`, `KEEL_ASSERT`, builtin type traits, `as`/`narrow`/`saturate`, `move`/`forward` |
+| `keel/core.h` | `i8`..`u64`, `f32`/`f64`, `isize`, `usize`, `KEEL_ASSERT`, builtin type traits, `as`/`narrow`/`saturate`/`to_underlying`/`from_underlying`, `move`/`forward` |
 | `keel/math.h` | `kPi`/`kTau`, `deg_to_rad`, `Limits<T>`, `constexpr abs`/`sqr`/`sign`, `is_nan`/`is_finite`, `round_i32`/`round_i64`/`round_sat`, `floor_i32`/`ceil_i32`, `lerp`/`remap` |
 | `keel/complex.h` | Flat `Complex<T>`, `c32`/`c64` aliases, `constexpr` arithmetic & Smith division, `conj`, `norm_sq`, `abs`, `arg`, `polar` |
 | `keel/bits.h` | Bit ops (`countl_zero`, `popcount`, `bit_ceil`, `byteswap`), `checked_add`/`sub`/`mul`, `sat_add`/`sub`/`mul`/`sat_cast`, endian `read_le/be*` & `write_le/be*` |
@@ -28,7 +28,7 @@ It complements the C++ standard library where `std` is heavy in compile time, De
 | `keel/error.h` | Value-type `Error`, `ErrorCode`, `ParseError`, `error_message` |
 | `keel/exception.h` | Zero-heap `Exception : std::exception` (`Exception::format`, `Exception::with_error`) when exceptions are enabled |
 | `keel/result.h` | `Result<T, E>`, `KEEL_TRY`, `KEEL_TRY_ASSIGN` |
-| `keel/optional.h` | Trivially-copyable `Optional<T>`, `SentinelOptional<T, Sentinel>`, and `try_narrow<To>` |
+| `keel/optional.h` | Trivially-copyable `Optional<T>`, `SentinelOptional<T, Sentinel>`, `try_narrow<To>`, and `try_enum<E>` |
 | `keel/function_ref.h` | Standalone 2-pointer non-owning `FunctionRef<R(Args...)>` |
 | `keel/function.h` | Move-only `FixedFunction<Sig, N>`, `SmallFunction<Sig, N>`, and `Allocator*`-backed `Function<Sig>` |
 | `keel/array.h` | `FixedArray<T, N>`, `SmallArray<T, N>`, and dynamic `Array<T>` (`push_back`, `remove_at`, `swap_remove`, `clone`) |

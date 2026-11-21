@@ -458,6 +458,15 @@ template <typename To, typename From>
     return static_cast<RemoveCv<To>>(val);
 }
 
+// Explicit int -> enum conversion (symmetric with to_underlying; asserts representability in UnderlyingType<E>).
+template <typename E, typename From>
+    requires(IsEnum<E> && IsIntegral<From> && !IsSame<RemoveCv<From>, bool>)
+[[nodiscard]] constexpr RemoveCv<E> from_underlying(From val) noexcept {
+    using U = UnderlyingType<E>;
+    KEEL_ASSERT(detail::in_numeric_range<U>(val));
+    return static_cast<RemoveCv<E>>(static_cast<U>(val));
+}
+
 // UB-free saturating arithmetic conversion (clamps out-of-range values to [min, max]; NaN -> 0 for integers).
 template <typename To, typename From>
     requires(IsArithmetic<To> && IsArithmetic<From> && !IsSame<RemoveCv<To>, bool>)

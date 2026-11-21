@@ -2276,9 +2276,41 @@ void test_arithmetic_casts() {
     static_assert(as<f64>(42) == 42.0);
     static_assert(as<u8>(0x1234u & 0xFFu) == u8{0x34});
     static_assert(as<i32>(usize{7}) == 7);
-    enum class TestEnum : u8 { kZero = 0, kSeven = 7 };
+    enum class TestEnum : u8 { kZero = 0, kOne = 1, kSeven = 7 };
+    enum class SignedEnum : i8 { kNeg = -2, kZero = 0, kPos = 3 };
     static_assert(to_underlying(TestEnum::kSeven) == u8{7});
     static_assert(as<usize>(TestEnum::kSeven) == usize{7});
+    static_assert(from_underlying<TestEnum>(u8{7}) == TestEnum::kSeven);
+    static_assert(from_underlying<TestEnum>(i32{7}) == TestEnum::kSeven);
+    static_assert(from_underlying<SignedEnum>(i32{-2}) == SignedEnum::kNeg);
+    static_assert((DynLibFlags::Global | DynLibFlags::Lazy) == from_underlying<DynLibFlags>(u32{3}));
+    // try_enum<E> — explicit & deduced E, signed/unsigned underlying, boundary & out-of-range cases
+    static_assert(try_enum<TestEnum>(0, TestEnum::kZero, TestEnum::kSeven) == TestEnum::kZero);
+    static_assert(try_enum<TestEnum>(7, TestEnum::kZero, TestEnum::kSeven) == TestEnum::kSeven);
+    static_assert(try_enum(u64{1}, TestEnum::kZero, TestEnum::kSeven) == TestEnum::kOne);
+    static_assert(!try_enum<TestEnum>(-1, TestEnum::kZero, TestEnum::kSeven).has_value());
+    static_assert(!try_enum<TestEnum>(8, TestEnum::kZero, TestEnum::kSeven).has_value());
+    static_assert(!try_enum<TestEnum>(300, TestEnum::kZero, TestEnum::kSeven).has_value());
+    static_assert(try_enum(i64{-2}, SignedEnum::kNeg, SignedEnum::kPos) == SignedEnum::kNeg);
+    static_assert(try_enum(i64{3}, SignedEnum::kNeg, SignedEnum::kPos) == SignedEnum::kPos);
+    static_assert(!try_enum(i64{-3}, SignedEnum::kNeg, SignedEnum::kPos).has_value());
+    static_assert(!try_enum(i64{4}, SignedEnum::kNeg, SignedEnum::kPos).has_value());
+    static_assert(!try_enum(u64{1000}, SignedEnum::kNeg, SignedEnum::kPos).has_value());
+    static_assert(!try_enum(i32{1}, TestEnum::kSeven, TestEnum::kZero).has_value()); // inverted bounds
+    // Reject bool / floating-point inputs at compile time
+    constexpr auto can_from_underlying = []<typename T>(T v) { return requires { from_underlying<TestEnum>(v); }; };
+    constexpr auto can_try_enum = []<typename T>(T v) {
+        return requires { try_enum<TestEnum>(v, TestEnum::kZero, TestEnum::kSeven); };
+    };
+    static_assert(can_from_underlying(i32{0}));
+    static_assert(!can_from_underlying(true));
+    static_assert(!can_from_underlying(1.0));
+    static_assert(can_try_enum(i32{0}));
+    static_assert(!can_try_enum(true));
+    static_assert(!can_try_enum(1.0));
+    TEST_CHECK(from_underlying<TestEnum>(usize{7}) == TestEnum::kSeven);
+    TEST_CHECK(try_enum(i32{-2}, SignedEnum::kNeg, SignedEnum::kPos) == SignedEnum::kNeg);
+    TEST_CHECK(!try_enum(i32{999}, SignedEnum::kNeg, SignedEnum::kPos).has_value());
 #if defined(__SIZEOF_INT128__)
     static_assert(as<u64>(as<__uint128_t>(u64{10}) * as<__uint128_t>(u64{20})) == u64{200});
 #endif

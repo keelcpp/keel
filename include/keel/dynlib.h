@@ -16,11 +16,11 @@ enum class DynLibFlags : u32 {
 };
 
 [[nodiscard]] constexpr DynLibFlags operator|(DynLibFlags a, DynLibFlags b) noexcept {
-    return static_cast<DynLibFlags>(to_underlying(a) | to_underlying(b));
+    return from_underlying<DynLibFlags>(to_underlying(a) | to_underlying(b));
 }
 
 [[nodiscard]] constexpr DynLibFlags operator&(DynLibFlags a, DynLibFlags b) noexcept {
-    return static_cast<DynLibFlags>(to_underlying(a) & to_underlying(b));
+    return from_underlying<DynLibFlags>(to_underlying(a) & to_underlying(b));
 }
 
 [[nodiscard]] constexpr bool has_flag(DynLibFlags flags, DynLibFlags bit) noexcept {

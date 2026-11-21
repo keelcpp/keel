@@ -358,4 +358,19 @@ template <typename To, typename From>
     return static_cast<RemoveCv<To>>(val);
 }
 
+// Runtime-checked int -> enum conversion against inclusive bounds [min_val, max_val] (returns kNullOpt if out of range).
+template <typename E, typename From>
+    requires(IsEnum<E> && IsIntegral<From> && !IsSame<RemoveCv<From>, bool>)
+[[nodiscard]] constexpr Optional<RemoveCv<E>> try_enum(From val, E min_val, E max_val) noexcept {
+    using U = UnderlyingType<E>;
+    if (!detail::in_numeric_range<U>(val)) {
+        return kNullOpt;
+    }
+    const U u = static_cast<U>(val);
+    if (u < to_underlying(min_val) || u > to_underlying(max_val)) {
+        return kNullOpt;
+    }
+    return static_cast<RemoveCv<E>>(u);
+}
+
 } // namespace keel
