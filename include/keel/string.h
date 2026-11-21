@@ -8,12 +8,12 @@ namespace keel {
 namespace detail {
 [[nodiscard]] constexpr usize clamp_utf8_truncation(const char* s, usize total_len, usize max_bytes) noexcept {
     if (total_len <= max_bytes || max_bytes == 0) return keel::min(total_len, max_bytes);
-    const u8 next_byte = static_cast<u8>(s[max_bytes]);
+    const u8 next_byte = as<u8>(s[max_bytes]);
     if ((next_byte & 0xC0u) != 0x80u) {
         return max_bytes;
     }
     for (usize back = 1; back <= 3 && back <= max_bytes; ++back) {
-        const u8 c = static_cast<u8>(s[max_bytes - back]);
+        const u8 c = as<u8>(s[max_bytes - back]);
         if ((c & 0xC0u) == 0x80u) {
             continue;
         }
@@ -176,7 +176,7 @@ public:
             reserve(new_size);
         }
         if (new_size > m_size) {
-            mem_set(m_data + m_size, static_cast<u8>(fill), new_size - m_size);
+            mem_set(m_data + m_size, as<u8>(fill), new_size - m_size);
         }
         m_size = new_size;
         if (m_data) m_data[m_size] = '\0';
@@ -184,7 +184,7 @@ public:
 
     void assign(StringRef str) {
         if (m_data && str.data() >= m_data && str.data() <= m_data + m_size) {
-            const usize offset = static_cast<usize>(str.data() - m_data);
+            const usize offset = as<usize>(str.data() - m_data);
             const usize n = str.size();
             if (n > 0 && offset > 0) {
                 mem_move(m_data, m_data + offset, n);
@@ -217,7 +217,7 @@ public:
         const char* src = str.data();
         // Handle self-aliasing if str points inside m_data
         if (m_data && src >= m_data && src <= m_data + m_size) {
-            const usize offset = static_cast<usize>(src - m_data);
+            const usize offset = as<usize>(src - m_data);
             reserve(m_size + n);
             mem_move(m_data + m_size, m_data + offset, n);
         } else {
@@ -460,7 +460,7 @@ public:
         }
         char* cur = data();
         if (new_size > m_size) {
-            mem_set(cur + m_size, static_cast<u8>(fill), new_size - m_size);
+            mem_set(cur + m_size, as<u8>(fill), new_size - m_size);
         }
         m_size = new_size;
         cur[m_size] = '\0';
@@ -469,7 +469,7 @@ public:
     void assign(StringRef str) {
         const char* cur = data();
         if (str.data() >= cur && str.data() <= cur + m_size) {
-            const usize offset = static_cast<usize>(str.data() - cur);
+            const usize offset = as<usize>(str.data() - cur);
             const usize n = str.size();
             if (n > 0 && offset > 0) {
                 mem_move(data(), data() + offset, n);
@@ -503,7 +503,7 @@ public:
         const char* cur = data();
         const char* src = str.data();
         if (src >= cur && src <= cur + m_size) {
-            const usize offset = static_cast<usize>(src - cur);
+            const usize offset = as<usize>(src - cur);
             reserve(m_size + n);
             char* dst = data();
             mem_move(dst + m_size, dst + offset, n);
@@ -651,7 +651,7 @@ public:
                     { r.size() };
                 }
     constexpr FixedString(const R& range) noexcept {
-        assign(StringRef(range.data(), static_cast<usize>(range.size())));
+        assign(StringRef(range.data(), as<usize>(range.size())));
     }
 
     [[nodiscard]] static constexpr FixedString from(StringRef ref) noexcept { return FixedString(ref); }
@@ -674,19 +674,19 @@ public:
                     { r.size() };
                 }
     constexpr FixedString& operator=(const R& range) noexcept {
-        assign(StringRef(range.data(), static_cast<usize>(range.size())));
+        assign(StringRef(range.data(), as<usize>(range.size())));
         return *this;
     }
 
     constexpr void assign(StringRef ref) noexcept {
         const usize clamped = detail::clamp_utf8_truncation(ref.data(), ref.size(), N - 1);
-        m_size = static_cast<u32>(clamped);
+        m_size = as<u32>(clamped);
         if (__builtin_is_constant_evaluated()) {
             for (u32 i = 0; i < m_size; ++i) {
                 m_buf[i] = ref.data()[i];
             }
         } else if (m_size > 0) {
-            mem_move(m_buf, ref.data(), static_cast<usize>(m_size));
+            mem_move(m_buf, ref.data(), as<usize>(m_size));
         }
         m_buf[m_size] = '\0';
     }
@@ -705,14 +705,14 @@ public:
     }
 
     constexpr void push_back(char c) noexcept {
-        if (static_cast<usize>(m_size) < N - 1) {
+        if (as<usize>(m_size) < N - 1) {
             m_buf[m_size++] = c;
             m_buf[m_size] = '\0';
         }
     }
 
     [[nodiscard]] constexpr bool try_push_back(char c) noexcept {
-        if (static_cast<usize>(m_size) >= N - 1) return false;
+        if (as<usize>(m_size) >= N - 1) return false;
         m_buf[m_size++] = c;
         m_buf[m_size] = '\0';
         return true;
@@ -725,7 +725,7 @@ public:
     }
 
     constexpr void append(StringRef ref) noexcept {
-        const usize avail = (N - 1) - static_cast<usize>(m_size);
+        const usize avail = (N - 1) - as<usize>(m_size);
         const usize to_copy = detail::clamp_utf8_truncation(ref.data(), ref.size(), avail);
         if (to_copy == 0) return;
         if (__builtin_is_constant_evaluated()) {
@@ -735,19 +735,19 @@ public:
         } else {
             mem_move(m_buf + m_size, ref.data(), to_copy);
         }
-        m_size += static_cast<u32>(to_copy);
+        m_size += as<u32>(to_copy);
         m_buf[m_size] = '\0';
     }
 
     [[nodiscard]] constexpr bool try_append(StringRef ref) noexcept {
-        const usize avail = (N - 1) - static_cast<usize>(m_size);
+        const usize avail = (N - 1) - as<usize>(m_size);
         if (ref.size() > avail) return false;
         append(ref);
         return true;
     }
 
     constexpr void resize(usize new_size, char fill = '\0') noexcept {
-        const u32 target = static_cast<u32>(keel::min<usize>(new_size, N - 1));
+        const u32 target = as<u32>(keel::min<usize>(new_size, N - 1));
         if (target > m_size) {
             for (u32 i = m_size; i < target; ++i) {
                 m_buf[i] = fill;
@@ -758,8 +758,8 @@ public:
     }
 
     constexpr void remove_at(usize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
-        const usize tail = static_cast<usize>(m_size) - i - 1;
+        KEEL_BOUNDS_ASSERT(i < as<usize>(m_size));
+        const usize tail = as<usize>(m_size) - i - 1;
         if (__builtin_is_constant_evaluated()) {
             for (usize k = 0; k < tail; ++k) {
                 m_buf[i + k] = m_buf[i + k + 1];
@@ -777,16 +777,16 @@ public:
 
     constexpr void set_inline_size(usize len) noexcept {
         const usize clamped = keel::min<usize>(len, N - 1);
-        m_size = static_cast<u32>(clamped);
+        m_size = as<u32>(clamped);
         m_buf[m_size] = '\0';
     }
 
     [[nodiscard]] constexpr operator StringRef() const noexcept {
-        return StringRef(m_buf, static_cast<usize>(m_size));
+        return StringRef(m_buf, as<usize>(m_size));
     }
 
     [[nodiscard]] constexpr StringRef as_ref() const noexcept {
-        return StringRef(m_buf, static_cast<usize>(m_size));
+        return StringRef(m_buf, as<usize>(m_size));
     }
 
     // Zero-header conversion to std::basic_string_view<char, ...>
@@ -797,16 +797,16 @@ public:
                     SV(d, n);
                 }
     [[nodiscard]] constexpr operator SV() const noexcept {
-        return SV(m_buf, static_cast<usize>(m_size));
+        return SV(m_buf, as<usize>(m_size));
     }
 
     [[nodiscard]] constexpr const char* c_str() const noexcept { return m_buf; }
     [[nodiscard]] constexpr char* data() noexcept { return m_buf; }
     [[nodiscard]] constexpr const char* data() const noexcept { return m_buf; }
-    [[nodiscard]] constexpr usize size() const noexcept { return static_cast<usize>(m_size); }
-    [[nodiscard]] constexpr usize length() const noexcept { return static_cast<usize>(m_size); }
+    [[nodiscard]] constexpr usize size() const noexcept { return as<usize>(m_size); }
+    [[nodiscard]] constexpr usize length() const noexcept { return as<usize>(m_size); }
     [[nodiscard]] constexpr bool empty() const noexcept { return m_size == 0; }
-    [[nodiscard]] constexpr bool full() const noexcept { return static_cast<usize>(m_size) == N - 1; }
+    [[nodiscard]] constexpr bool full() const noexcept { return as<usize>(m_size) == N - 1; }
     [[nodiscard]] static constexpr usize capacity() noexcept { return N - 1; }
     [[nodiscard]] static constexpr usize max_size() noexcept { return N - 1; }
     [[nodiscard]] static constexpr usize buffer_size() noexcept { return N; }
@@ -817,12 +817,12 @@ public:
     [[nodiscard]] constexpr const char* end() const noexcept { return m_buf + m_size; }
 
     [[nodiscard]] constexpr char& operator[](usize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        KEEL_BOUNDS_ASSERT(i < as<usize>(m_size));
         return m_buf[i];
     }
 
     [[nodiscard]] constexpr char operator[](usize i) const noexcept {
-        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        KEEL_BOUNDS_ASSERT(i < as<usize>(m_size));
         return m_buf[i];
     }
 
@@ -881,7 +881,7 @@ public:
                     { r.size() };
                 }
     [[nodiscard]] constexpr bool operator==(const R& other) const noexcept {
-        return as_ref() == StringRef(other.data(), static_cast<usize>(other.size()));
+        return as_ref() == StringRef(other.data(), as<usize>(other.size()));
     }
 
     [[nodiscard]] friend constexpr bool operator<(const FixedString& a, const FixedString& b) noexcept {
@@ -943,7 +943,7 @@ public:
         : m_ctx(&str),
           m_view(+[](const void* p) noexcept -> StringRef {
               const auto& s = *static_cast<const S*>(p);
-              return StringRef(s.data(), static_cast<usize>(s.size()));
+              return StringRef(s.data(), as<usize>(s.size()));
           }),
           m_assign(+[](void* p, StringRef ref) {
               auto& s = *static_cast<S*>(p);

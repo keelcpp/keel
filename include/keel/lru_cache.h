@@ -65,7 +65,7 @@ public:
             if (m_entries.capacity() == 0) {
                 m_entries.reserve(Capacity);
             }
-            slot = static_cast<u32>(m_entries.size());
+            slot = as<u32>(m_entries.size());
             m_entries.push_back(Entry{
                 .key = keel::move(entry_key),
                 .value = keel::move(value),

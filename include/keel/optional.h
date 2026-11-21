@@ -348,4 +348,14 @@ private:
     T m_value = Sentinel;
 };
 
+// Runtime-checked narrowing / sign-changing arithmetic conversion (returns kNullOpt if out of range).
+template <typename To, typename From>
+    requires(IsArithmetic<To> && IsArithmetic<From>)
+[[nodiscard]] constexpr Optional<RemoveCv<To>> try_narrow(From val) noexcept {
+    if (!detail::in_numeric_range<RemoveCv<To>>(val)) {
+        return kNullOpt;
+    }
+    return static_cast<RemoveCv<To>>(val);
+}
+
 } // namespace keel

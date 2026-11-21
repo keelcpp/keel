@@ -24,7 +24,7 @@ namespace keel::detail {
     const u64 h = hash_bytes(app_id.data(), app_id.size());
     static constexpr char kHex[] = "0123456789abcdef";
     for (i32 shift = 60; shift >= 0; shift -= 4) {
-        key.push_back(kHex[(h >> static_cast<u32>(shift)) & 0xFu]);
+        key.push_back(kHex[(h >> as<u32>(shift)) & 0xFu]);
     }
     return key;
 }
@@ -51,15 +51,15 @@ Optional<String> process_which(StringRef /*program*/, Allocator* /*alloc*/) { re
 u64 process_id() noexcept { return 1; }
 
 Optional<usize> thread_stack_remaining_bytes() noexcept {
-    return static_cast<usize>(emscripten_stack_get_free());
+    return as<usize>(emscripten_stack_get_free());
 }
 
 u64 process_rss_bytes() noexcept {
     const struct mallinfo mi = mallinfo();
     if (mi.uordblks > 0) {
-        return static_cast<u64>(static_cast<u32>(mi.uordblks));
+        return as<u64>(as<u32>(mi.uordblks));
     }
-    return static_cast<u64>(__builtin_wasm_memory_size(0)) * 65536ULL;
+    return as<u64>(__builtin_wasm_memory_size(0)) * 65536ULL;
 }
 
 u64 process_cpu_time_ns() noexcept { return 0; }
@@ -95,12 +95,12 @@ static bool proc_utf8_to_wide(StringRef utf8, Array<wchar_t>& out) {
     }
     if (!utf8_validate(utf8)) return false;
     const int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(),
-                                         static_cast<int>(utf8.size()), nullptr, 0);
+                                         as<int>(utf8.size()), nullptr, 0);
     if (wlen <= 0) return false;
-    out.resize(static_cast<usize>(wlen) + 1);
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()),
+    out.resize(as<usize>(wlen) + 1);
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), as<int>(utf8.size()),
                         out.data(), wlen);
-    out[static_cast<usize>(wlen)] = L'\0';
+    out[as<usize>(wlen)] = L'\0';
     return true;
 }
 
@@ -147,7 +147,7 @@ static DWORD WINAPI win_pipe_reader_thread(LPVOID param) {
     DWORD nread = 0;
     while (ReadFile(ctx->pipe, buf, sizeof(buf), &nread, nullptr) && nread > 0) {
         if (ctx->max_bytes == 0 || ctx->dst->size() < ctx->max_bytes) {
-            usize to_add = static_cast<usize>(nread);
+            usize to_add = as<usize>(nread);
             if (ctx->max_bytes != 0 && ctx->dst->size() + to_add > ctx->max_bytes) {
                 to_add = ctx->max_bytes - ctx->dst->size();
             }
@@ -337,7 +337,7 @@ static Result<ProcessOutput> run_win32_cmdline(StringRef cmdline_utf8, const Pro
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD exit_code = 0;
     GetExitCodeProcess(pi.hProcess, &exit_code);
-    result.exit_code = static_cast<i32>(exit_code);
+    result.exit_code = as<i32>(exit_code);
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -372,7 +372,7 @@ Result<ProcessOutput> process_run_shell(StringRef command, const ProcessOptions&
 Optional<String> process_which(StringRef program, Allocator* alloc) {
     if (program.empty()) return kNullOpt;
     for (usize i = 0; i < program.size(); ++i) {
-        const auto ch = static_cast<u8>(program[i]);
+        const auto ch = as<u8>(program[i]);
         if (ch < 0x20u || ch == 0x7Fu) return kNullOpt;
     }
     Allocator* a = alloc ? alloc : default_allocator();
@@ -431,7 +431,7 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
     return kNullOpt;
 }
 
-u64 process_id() noexcept { return static_cast<u64>(GetCurrentProcessId()); }
+u64 process_id() noexcept { return as<u64>(GetCurrentProcessId()); }
 
 Optional<usize> thread_stack_remaining_bytes() noexcept {
     volatile char marker = 0;
@@ -454,14 +454,14 @@ Optional<usize> thread_stack_remaining_bytes() noexcept {
     low_limit = s_cached_low;
 #endif
     if (low_limit == 0) return kNullOpt;
-    return (cur > low_limit) ? static_cast<usize>(cur - low_limit) : usize{0};
+    return (cur > low_limit) ? as<usize>(cur - low_limit) : usize{0};
 }
 
 u64 process_rss_bytes() noexcept {
     PROCESS_MEMORY_COUNTERS pmc{};
     pmc.cb = sizeof(pmc);
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-        return static_cast<u64>(pmc.WorkingSetSize);
+        return as<u64>(pmc.WorkingSetSize);
     }
     return 0;
 }
@@ -476,7 +476,7 @@ u64 process_cpu_time_ns() noexcept {
     k.HighPart = kernel.dwHighDateTime;
     u.LowPart = user.dwLowDateTime;
     u.HighPart = user.dwHighDateTime;
-    return static_cast<u64>(k.QuadPart + u.QuadPart) * 100ULL;
+    return as<u64>(k.QuadPart + u.QuadPart) * 100ULL;
 }
 
 Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) noexcept {
@@ -491,7 +491,7 @@ Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) 
     wchar_t wname[128];
     const usize n = min(name.size(), usize{127});
     for (usize i = 0; i < n; ++i) {
-        wname[i] = static_cast<wchar_t>(static_cast<u8>(name[i]));
+        wname[i] = static_cast<wchar_t>(as<u8>(name[i]));
     }
     wname[n] = L'\0';
 
@@ -501,7 +501,7 @@ Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) 
     }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(h);
-        return Error{ErrorCode::AlreadyExists, static_cast<i32>(ERROR_ALREADY_EXISTS)};
+        return Error{ErrorCode::AlreadyExists, as<i32>(ERROR_ALREADY_EXISTS)};
     }
     return ProcessLock(reinterpret_cast<usize>(h));
 }
@@ -725,7 +725,7 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
             if (n > 0) {
                 String& dst = *dsts[slot];
                 if (opts.max_output_bytes == 0 || dst.size() < opts.max_output_bytes) {
-                    usize to_add = static_cast<usize>(n);
+                    usize to_add = as<usize>(n);
                     if (opts.max_output_bytes != 0 && dst.size() + to_add > opts.max_output_bytes) {
                         to_add = opts.max_output_bytes - dst.size();
                     }
@@ -767,7 +767,7 @@ Result<ProcessOutput> process_run_shell(StringRef command, const ProcessOptions&
 Optional<String> process_which(StringRef program, Allocator* alloc) {
     if (program.empty() || program[0] == '-') return kNullOpt;
     for (usize i = 0; i < program.size(); ++i) {
-        const auto ch = static_cast<u8>(program[i]);
+        const auto ch = as<u8>(program[i]);
         if (ch < 0x20u || ch == 0x7Fu) return kNullOpt;
     }
     Allocator* a = alloc ? alloc : default_allocator();
@@ -799,7 +799,7 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
     return kNullOpt;
 }
 
-u64 process_id() noexcept { return static_cast<u64>(::getpid()); }
+u64 process_id() noexcept { return as<u64>(::getpid()); }
 
 u64 process_rss_bytes() noexcept {
 #if defined(__APPLE__)
@@ -807,7 +807,7 @@ u64 process_rss_bytes() noexcept {
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
     if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
                   reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
-        return static_cast<u64>(info.resident_size);
+        return as<u64>(info.resident_size);
     }
     return 0;
 #elif defined(__linux__)
@@ -821,7 +821,7 @@ u64 process_rss_bytes() noexcept {
     ::close(fd);
     if (n <= 0) return 0;
 
-    const StringRef view(buf, static_cast<usize>(n));
+    const StringRef view(buf, as<usize>(n));
     usize pos = 0;
     while (pos < view.size() && view[pos] == ' ') ++pos;
     while (pos < view.size() && view[pos] >= '0' && view[pos] <= '9') ++pos;
@@ -834,7 +834,7 @@ u64 process_rss_bytes() noexcept {
     if (rss_pages.is_err()) return 0;
     const long page_size = ::sysconf(_SC_PAGESIZE);
     if (page_size <= 0) return 0;
-    return (*rss_pages) * static_cast<u64>(page_size);
+    return (*rss_pages) * as<u64>(page_size);
 #else
     return 0;
 #endif
@@ -848,7 +848,7 @@ u64 process_cpu_time_ns() noexcept {
     if (ts.tv_sec < 0 || ts.tv_nsec < 0) {
         return 0;
     }
-    return static_cast<u64>(ts.tv_sec) * 1000000000ULL + static_cast<u64>(ts.tv_nsec);
+    return as<u64>(ts.tv_sec) * 1000000000ULL + as<u64>(ts.tv_nsec);
 }
 
 Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) noexcept {
@@ -877,7 +877,7 @@ Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) 
     if (scope == LockScope::User) {
         filename.append("keel_lock_u");
         char uid_buf[24];
-        const usize uid_len = format_u64(uid_buf, sizeof(uid_buf), static_cast<u64>(::getuid()));
+        const usize uid_len = format_u64(uid_buf, sizeof(uid_buf), as<u64>(::getuid()));
         filename.append(StringRef(uid_buf, uid_len));
         filename.push_back('_');
     } else {
@@ -916,12 +916,12 @@ Result<ProcessLock> ProcessLock::try_acquire(StringRef app_id, LockScope scope) 
         (void)ignored;
     }
 
-    return ProcessLock(static_cast<usize>(fd) + 1u);
+    return ProcessLock(as<usize>(fd) + 1u);
 }
 
 void ProcessLock::release() noexcept {
     if (m_handle != 0) {
-        ::close(static_cast<int>(m_handle - 1u));
+        ::close(as<int>(m_handle - 1u));
         m_handle = 0;
     }
 }
@@ -930,7 +930,7 @@ Optional<usize> thread_stack_remaining_bytes() noexcept {
 #if defined(__APPLE__)
     const pthread_t self = ::pthread_self();
     void* stack_addr = ::pthread_get_stackaddr_np(self);
-    const usize stack_size = static_cast<usize>(::pthread_get_stacksize_np(self));
+    const usize stack_size = as<usize>(::pthread_get_stacksize_np(self));
     if (!stack_addr || stack_size == 0) return kNullOpt;
     const usize high_limit = reinterpret_cast<usize>(stack_addr);
     if (high_limit <= stack_size) return kNullOpt;

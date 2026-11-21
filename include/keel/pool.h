@@ -90,7 +90,7 @@ public:
     }
 
     [[nodiscard]] bool is_valid(Handle<T> h) const noexcept {
-        return h.generation != 0 && static_cast<usize>(h.index) < m_cap && m_slots[h.index].alive &&
+        return h.generation != 0 && as<usize>(h.index) < m_cap && m_slots[h.index].alive &&
                m_slots[h.index].generation == h.generation;
     }
 
@@ -114,7 +114,7 @@ public:
         m_free_head = kInvalidSlot;
         for (usize i = m_cap; i > 0; --i) {
             m_slots[i - 1].next_free = m_free_head;
-            m_free_head = static_cast<u32>(i - 1);
+            m_free_head = as<u32>(i - 1);
         }
         m_size = 0;
     }
@@ -135,7 +135,7 @@ private:
     template <typename... Args> [[nodiscard]] Handle<T> emplace_slow(Args&&... args) {
         const usize new_cap = (m_cap == 0) ? 8 : (m_cap * 2);
         Slot* new_slots = m_alloc->alloc_array<Slot>(new_cap);
-        const u32 new_idx = static_cast<u32>(m_cap);
+        const u32 new_idx = as<u32>(m_cap);
         // Construct new element before relocating/destroying old slots so self-aliasing args remain valid
         ::new (new_slots[new_idx].storage) T(keel::forward<Args>(args)...);
         new_slots[new_idx].generation = 1;
@@ -158,7 +158,7 @@ private:
         }
         for (usize i = new_cap; i > m_cap + 1; --i) {
             new_slots[i - 1].next_free = m_free_head;
-            m_free_head = static_cast<u32>(i - 1);
+            m_free_head = as<u32>(i - 1);
         }
         if (m_slots) m_alloc->free_array(m_slots, m_cap);
         m_slots = new_slots;

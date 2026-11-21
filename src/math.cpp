@@ -67,20 +67,20 @@ f64 acosh(f64 x) noexcept { return std::acosh(x); }
 f32 atanh(f32 x) noexcept { return std::atanh(x); }
 f64 atanh(f64 x) noexcept { return std::atanh(x); }
 
-f32 ldexp(f32 x, i32 exp_val) noexcept { return std::ldexp(x, static_cast<int>(exp_val)); }
-f64 ldexp(f64 x, i32 exp_val) noexcept { return std::ldexp(x, static_cast<int>(exp_val)); }
+f32 ldexp(f32 x, i32 exp_val) noexcept { return std::ldexp(x, as<int>(exp_val)); }
+f64 ldexp(f64 x, i32 exp_val) noexcept { return std::ldexp(x, as<int>(exp_val)); }
 
 f32 frexp(f32 x, i32* exp_out) noexcept {
     int e = 0;
     const f32 m = std::frexp(x, &e);
-    if (exp_out) *exp_out = static_cast<i32>(e);
+    if (exp_out) *exp_out = as<i32>(e);
     return m;
 }
 
 f64 frexp(f64 x, i32* exp_out) noexcept {
     int e = 0;
     const f64 m = std::frexp(x, &e);
-    if (exp_out) *exp_out = static_cast<i32>(e);
+    if (exp_out) *exp_out = as<i32>(e);
     return m;
 }
 

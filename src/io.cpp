@@ -26,22 +26,22 @@ Error win32_error_to_keel(DWORD err) noexcept {
     case ERROR_FILE_NOT_FOUND:
     case ERROR_PATH_NOT_FOUND:
     case ERROR_INVALID_DRIVE:
-        return Error{ErrorCode::NotFound, static_cast<i32>(err)};
+        return Error{ErrorCode::NotFound, as<i32>(err)};
     case ERROR_ACCESS_DENIED:
     case ERROR_SHARING_VIOLATION:
     case ERROR_LOCK_VIOLATION:
-        return Error{ErrorCode::PermissionDenied, static_cast<i32>(err)};
+        return Error{ErrorCode::PermissionDenied, as<i32>(err)};
     case ERROR_FILE_EXISTS:
     case ERROR_ALREADY_EXISTS:
-        return Error{ErrorCode::AlreadyExists, static_cast<i32>(err)};
+        return Error{ErrorCode::AlreadyExists, as<i32>(err)};
     case ERROR_INVALID_PARAMETER:
     case ERROR_INVALID_NAME:
     case ERROR_BAD_PATHNAME:
-        return Error{ErrorCode::InvalidArgument, static_cast<i32>(err)};
+        return Error{ErrorCode::InvalidArgument, as<i32>(err)};
     case ERROR_HANDLE_EOF:
-        return Error{ErrorCode::EndOfFile, static_cast<i32>(err)};
+        return Error{ErrorCode::EndOfFile, as<i32>(err)};
     default:
-        return Error{ErrorCode::IoError, static_cast<i32>(err)};
+        return Error{ErrorCode::IoError, as<i32>(err)};
     }
 }
 
@@ -50,13 +50,13 @@ bool utf8_path_to_win32_wide(StringRef utf8_path, SmallArray<wchar_t, 260>& out)
     if (utf8_path.empty() || !utf8_validate(utf8_path)) return false;
 
     const int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8_path.data(),
-                                         static_cast<int>(utf8_path.size()), nullptr, 0);
+                                         as<int>(utf8_path.size()), nullptr, 0);
     if (wlen <= 0) return false;
 
     const bool needs_long_prefix = (wlen >= MAX_PATH - 12) && !utf8_path.starts_with("\\\\");
     const usize prefix_len = needs_long_prefix ? 4 : 0;
     out.clear();
-    out.reserve(prefix_len + static_cast<usize>(wlen) + 1);
+    out.reserve(prefix_len + as<usize>(wlen) + 1);
     if (needs_long_prefix) {
         out.push_back(L'\\');
         out.push_back(L'\\');
@@ -66,7 +66,7 @@ bool utf8_path_to_win32_wide(StringRef utf8_path, SmallArray<wchar_t, 260>& out)
     for (int i = 0; i < wlen; ++i) {
         out.push_back(L'\0');
     }
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8_path.data(), static_cast<int>(utf8_path.size()),
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8_path.data(), as<int>(utf8_path.size()),
                         out.data() + prefix_len, wlen);
     for (usize i = prefix_len; i < out.size(); ++i) {
         if (out[i] == L'/') out[i] = L'\\';
@@ -84,10 +84,10 @@ void win32_wide_to_utf8_path(const wchar_t* wstr, usize wlen, String& out) {
         wlen -= 4;
     }
     const int u8len =
-        WideCharToMultiByte(CP_UTF8, 0, wstr, static_cast<int>(wlen), nullptr, 0, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, wstr, as<int>(wlen), nullptr, 0, nullptr, nullptr);
     if (u8len <= 0) return;
-    out.resize(static_cast<usize>(u8len));
-    WideCharToMultiByte(CP_UTF8, 0, wstr, static_cast<int>(wlen), out.data(), u8len, nullptr, nullptr);
+    out.resize(as<usize>(u8len));
+    WideCharToMultiByte(CP_UTF8, 0, wstr, as<int>(wlen), out.data(), u8len, nullptr, nullptr);
     for (usize i = 0; i < out.size(); ++i) {
         if (out[i] == '\\') out[i] = '/';
     }
@@ -204,7 +204,7 @@ Result<File> File::open(StringRef path, FileMode mode) noexcept {
     if (fd < 0) {
         return detail::errno_to_keel(errno);
     }
-    return File(static_cast<i64>(fd));
+    return File(as<i64>(fd));
 #endif
 }
 
@@ -219,14 +219,14 @@ Result<usize> File::read(MutArrayRef<u8> buf) noexcept {
     if (!ReadFile(h, buf.data(), to_read, &bytes_read, nullptr)) {
         return detail::win32_error_to_keel(GetLastError());
     }
-    return static_cast<usize>(bytes_read);
+    return as<usize>(bytes_read);
 #else
-    const int fd = static_cast<int>(m_handle);
+    const int fd = as<int>(m_handle);
     const ssize_t n = ::read(fd, buf.data(), buf.size());
     if (n < 0) {
         return detail::errno_to_keel(errno);
     }
-    return static_cast<usize>(n);
+    return as<usize>(n);
 #endif
 }
 
@@ -250,10 +250,10 @@ void File::write(ArrayRef<u8> data) noexcept {
             return;
         }
         p += written;
-        rem -= static_cast<usize>(written);
+        rem -= as<usize>(written);
     }
 #else
-    const int fd = static_cast<int>(m_handle);
+    const int fd = as<int>(m_handle);
     const u8* p = data.data();
     usize rem = data.size();
     while (rem > 0) {
@@ -264,7 +264,7 @@ void File::write(ArrayRef<u8> data) noexcept {
             return;
         }
         p += n;
-        rem -= static_cast<usize>(n);
+        rem -= as<usize>(n);
     }
 #endif
 }
@@ -281,7 +281,7 @@ Error File::flush() noexcept {
     }
     return Error::ok();
 #else
-    const int fd = static_cast<int>(m_handle);
+    const int fd = as<int>(m_handle);
     if (::fsync(fd) != 0) {
         m_sticky_error = detail::errno_to_keel(errno);
         return m_sticky_error;
@@ -304,9 +304,9 @@ Result<i64> File::seek(i64 offset, SeekOrigin origin) noexcept {
     if (!SetFilePointerEx(h, li_off, &li_new, method)) {
         return detail::win32_error_to_keel(GetLastError());
     }
-    return static_cast<i64>(li_new.QuadPart);
+    return as<i64>(li_new.QuadPart);
 #else
-    const int fd = static_cast<int>(m_handle);
+    const int fd = as<int>(m_handle);
     int whence = SEEK_SET;
     if (origin == SeekOrigin::Current) whence = SEEK_CUR;
     else if (origin == SeekOrigin::End) whence = SEEK_END;
@@ -314,7 +314,7 @@ Result<i64> File::seek(i64 offset, SeekOrigin origin) noexcept {
     if (pos == static_cast<off_t>(-1)) {
         return detail::errno_to_keel(errno);
     }
-    return static_cast<i64>(pos);
+    return as<i64>(pos);
 #endif
 }
 
@@ -327,14 +327,14 @@ Result<i64> File::tell() const noexcept {
     if (!SetFilePointerEx(h, zero, &pos, FILE_CURRENT)) {
         return detail::win32_error_to_keel(GetLastError());
     }
-    return static_cast<i64>(pos.QuadPart);
+    return as<i64>(pos.QuadPart);
 #else
-    const int fd = static_cast<int>(m_handle);
+    const int fd = as<int>(m_handle);
     const off_t pos = ::lseek(fd, 0, SEEK_CUR);
     if (pos == static_cast<off_t>(-1)) {
         return detail::errno_to_keel(errno);
     }
-    return static_cast<i64>(pos);
+    return as<i64>(pos);
 #endif
 }
 
@@ -346,14 +346,14 @@ Result<i64> File::size() const noexcept {
     if (!GetFileSizeEx(h, &sz)) {
         return detail::win32_error_to_keel(GetLastError());
     }
-    return static_cast<i64>(sz.QuadPart);
+    return as<i64>(sz.QuadPart);
 #else
-    const int fd = static_cast<int>(m_handle);
+    const int fd = as<int>(m_handle);
     struct stat st {};
     if (::fstat(fd, &st) != 0) {
         return detail::errno_to_keel(errno);
     }
-    return static_cast<i64>(st.st_size);
+    return as<i64>(st.st_size);
 #endif
 }
 
@@ -371,7 +371,7 @@ Error File::close() noexcept {
     }
     return sticky;
 #else
-    const int fd = static_cast<int>(m_handle);
+    const int fd = as<int>(m_handle);
     m_handle = kInvalidHandle;
     if (::close(fd) != 0) {
         const Error close_err = detail::errno_to_keel(errno);

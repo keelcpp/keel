@@ -24,7 +24,7 @@ inline constexpr u64 kFnv1aPrime = 1099511628211ULL;
 [[nodiscard]] inline u64 fnv1a64_bytes(const void* data, usize len, u64 hash = kFnv1aOffsetBasis) noexcept {
     const auto* bytes = static_cast<const u8*>(data);
     for (usize i = 0; i < len; ++i) {
-        hash ^= static_cast<u64>(bytes[i]);
+        hash ^= as<u64>(bytes[i]);
         hash *= kFnv1aPrime;
     }
     return hash;
@@ -32,7 +32,7 @@ inline constexpr u64 kFnv1aPrime = 1099511628211ULL;
 
 [[nodiscard]] constexpr u64 fnv1a64_chars(const char* str, usize len, u64 hash = kFnv1aOffsetBasis) noexcept {
     for (usize i = 0; i < len; ++i) {
-        hash ^= static_cast<u64>(static_cast<u8>(str[i]));
+        hash ^= as<u64>(as<u8>(str[i]));
         hash *= kFnv1aPrime;
     }
     return hash;
@@ -43,7 +43,7 @@ inline constexpr u64 kFnv1aPrime = 1099511628211ULL;
 template <typename T> struct Hash {
     [[nodiscard]] constexpr u64 operator()(const T& val) const noexcept {
         if constexpr (IsIntegral<T> || IsEnum<T>) {
-            return hash_u64(static_cast<u64>(val));
+            return hash_u64(as<u64>(val));
         } else {
             static_assert(sizeof(T) == 0, "No keel::Hash specialization for this type");
             return 0;
@@ -53,13 +53,13 @@ template <typename T> struct Hash {
 
 template <typename T> struct Hash<T*> {
     [[nodiscard]] u64 operator()(T* ptr) const noexcept {
-        return hash_u64(static_cast<u64>(reinterpret_cast<usize>(ptr)));
+        return hash_u64(as<u64>(reinterpret_cast<usize>(ptr)));
     }
 };
 
 template <> struct Hash<TypeId> {
     [[nodiscard]] u64 operator()(TypeId id) const noexcept {
-        return hash_u64(static_cast<u64>(id.hash_code()));
+        return hash_u64(as<u64>(id.hash_code()));
     }
 };
 

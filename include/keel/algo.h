@@ -40,7 +40,7 @@ constexpr void sort(T* data, usize count, LessFn less = LessFn{}) noexcept {
     };
     Range stack[64]{};
     usize sp = 0;
-    stack[sp++] = Range{0, static_cast<isize>(count - 1)};
+    stack[sp++] = Range{0, as<isize>(count - 1)};
 
     while (sp > 0) {
         const Range cur = stack[--sp];
@@ -80,7 +80,7 @@ constexpr void sort(T* data, usize count, LessFn less = LessFn{}) noexcept {
         }
 
         if (hi > lo) {
-            detail::insertion_sort_range(data + lo, static_cast<usize>(hi - lo + 1), less);
+            detail::insertion_sort_range(data + lo, as<usize>(hi - lo + 1), less);
         }
     }
 }
@@ -96,7 +96,7 @@ template <typename R, typename LessFn = DefaultLess>
         r.size();
     }
 constexpr void sort(R& range, LessFn less = LessFn{}) noexcept {
-    keel::sort(range.data(), static_cast<usize>(range.size()), keel::move(less));
+    keel::sort(range.data(), as<usize>(range.size()), keel::move(less));
 }
 
 template <typename T, typename V, typename LessFn = DefaultLess>

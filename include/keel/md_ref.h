@@ -31,9 +31,9 @@ namespace detail {
 
 template <typename I> [[nodiscard]] constexpr usize normalize_extent(I value) noexcept {
     if constexpr (IsSigned<RemoveCvRef<I>>) {
-        return (value > 0) ? static_cast<usize>(value) : 0;
+        return (value > 0) ? as<usize>(value) : 0;
     } else {
-        return static_cast<usize>(value);
+        return as<usize>(value);
     }
 }
 

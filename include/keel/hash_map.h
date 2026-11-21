@@ -22,7 +22,7 @@ template <typename K, typename V, typename HashFn = Hash<K>, typename EqualFn = 
     static constexpr u8 kCtrlEmpty = 0x00;
     static constexpr u8 kCtrlDeleted = 0x01;
 
-    [[nodiscard]] static constexpr u8 make_tag(u64 h) noexcept { return static_cast<u8>(0x80u | (h >> 57)); }
+    [[nodiscard]] static constexpr u8 make_tag(u64 h) noexcept { return as<u8>(0x80u | (h >> 57)); }
     [[nodiscard]] static constexpr bool is_occupied(u8 ctrl) noexcept { return (ctrl & 0x80u) != 0; }
 
 public:
@@ -191,9 +191,9 @@ public:
 
     void reserve(usize min_items) {
         if (min_items == 0) return;
-        const u64 min_u64 = static_cast<u64>(min_items);
+        const u64 min_u64 = as<u64>(min_items);
         const u64 raw_cap = (min_u64 > (~u64{0} - 6u) / 8u) ? (u64{1} << 62) : ((min_u64 * 8u + 6u) / 7u);
-        const usize needed_cap = static_cast<usize>(bit_ceil(raw_cap));
+        const usize needed_cap = as<usize>(bit_ceil(raw_cap));
         if (needed_cap > m_cap) {
             rehash(keel::max<usize>(needed_cap, 8));
         }
@@ -296,7 +296,7 @@ private:
         const u64 h = HashFn{}(key);
         const u8 tag = make_tag(h);
         const usize mask = m_cap - 1;
-        usize idx = static_cast<usize>(h) & mask;
+        usize idx = as<usize>(h) & mask;
         for (usize step = 0; step < m_cap; ++step) {
             const u8 c = m_ctrl[idx];
             if (c == kCtrlEmpty) return kInvalidIndex;
@@ -310,7 +310,7 @@ private:
 
     [[nodiscard]] usize find_or_prepare_insert(const K& key, u64 h, u8 tag) const noexcept {
         const usize mask = m_cap - 1;
-        usize idx = static_cast<usize>(h) & mask;
+        usize idx = as<usize>(h) & mask;
         usize first_tombstone = kInvalidIndex;
         for (;;) {
             const u8 c = m_ctrl[idx];
@@ -346,7 +346,7 @@ private:
             if (is_occupied(m_ctrl[i])) {
                 const u64 h = HashFn{}(m_keys[i]);
                 const u8 tag = make_tag(h);
-                usize idx = static_cast<usize>(h) & mask;
+                usize idx = as<usize>(h) & mask;
                 while (new_ctrl[idx] != kCtrlEmpty) {
                     idx = (idx + 1) & mask;
                 }

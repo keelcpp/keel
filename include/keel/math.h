@@ -87,7 +87,7 @@ struct Limits<T> {
     using CleanT = RemoveCv<T>;
     static constexpr usize kBits = sizeof(CleanT) * 8;
     static constexpr CleanT kMin =
-        IsSigned<CleanT> ? static_cast<CleanT>(static_cast<u64>(1) << (kBits - 1)) : static_cast<CleanT>(0);
+        IsSigned<CleanT> ? static_cast<CleanT>(as<u64>(1) << (kBits - 1)) : static_cast<CleanT>(0);
     static constexpr CleanT kLowest = kMin;
     static constexpr CleanT kMax =
         IsSigned<CleanT> ? static_cast<CleanT>((~u64{0}) >> (65 - kBits)) : static_cast<CleanT>((~u64{0}) >> (64 - kBits));
@@ -162,7 +162,7 @@ template <> struct Limits<f64> {
 template <typename T>
     requires(IsSigned<T> && IsIntegral<T>)
 [[nodiscard]] constexpr T abs(T x) noexcept {
-    return (x < static_cast<T>(0)) ? static_cast<T>(0ULL - static_cast<u64>(x)) : x;
+    return (x < static_cast<T>(0)) ? static_cast<T>(0ULL - as<u64>(x)) : x;
 }
 
 [[nodiscard]] constexpr f32 abs(f32 x) noexcept {
@@ -244,7 +244,7 @@ template <typename T>
     }
 #endif
     if (!is_finite(x) || abs(x) >= 8388608.0f) return x;
-    const f32 r = static_cast<f32>(static_cast<i32>(x));
+    const f32 r = as<f32>(as<i32>(x));
     return (r == 0.0f) ? copysign(0.0f, x) : r;
 }
 
@@ -255,7 +255,7 @@ template <typename T>
     }
 #endif
     if (!is_finite(x) || abs(x) >= 4503599627370496.0) return x;
-    const f64 r = static_cast<f64>(static_cast<i64>(x));
+    const f64 r = as<f64>(as<i64>(x));
     return (r == 0.0) ? copysign(0.0, x) : r;
 }
 
@@ -354,12 +354,12 @@ template <typename T>
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr i32 round_i32(T x) noexcept {
-    const f64 d = static_cast<f64>(x);
+    const f64 d = as<f64>(x);
     if (is_nan(d)) return 0;
     if (d >= 2147483647.0) return Limits<i32>::kMax;
     if (d <= -2147483648.0) return Limits<i32>::kMin;
-    const i32 t = static_cast<i32>(d);
-    const f64 frac = d - static_cast<f64>(t);
+    const i32 t = as<i32>(d);
+    const f64 frac = d - as<f64>(t);
     if (frac >= 0.5) return t + 1;
     if (frac <= -0.5) return t - 1;
     return t;
@@ -368,13 +368,13 @@ template <typename T>
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr i64 round_i64(T x) noexcept {
-    const f64 d = static_cast<f64>(x);
+    const f64 d = as<f64>(x);
     if (is_nan(d)) return 0;
     if (d >= 9223372036854775808.0) return Limits<i64>::kMax;
     if (d <= -9223372036854775808.0) return Limits<i64>::kMin;
-    if (abs(d) >= 4503599627370496.0) return static_cast<i64>(d);
-    const i64 t = static_cast<i64>(d);
-    const f64 frac = d - static_cast<f64>(t);
+    if (abs(d) >= 4503599627370496.0) return as<i64>(d);
+    const i64 t = as<i64>(d);
+    const f64 frac = d - as<f64>(t);
     if (frac >= 0.5) return t + 1;
     if (frac <= -0.5) return t - 1;
     return t;
@@ -383,19 +383,19 @@ template <typename T>
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr u64 round_u64(T x) noexcept {
-    const f64 d = static_cast<f64>(x);
+    const f64 d = as<f64>(x);
     if (is_nan(d) || d <= 0.0) return 0ULL;
     if (d >= 18446744073709551616.0) return Limits<u64>::kMax;
-    if (d >= 4503599627370496.0) return static_cast<u64>(d);
-    const u64 t = static_cast<u64>(d);
-    return ((d - static_cast<f64>(t)) >= 0.5) ? (t + 1ULL) : t;
+    if (d >= 4503599627370496.0) return as<u64>(d);
+    const u64 t = as<u64>(d);
+    return ((d - as<f64>(t)) >= 0.5) ? (t + 1ULL) : t;
 }
 
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr u32 round_u32(T x) noexcept {
     const u64 r = round_u64(x);
-    return (r > Limits<u32>::kMax) ? Limits<u32>::kMax : static_cast<u32>(r);
+    return (r > Limits<u32>::kMax) ? Limits<u32>::kMax : as<u32>(r);
 }
 
 // Generic round-to-nearest (ties away from zero) with saturation to [Limits<Int>::kMin, Limits<Int>::kMax]; NaN -> 0.
@@ -405,11 +405,11 @@ template <typename Int, typename Float>
     using CleanInt = RemoveCv<Int>;
     if constexpr (IsUnsigned<CleanInt>) {
         const u64 r = round_u64(x);
-        return (r > static_cast<u64>(Limits<CleanInt>::kMax)) ? Limits<CleanInt>::kMax : static_cast<CleanInt>(r);
+        return (r > as<u64>(Limits<CleanInt>::kMax)) ? Limits<CleanInt>::kMax : static_cast<CleanInt>(r);
     } else {
         const i64 r = round_i64(x);
-        if (r < static_cast<i64>(Limits<CleanInt>::kMin)) return Limits<CleanInt>::kMin;
-        if (r > static_cast<i64>(Limits<CleanInt>::kMax)) return Limits<CleanInt>::kMax;
+        if (r < as<i64>(Limits<CleanInt>::kMin)) return Limits<CleanInt>::kMin;
+        if (r > as<i64>(Limits<CleanInt>::kMax)) return Limits<CleanInt>::kMax;
         return static_cast<CleanInt>(r);
     }
 }
@@ -417,47 +417,47 @@ template <typename Int, typename Float>
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr i32 floor_i32(T x) noexcept {
-    const f64 d = static_cast<f64>(x);
+    const f64 d = as<f64>(x);
     if (is_nan(d)) return 0;
     if (d >= 2147483647.0) return Limits<i32>::kMax;
     if (d <= -2147483648.0) return Limits<i32>::kMin;
-    const i32 t = static_cast<i32>(d);
-    return (static_cast<f64>(t) > d) ? (t - 1) : t;
+    const i32 t = as<i32>(d);
+    return (as<f64>(t) > d) ? (t - 1) : t;
 }
 
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr i64 floor_i64(T x) noexcept {
-    const f64 d = static_cast<f64>(x);
+    const f64 d = as<f64>(x);
     if (is_nan(d)) return 0;
     if (d >= 9223372036854775808.0) return Limits<i64>::kMax;
     if (d <= -9223372036854775808.0) return Limits<i64>::kMin;
-    if (abs(d) >= 4503599627370496.0) return static_cast<i64>(d);
-    const i64 t = static_cast<i64>(d);
-    return (static_cast<f64>(t) > d) ? (t - 1) : t;
+    if (abs(d) >= 4503599627370496.0) return as<i64>(d);
+    const i64 t = as<i64>(d);
+    return (as<f64>(t) > d) ? (t - 1) : t;
 }
 
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr i32 ceil_i32(T x) noexcept {
-    const f64 d = static_cast<f64>(x);
+    const f64 d = as<f64>(x);
     if (is_nan(d)) return 0;
     if (d >= 2147483647.0) return Limits<i32>::kMax;
     if (d <= -2147483648.0) return Limits<i32>::kMin;
-    const i32 t = static_cast<i32>(d);
-    return (static_cast<f64>(t) < d) ? (t + 1) : t;
+    const i32 t = as<i32>(d);
+    return (as<f64>(t) < d) ? (t + 1) : t;
 }
 
 template <typename T>
     requires IsFloatingPoint<T>
 [[nodiscard]] constexpr i64 ceil_i64(T x) noexcept {
-    const f64 d = static_cast<f64>(x);
+    const f64 d = as<f64>(x);
     if (is_nan(d)) return 0;
     if (d >= 9223372036854775808.0) return Limits<i64>::kMax;
     if (d <= -9223372036854775808.0) return Limits<i64>::kMin;
-    if (abs(d) >= 4503599627370496.0) return static_cast<i64>(d);
-    const i64 t = static_cast<i64>(d);
-    return (static_cast<f64>(t) < d) ? (t + 1) : t;
+    if (abs(d) >= 4503599627370496.0) return as<i64>(d);
+    const i64 t = as<i64>(d);
+    return (as<f64>(t) < d) ? (t + 1) : t;
 }
 
 // ============================================================================
@@ -527,20 +527,20 @@ template <typename T>
 [[nodiscard]] inline f32 atanh(f32 x) noexcept { return __builtin_atanhf(x); }
 [[nodiscard]] inline f64 atanh(f64 x) noexcept { return __builtin_atanh(x); }
 
-[[nodiscard]] inline f32 ldexp(f32 x, i32 exp_val) noexcept { return __builtin_ldexpf(x, static_cast<int>(exp_val)); }
-[[nodiscard]] inline f64 ldexp(f64 x, i32 exp_val) noexcept { return __builtin_ldexp(x, static_cast<int>(exp_val)); }
+[[nodiscard]] inline f32 ldexp(f32 x, i32 exp_val) noexcept { return __builtin_ldexpf(x, as<int>(exp_val)); }
+[[nodiscard]] inline f64 ldexp(f64 x, i32 exp_val) noexcept { return __builtin_ldexp(x, as<int>(exp_val)); }
 
 [[nodiscard]] inline f32 frexp(f32 x, i32* exp_out) noexcept {
     int e = 0;
     const f32 m = __builtin_frexpf(x, &e);
-    if (exp_out) *exp_out = static_cast<i32>(e);
+    if (exp_out) *exp_out = as<i32>(e);
     return m;
 }
 
 [[nodiscard]] inline f64 frexp(f64 x, i32* exp_out) noexcept {
     int e = 0;
     const f64 m = __builtin_frexp(x, &e);
-    if (exp_out) *exp_out = static_cast<i32>(e);
+    if (exp_out) *exp_out = as<i32>(e);
     return m;
 }
 

@@ -25,14 +25,14 @@ namespace detail {
 }
 
 static inline u64 read_le64(const u8* p) noexcept {
-    return static_cast<u64>(p[0]) | (static_cast<u64>(p[1]) << 8) | (static_cast<u64>(p[2]) << 16) |
-           (static_cast<u64>(p[3]) << 24) | (static_cast<u64>(p[4]) << 32) | (static_cast<u64>(p[5]) << 40) |
-           (static_cast<u64>(p[6]) << 48) | (static_cast<u64>(p[7]) << 56);
+    return as<u64>(p[0]) | (as<u64>(p[1]) << 8) | (as<u64>(p[2]) << 16) |
+           (as<u64>(p[3]) << 24) | (as<u64>(p[4]) << 32) | (as<u64>(p[5]) << 40) |
+           (as<u64>(p[6]) << 48) | (as<u64>(p[7]) << 56);
 }
 
 static inline u64 read_le32(const u8* p) noexcept {
-    return static_cast<u64>(p[0]) | (static_cast<u64>(p[1]) << 8) | (static_cast<u64>(p[2]) << 16) |
-           (static_cast<u64>(p[3]) << 24);
+    return as<u64>(p[0]) | (as<u64>(p[1]) << 8) | (as<u64>(p[2]) << 16) |
+           (as<u64>(p[3]) << 24);
 }
 
 static inline u64 wymix(u64 a, u64 b) noexcept {
@@ -88,7 +88,7 @@ u64 hash_bytes(const void* data, usize len, u64 seed) noexcept {
             a = (detail::read_le32(p) << 32) | detail::read_le32(p + ((len >> 3) << 2));
             b = (detail::read_le32(p + len - 4) << 32) | detail::read_le32(p + len - 4 - ((len >> 3) << 2));
         } else if (len > 0) {
-            a = (static_cast<u64>(p[0]) << 16) | (static_cast<u64>(p[len >> 1]) << 8) | static_cast<u64>(p[len - 1]);
+            a = (as<u64>(p[0]) << 16) | (as<u64>(p[len >> 1]) << 8) | as<u64>(p[len - 1]);
             b = 0;
         }
     } else {
@@ -116,7 +116,7 @@ u64 hash_bytes(const void* data, usize len, u64 seed) noexcept {
     a ^= kSecret1;
     b ^= seed;
     const u64 mixed = detail::wymix(a, b);
-    return detail::wymix(kSecret0 ^ static_cast<u64>(len), mixed ^ kSecret1);
+    return detail::wymix(kSecret0 ^ as<u64>(len), mixed ^ kSecret1);
 }
 
 StringRef error_message(ErrorCode code) noexcept {

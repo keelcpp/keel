@@ -123,7 +123,7 @@ template <typename T> Complex<T> complex_asinh(Complex<T> z) noexcept {
     const bool neg_re = keel::signbit(z.re);
     const Complex<T> s = neg_re ? Complex<T>(-z.re, -z.im) : z;
     // Perform intermediate arithmetic in f64 to avoid premature f32 overflow on s * s + 1
-    const c64 sd(static_cast<f64>(s.re), static_cast<f64>(s.im));
+    const c64 sd(as<f64>(s.re), as<f64>(s.im));
     const c64 root = complex_sqrt<f64>(sd * sd + 1.0);
     const c64 w = complex_log<f64>(sd + root);
     const Complex<T> out(static_cast<T>(w.re), static_cast<T>(w.im));
@@ -138,7 +138,7 @@ template <typename T> Complex<T> complex_asin(Complex<T> z) noexcept {
 
 template <typename T> Complex<T> complex_acos(Complex<T> z) noexcept {
     // Kahan's formula: acos(z) = 2 * atan2(Re(sqrt(1 - z)), Re(sqrt(1 + z))) + i * asinh(Im(conj(sqrt(1 + z)) * sqrt(1 - z)))
-    const c64 zd(static_cast<f64>(z.re), static_cast<f64>(z.im));
+    const c64 zd(as<f64>(z.re), as<f64>(z.im));
     const c64 u = complex_sqrt<f64>(1.0 - zd);
     const c64 v = complex_sqrt<f64>(1.0 + zd);
     const f64 r = 2.0 * keel::atan2(u.re, v.re);
@@ -148,7 +148,7 @@ template <typename T> Complex<T> complex_acos(Complex<T> z) noexcept {
 
 template <typename T> Complex<T> complex_acosh(Complex<T> z) noexcept {
     // Kahan's branch-cut-exact formula: 2 * log(sqrt((z + 1)/2) + sqrt((z - 1)/2))
-    const c64 zd(static_cast<f64>(z.re), static_cast<f64>(z.im));
+    const c64 zd(as<f64>(z.re), as<f64>(z.im));
     const c64 a = complex_sqrt<f64>((zd + 1.0) * 0.5);
     const c64 b = complex_sqrt<f64>((zd - 1.0) * 0.5);
     const c64 w = 2.0 * complex_log<f64>(a + b);
@@ -156,7 +156,7 @@ template <typename T> Complex<T> complex_acosh(Complex<T> z) noexcept {
 }
 
 template <typename T> Complex<T> complex_atanh(Complex<T> z) noexcept {
-    const c64 zd(static_cast<f64>(z.re), static_cast<f64>(z.im));
+    const c64 zd(as<f64>(z.re), as<f64>(z.im));
     const c64 w = 0.5 * (complex_log<f64>(1.0 + zd) - complex_log<f64>(1.0 - zd));
     return {static_cast<T>(w.re), static_cast<T>(w.im)};
 }

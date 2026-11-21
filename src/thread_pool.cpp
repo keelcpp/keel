@@ -57,7 +57,7 @@ inline u32 sub_fetch_acq_rel_u32(u32* ptr) noexcept {
 #if defined(__clang__) || defined(__GNUC__)
     return __atomic_sub_fetch(ptr, 1u, __ATOMIC_ACQ_REL);
 #else
-    return static_cast<u32>(_InterlockedDecrement(reinterpret_cast<volatile long*>(ptr)));
+    return as<u32>(_InterlockedDecrement(reinterpret_cast<volatile long*>(ptr)));
 #endif
 }
 
@@ -65,7 +65,7 @@ inline u64 load_acquire_u64(const u64* ptr) noexcept {
 #if defined(__clang__) || defined(__GNUC__)
     return __atomic_load_n(ptr, __ATOMIC_ACQUIRE);
 #else
-    return static_cast<u64>(
+    return as<u64>(
         _InterlockedCompareExchange64(reinterpret_cast<volatile __int64*>(const_cast<u64*>(ptr)), 0, 0));
 #endif
 }
@@ -148,10 +148,10 @@ u32 hardware_concurrency() noexcept {
 #elif defined(KEEL_TP_BACKEND_WIN32)
     SYSTEM_INFO sysinfo{};
     GetSystemInfo(&sysinfo);
-    return sysinfo.dwNumberOfProcessors > 0 ? static_cast<u32>(sysinfo.dwNumberOfProcessors) : 1u;
+    return sysinfo.dwNumberOfProcessors > 0 ? as<u32>(sysinfo.dwNumberOfProcessors) : 1u;
 #else
     const long n = ::sysconf(_SC_NPROCESSORS_ONLN);
-    return n > 0 ? static_cast<u32>(n) : 1u;
+    return n > 0 ? as<u32>(n) : 1u;
 #endif
 }
 
@@ -217,8 +217,8 @@ struct ThreadPool::Impl {
                 k = active;
             }
 
-            const usize chunk = (n + static_cast<usize>(k) - 1) / static_cast<usize>(k);
-            const usize start = static_cast<usize>(id) * chunk;
+            const usize chunk = (n + as<usize>(k) - 1) / as<usize>(k);
+            const usize start = as<usize>(id) * chunk;
             const usize end = (start + chunk < n) ? (start + chunk) : n;
 
             if (start < end) {
@@ -384,8 +384,8 @@ void ThreadPool::run(usize count, FunctionRef<void(usize begin, usize end)> fn, 
     if (max_workers > 0 && max_workers < k) {
         k = max_workers;
     }
-    if (static_cast<usize>(k) > count) {
-        k = static_cast<u32>(count);
+    if (as<usize>(k) > count) {
+        k = as<u32>(count);
     }
     if (k <= 1 || !m_impl) {
         fn(0, count);
@@ -404,7 +404,7 @@ void ThreadPool::run(usize count, FunctionRef<void(usize begin, usize end)> fn, 
     }
     m_impl->cv_start.notify_all();
 
-    const usize chunk = (count + static_cast<usize>(k) - 1) / static_cast<usize>(k);
+    const usize chunk = (count + as<usize>(k) - 1) / as<usize>(k);
     const usize end0 = (chunk < count) ? chunk : count;
     if (end0 > 0) {
         detail::tp::InPoolGuard in_pool_guard;

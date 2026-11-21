@@ -24,12 +24,12 @@ static bool env_utf8_to_wide(StringRef utf8, SmallArray<wchar_t, N>& out) {
     }
     if (!utf8_validate(utf8)) return false;
     const int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(),
-                                         static_cast<int>(utf8.size()), nullptr, 0);
+                                         as<int>(utf8.size()), nullptr, 0);
     if (wlen <= 0) return false;
-    out.resize(static_cast<usize>(wlen) + 1);
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), static_cast<int>(utf8.size()),
+    out.resize(as<usize>(wlen) + 1);
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), as<int>(utf8.size()),
                         out.data(), wlen);
-    out[static_cast<usize>(wlen)] = L'\0';
+    out[as<usize>(wlen)] = L'\0';
     return true;
 }
 
@@ -37,10 +37,10 @@ static bool env_wide_to_utf8(const wchar_t* wstr, usize wlen, String& out) {
     out.clear();
     if (!wstr || wlen == 0) return true;
     const int u8len =
-        WideCharToMultiByte(CP_UTF8, 0, wstr, static_cast<int>(wlen), nullptr, 0, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, wstr, as<int>(wlen), nullptr, 0, nullptr, nullptr);
     if (u8len <= 0) return false;
-    out.resize(static_cast<usize>(u8len));
-    WideCharToMultiByte(CP_UTF8, 0, wstr, static_cast<int>(wlen), out.data(), u8len, nullptr, nullptr);
+    out.resize(as<usize>(u8len));
+    WideCharToMultiByte(CP_UTF8, 0, wstr, as<int>(wlen), out.data(), u8len, nullptr, nullptr);
     return true;
 }
 #else
@@ -80,7 +80,7 @@ Optional<String> env_get(StringRef name, Allocator* alloc) {
     }
 
     SmallArray<wchar_t, 512> wbuf;
-    wbuf.resize(static_cast<usize>(needed));
+    wbuf.resize(as<usize>(needed));
     SetLastError(ERROR_SUCCESS);
     DWORD written = GetEnvironmentVariableW(wname.data(), wbuf.data(), needed);
     if (written == 0) {
@@ -89,12 +89,12 @@ Optional<String> env_get(StringRef name, Allocator* alloc) {
     }
     // Retry once if the variable grew between calls
     if (written >= needed) {
-        wbuf.resize(static_cast<usize>(written) + 1);
+        wbuf.resize(as<usize>(written) + 1);
         written = GetEnvironmentVariableW(wname.data(), wbuf.data(), static_cast<DWORD>(wbuf.size()));
     }
 
     String result(a);
-    detail::env_wide_to_utf8(wbuf.data(), static_cast<usize>(written), result);
+    detail::env_wide_to_utf8(wbuf.data(), as<usize>(written), result);
     return result;
 #else
     SmallString<128> key(name);

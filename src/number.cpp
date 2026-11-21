@@ -79,7 +79,7 @@ Fp128 compute_pow10(i32 exp10) noexcept {
 
     if (exp10 == 0) return kOne;
     Fp128 base = (exp10 > 0) ? kTen : kTenth;
-    u32 e = static_cast<u32>(exp10 > 0 ? exp10 : -exp10);
+    u32 e = as<u32>(exp10 > 0 ? exp10 : -exp10);
     Fp128 result = kOne;
     while (e > 0) {
         if ((e & 1u) != 0) {
@@ -122,11 +122,11 @@ f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated
     // Clinger fast path when both mantissa and 10^|exp10| are exact in IEEE-754 double (53 bits)
     if (!truncated && (mantissa >> 53) == 0) {
         if (exp10 >= 0 && exp10 <= 22) {
-            const f64 v = static_cast<f64>(mantissa) * kExactPow10[exp10];
+            const f64 v = as<f64>(mantissa) * kExactPow10[exp10];
             return negative ? -v : v;
         }
         if (exp10 < 0 && -exp10 <= 22) {
-            const f64 v = static_cast<f64>(mantissa) / kExactPow10[-exp10];
+            const f64 v = as<f64>(mantissa) / kExactPow10[-exp10];
             return negative ? -v : v;
         }
     }
@@ -190,7 +190,7 @@ f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated
     }
 
     const u64 sign_bit = negative ? (1ULL << 63) : 0ULL;
-    const u64 bits = sign_bit | (static_cast<u64>(ieee_exp) << 52) | sig53;
+    const u64 bits = sign_bit | (as<u64>(ieee_exp) << 52) | sig53;
     return bits_to_f64(bits);
 }
 
@@ -210,8 +210,8 @@ Result<i64, ParseError> parse_i64(StringRef str, i32 base) noexcept {
     }
     if (i >= str.size()) return ParseError{ErrorCode::InvalidData, i};
 
-    const u64 u_base = static_cast<u64>(base);
-    const u64 max_abs = negative ? (static_cast<u64>(INT64_MAX) + 1ULL) : static_cast<u64>(INT64_MAX);
+    const u64 u_base = as<u64>(base);
+    const u64 max_abs = negative ? (as<u64>(INT64_MAX) + 1ULL) : as<u64>(INT64_MAX);
     const u64 cutoff = max_abs / u_base;
     const u64 cutlim = max_abs % u_base;
 
@@ -219,7 +219,7 @@ Result<i64, ParseError> parse_i64(StringRef str, i32 base) noexcept {
     for (; i < str.size(); ++i) {
         const int d = char_to_digit(str[i]);
         if (d < 0 || d >= base) return ParseError{ErrorCode::InvalidData, i};
-        const u64 ud = static_cast<u64>(d);
+        const u64 ud = as<u64>(d);
         if (acc > cutoff || (acc == cutoff && ud > cutlim)) {
             return ParseError{ErrorCode::Overflow, i};
         }
@@ -227,10 +227,10 @@ Result<i64, ParseError> parse_i64(StringRef str, i32 base) noexcept {
     }
 
     if (negative) {
-        if (acc == static_cast<u64>(INT64_MAX) + 1ULL) return INT64_MIN;
-        return -static_cast<i64>(acc);
+        if (acc == as<u64>(INT64_MAX) + 1ULL) return INT64_MIN;
+        return -as<i64>(acc);
     }
-    return static_cast<i64>(acc);
+    return as<i64>(acc);
 }
 
 Result<u64, ParseError> parse_u64(StringRef str, i32 base) noexcept {
@@ -245,7 +245,7 @@ Result<u64, ParseError> parse_u64(StringRef str, i32 base) noexcept {
     }
     if (i >= str.size()) return ParseError{ErrorCode::InvalidData, i};
 
-    const u64 u_base = static_cast<u64>(base);
+    const u64 u_base = as<u64>(base);
     const u64 cutoff = UINT64_MAX / u_base;
     const u64 cutlim = UINT64_MAX % u_base;
 
@@ -253,7 +253,7 @@ Result<u64, ParseError> parse_u64(StringRef str, i32 base) noexcept {
     for (; i < str.size(); ++i) {
         const int d = char_to_digit(str[i]);
         if (d < 0 || d >= base) return ParseError{ErrorCode::InvalidData, i};
-        const u64 ud = static_cast<u64>(d);
+        const u64 ud = as<u64>(d);
         if (acc > cutoff || (acc == cutoff && ud > cutlim)) {
             return ParseError{ErrorCode::Overflow, i};
         }
@@ -280,7 +280,7 @@ Result<f64, ParseError> parse_f64(StringRef str) noexcept {
         return negative ? -HUGE_VAL : HUGE_VAL;
     }
     if (rem.equals_ignore_ascii_case("nan")) {
-        return static_cast<f64>(NAN);
+        return as<f64>(NAN);
     }
 
     u64 mantissa = 0;
@@ -294,7 +294,7 @@ Result<f64, ParseError> parse_f64(StringRef str) noexcept {
         const char c = str[i];
         if (c >= '0' && c <= '9') {
             any_digits = true;
-            const u32 d = static_cast<u32>(c - '0');
+            const u32 d = as<u32>(c - '0');
             if (sig_digits == 0 && d == 0) {
                 if (seen_dot) --exp10;
                 continue;
@@ -353,8 +353,8 @@ Result<f32, ParseError> parse_f32(StringRef str) noexcept {
     auto res = parse_f64(str);
     if (!res.is_ok()) return res.error();
     const f64 d = res.value();
-    if (std::isnan(d)) return static_cast<f32>(NAN);
-    const f32 f = static_cast<f32>(d);
+    if (std::isnan(d)) return as<f32>(NAN);
+    const f32 f = as<f32>(d);
     if (std::isinf(f) && !std::isinf(d)) {
         return ParseError{ErrorCode::Overflow, str.size()};
     }
@@ -366,7 +366,7 @@ usize format_u64(char* buf, usize cap, u64 value, i32 base, bool uppercase) noex
     const char* digits = uppercase ? "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "0123456789abcdefghijklmnopqrstuvwxyz";
     char tmp[68];
     usize n = 0;
-    const u64 u_base = static_cast<u64>(base);
+    const u64 u_base = as<u64>(base);
     do {
         tmp[n++] = digits[value % u_base];
         value /= u_base;
@@ -383,10 +383,10 @@ usize format_i64(char* buf, usize cap, i64 value, i32 base, bool uppercase) noex
     if (cap == 0) return 0;
     if (value < 0 && base == 10) {
         buf[0] = '-';
-        const u64 u_val = (value == INT64_MIN) ? (static_cast<u64>(INT64_MAX) + 1ULL) : static_cast<u64>(-value);
+        const u64 u_val = (value == INT64_MIN) ? (as<u64>(INT64_MAX) + 1ULL) : as<u64>(-value);
         return 1 + format_u64(buf + 1, cap - 1, u_val, base, uppercase);
     }
-    return format_u64(buf, cap, static_cast<u64>(value), base, uppercase);
+    return format_u64(buf, cap, as<u64>(value), base, uppercase);
 }
 
 namespace {
@@ -404,7 +404,7 @@ usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_
                                 i32 exp10, int max_fixed_exp = 16, bool uppercase = false) noexcept {
     char dig[24];
     for (int i = num_digits - 1; i >= 0; --i) {
-        dig[i] = static_cast<char>('0' + (digits_val % 10ULL));
+        dig[i] = as<char>('0' + (digits_val % 10ULL));
         digits_val /= 10ULL;
     }
 
@@ -447,10 +447,10 @@ usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_
         } else {
             out[pos++] = '-';
         }
-        u32 abs_exp = static_cast<u32>(sci_exp >= 0 ? sci_exp : -sci_exp);
+        u32 abs_exp = as<u32>(sci_exp >= 0 ? sci_exp : -sci_exp);
         if (abs_exp < 10) {
             out[pos++] = '0';
-            out[pos++] = static_cast<char>('0' + abs_exp);
+            out[pos++] = as<char>('0' + abs_exp);
         } else {
             pos += format_u64(out + pos, sizeof(out) - pos, abs_exp, 10, false);
         }
@@ -464,7 +464,7 @@ usize emit_decimal_sci_or_fixed(char* buf, usize cap, bool negative, u64 digits_
 } // namespace
 
 void decompose_f64_shortest(f64 abs_val, u64 ieee_exp, u64 ieee_mant, u64& out_dec, i32& out_exp10) noexcept {
-    i32 bin_exp = (ieee_exp == 0) ? -1022 : (static_cast<i32>(ieee_exp) - 1023);
+    i32 bin_exp = (ieee_exp == 0) ? -1022 : (as<i32>(ieee_exp) - 1023);
     u64 sig = (ieee_exp == 0) ? ieee_mant : ((1ULL << 52) | ieee_mant);
     const int lz = countl_zero(sig);
     bin_exp -= (lz - 11);
@@ -472,7 +472,7 @@ void decompose_f64_shortest(f64 abs_val, u64 ieee_exp, u64 ieee_mant, u64& out_d
     const i32 approx_log10 = ((bin_exp * 78913) >> 18);
     i32 exp10 = approx_log10 - 16;
 
-    const Fp128 v_fp{sig << lz, 0ULL, (ieee_exp == 0 ? -1074 : static_cast<i32>(ieee_exp) - 1075) + (63 - lz)};
+    const Fp128 v_fp{sig << lz, 0ULL, (ieee_exp == 0 ? -1074 : as<i32>(ieee_exp) - 1075) + (63 - lz)};
     const Fp128 scale = compute_pow10(-exp10);
     const Fp128 scaled = fp128_mul(v_fp, scale);
 
@@ -488,13 +488,13 @@ void decompose_f64_shortest(f64 abs_val, u64 ieee_exp, u64 ieee_mant, u64& out_d
     const u64 target_bits = f64_to_bits(abs_val);
     if (f64_to_bits(mantissa_exp10_to_f64(dec, exp10, false, false)) != target_bits) {
         for (int delta = 1; delta <= 4; ++delta) {
-            if (dec >= static_cast<u64>(delta) &&
+            if (dec >= as<u64>(delta) &&
                 f64_to_bits(mantissa_exp10_to_f64(dec - delta, exp10, false, false)) == target_bits) {
-                dec -= static_cast<u64>(delta);
+                dec -= as<u64>(delta);
                 break;
             }
             if (f64_to_bits(mantissa_exp10_to_f64(dec + delta, exp10, false, false)) == target_bits) {
-                dec += static_cast<u64>(delta);
+                dec += as<u64>(delta);
                 break;
             }
         }
@@ -579,7 +579,7 @@ usize format_f32(char* buf, usize cap, f32 value) noexcept {
     const f32 abs_val = negative ? -value : value;
     const u32 target_bits = f32_to_bits(abs_val);
 
-    i32 bin_exp = (ieee_exp == 0) ? -126 : (static_cast<i32>(ieee_exp) - 127);
+    i32 bin_exp = (ieee_exp == 0) ? -126 : (as<i32>(ieee_exp) - 127);
     u64 sig = (ieee_exp == 0) ? ieee_mant : ((1ULL << 23) | ieee_mant);
     const int lz = countl_zero(sig);
     bin_exp -= (lz - 40);
@@ -587,7 +587,7 @@ usize format_f32(char* buf, usize cap, f32 value) noexcept {
     const i32 approx_log10 = ((bin_exp * 78913) >> 18);
     i32 exp10 = approx_log10 - 8;
 
-    const Fp128 v_fp{sig << lz, 0ULL, (ieee_exp == 0 ? -149 : static_cast<i32>(ieee_exp) - 150) + (63 - lz)};
+    const Fp128 v_fp{sig << lz, 0ULL, (ieee_exp == 0 ? -149 : as<i32>(ieee_exp) - 150) + (63 - lz)};
     const Fp128 scale = compute_pow10(-exp10);
     const Fp128 scaled = fp128_mul(v_fp, scale);
 
@@ -601,18 +601,18 @@ usize format_f32(char* buf, usize cap, f32 value) noexcept {
     }
 
     auto round_trips_f32 = [&](u64 m, i32 e10) noexcept -> bool {
-        const f32 candidate = static_cast<f32>(mantissa_exp10_to_f64(m, e10, false, false));
+        const f32 candidate = as<f32>(mantissa_exp10_to_f64(m, e10, false, false));
         return f32_to_bits(candidate) == target_bits;
     };
 
     if (!round_trips_f32(dec, exp10)) {
         for (int delta = 1; delta <= 4; ++delta) {
-            if (dec >= static_cast<u64>(delta) && round_trips_f32(dec - delta, exp10)) {
-                dec -= static_cast<u64>(delta);
+            if (dec >= as<u64>(delta) && round_trips_f32(dec - delta, exp10)) {
+                dec -= as<u64>(delta);
                 break;
             }
             if (round_trips_f32(dec + delta, exp10)) {
-                dec += static_cast<u64>(delta);
+                dec += as<u64>(delta);
                 break;
             }
         }
@@ -705,9 +705,9 @@ usize format_f64_fixed(char* buf, usize cap, f64 value, i32 precision) noexcept 
     if (dec > 0) {
         d_len = format_u64(digits, sizeof(digits), dec, 10, false);
     }
-    const usize trailing_zeros = static_cast<usize>(shift);
+    const usize trailing_zeros = as<usize>(shift);
     const usize total_digits = d_len + trailing_zeros;
-    const usize prec_u = static_cast<usize>(precision);
+    const usize prec_u = as<usize>(precision);
 
     if (negative) tmp[pos++] = '-';
 
@@ -857,7 +857,7 @@ usize format_f64_scientific(char* buf, usize cap, f64 value, i32 precision, bool
     char dig[24];
     u64 tmp_dec = dec;
     for (int i = num_digits - 1; i >= 0; --i) {
-        dig[i] = static_cast<char>('0' + (tmp_dec % 10ULL));
+        dig[i] = as<char>('0' + (tmp_dec % 10ULL));
         tmp_dec /= 10ULL;
     }
 
@@ -871,10 +871,10 @@ usize format_f64_scientific(char* buf, usize cap, f64 value, i32 precision, bool
     }
     out[pos++] = uppercase ? 'E' : 'e';
     out[pos++] = (sci_exp >= 0) ? '+' : '-';
-    const u32 abs_exp = static_cast<u32>(sci_exp >= 0 ? sci_exp : -sci_exp);
+    const u32 abs_exp = as<u32>(sci_exp >= 0 ? sci_exp : -sci_exp);
     if (abs_exp < 10) {
         out[pos++] = '0';
-        out[pos++] = static_cast<char>('0' + abs_exp);
+        out[pos++] = as<char>('0' + abs_exp);
     } else {
         pos += format_u64(out + pos, sizeof(out) - pos, abs_exp, 10, false);
     }

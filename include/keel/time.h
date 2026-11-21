@@ -9,7 +9,7 @@ namespace keel {
 
 [[nodiscard]] inline u64 monotonic_us() noexcept { return monotonic_ns() / 1000ULL; }
 [[nodiscard]] inline u64 monotonic_ms() noexcept { return monotonic_ns() / 1000000ULL; }
-[[nodiscard]] inline f64 monotonic_sec() noexcept { return static_cast<f64>(monotonic_ns()) * 1e-9; }
+[[nodiscard]] inline f64 monotonic_sec() noexcept { return as<f64>(monotonic_ns()) * 1e-9; }
 
 // Wall-clock Unix epoch timestamp in nanoseconds (UTC).
 [[nodiscard]] i64 wall_clock_ns() noexcept;

@@ -27,10 +27,10 @@ namespace detail {
 [[nodiscard]] constexpr usize iroot_ceil(usize n, usize root) noexcept {
     if (n <= 1) return 1;
     if (root <= 1) return n;
-    const u64 target = static_cast<u64>(n);
+    const u64 target = as<u64>(n);
     const i32 bits = 64 - countl_zero(target);
     u64 lo = 1;
-    u64 hi = u64{1} << ((bits + static_cast<i32>(root) - 1) / static_cast<i32>(root));
+    u64 hi = u64{1} << ((bits + as<i32>(root) - 1) / as<i32>(root));
     while (lo < hi) {
         const u64 mid = lo + ((hi - lo) >> 1);
         if (upow_saturating(mid, root) < target) {
@@ -39,7 +39,7 @@ namespace detail {
             hi = mid;
         }
     }
-    return static_cast<usize>(lo > 0 ? lo : 1);
+    return as<usize>(lo > 0 ? lo : 1);
 }
 
 } // namespace detail
@@ -259,18 +259,18 @@ public:
             }
             m_nodes.push_back(Node{
                 .bounds = box,
-                .first_child = static_cast<u32>(i),
-                .count = static_cast<u16>(end - i),
+                .first_child = as<u32>(i),
+                .count = as<u16>(end - i),
                 .is_leaf = true
             });
         }
-        u32 level_end = static_cast<u32>(m_nodes.size());
+        u32 level_end = as<u32>(m_nodes.size());
 
         // 3. Build internal levels bottom-up until a single root node remains
         while (level_end - level_start > 1) {
             const u32 next_level_start = level_end;
-            for (u32 i = level_start; i < level_end; i += static_cast<u32>(NodeCap)) {
-                const u32 end = keel::min(level_end, i + static_cast<u32>(NodeCap));
+            for (u32 i = level_start; i < level_end; i += as<u32>(NodeCap)) {
+                const u32 end = keel::min(level_end, i + as<u32>(NodeCap));
                 Box box = m_nodes[i].bounds;
                 for (u32 j = i + 1; j < end; ++j) {
                     box = box.merged(m_nodes[j].bounds);
@@ -278,15 +278,15 @@ public:
                 m_nodes.push_back(Node{
                     .bounds = box,
                     .first_child = i,
-                    .count = static_cast<u16>(end - i),
+                    .count = as<u16>(end - i),
                     .is_leaf = false
                 });
             }
             level_start = next_level_start;
-            level_end = static_cast<u32>(m_nodes.size());
+            level_end = as<u32>(m_nodes.size());
         }
 
-        m_root_index = m_nodes.empty() ? 0 : static_cast<u32>(m_nodes.size() - 1);
+        m_root_index = m_nodes.empty() ? 0 : as<u32>(m_nodes.size() - 1);
     }
 
     template <typename Fn> void query_box(const Box& query, Fn&& on_hit) const {

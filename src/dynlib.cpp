@@ -43,16 +43,16 @@ static void format_win32_error_utf8(DWORD err, String& out) {
         out.assign("LoadLibraryW failed");
         return;
     }
-    usize trimmed = static_cast<usize>(wlen);
+    usize trimmed = as<usize>(wlen);
     while (trimmed > 0 && (wbuf[trimmed - 1] == L'\r' || wbuf[trimmed - 1] == L'\n')) {
         --trimmed;
     }
     if (trimmed == 0) return;
     const int u8len =
-        WideCharToMultiByte(CP_UTF8, 0, wbuf, static_cast<int>(trimmed), nullptr, 0, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, wbuf, as<int>(trimmed), nullptr, 0, nullptr, nullptr);
     if (u8len <= 0) return;
-    out.resize(static_cast<usize>(u8len));
-    WideCharToMultiByte(CP_UTF8, 0, wbuf, static_cast<int>(trimmed), out.data(), u8len, nullptr, nullptr);
+    out.resize(as<usize>(u8len));
+    WideCharToMultiByte(CP_UTF8, 0, wbuf, as<int>(trimmed), out.data(), u8len, nullptr, nullptr);
 }
 } // namespace detail
 
@@ -106,12 +106,12 @@ Result<String> dynlib_path_from_address(const void* addr, Allocator* alloc) {
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
     DWORD cap = 260;
     for (;;) {
-        wbuf.reserve(static_cast<usize>(cap));
+        wbuf.reserve(as<usize>(cap));
         const DWORD len = GetModuleFileNameW(hm, wbuf.data(), cap);
         if (len == 0) return detail::win32_error_to_keel(GetLastError());
         if (len < cap) {
             String out(alloc);
-            detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<usize>(len), out);
+            detail::win32_wide_to_utf8_path(wbuf.data(), as<usize>(len), out);
             return out;
         }
         cap *= 2;

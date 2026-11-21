@@ -14,10 +14,10 @@ i64 arg_as_i64(const FormatArg& arg) noexcept {
         return arg.i_val;
     case FormatArg::Kind::Unsigned:
     case FormatArg::Kind::Bool:
-        return static_cast<i64>(arg.u_val);
+        return as<i64>(arg.u_val);
     case FormatArg::Kind::Float:
     case FormatArg::Kind::Double:
-        return static_cast<i64>(std::round(arg.f_val));
+        return as<i64>(std::round(arg.f_val));
     default:
         return 0;
     }
@@ -30,10 +30,10 @@ u64 arg_as_u64(const FormatArg& arg) noexcept {
         return arg.u_val;
     case FormatArg::Kind::Signed:
     case FormatArg::Kind::Char:
-        return static_cast<u64>(arg.i_val);
+        return as<u64>(arg.i_val);
     case FormatArg::Kind::Float:
     case FormatArg::Kind::Double:
-        return static_cast<u64>(static_cast<i64>(std::round(arg.f_val)));
+        return as<u64>(as<i64>(std::round(arg.f_val)));
     default:
         return 0;
     }
@@ -42,7 +42,7 @@ u64 arg_as_u64(const FormatArg& arg) noexcept {
 void append_aligned_text(String& out, StringRef text, int width, char align, char fill) {
     const usize total_len = text.size();
     const usize pad_count =
-        (width > 0 && static_cast<usize>(width) > total_len) ? (static_cast<usize>(width) - total_len) : 0;
+        (width > 0 && as<usize>(width) > total_len) ? (as<usize>(width) - total_len) : 0;
     if (pad_count == 0) {
         out.append(text);
         return;
@@ -82,7 +82,7 @@ void append_padded_num(
     const usize digit_len = is_neg ? (n - 1) : n;
     const usize total_len = digit_len + (has_sign ? 1u : 0u);
     const usize pad_count =
-        (width > 0 && static_cast<usize>(width) > total_len) ? (static_cast<usize>(width) - total_len) : 0;
+        (width > 0 && as<usize>(width) > total_len) ? (as<usize>(width) - total_len) : 0;
 
     if (zero_pad && align == '\0') {
         if (has_sign) out.push_back(sign_ch);
@@ -132,7 +132,7 @@ void format_arg_into(
         } else if (arg.kind == FormatArg::Kind::CString) {
             if (precision >= 0) {
                 usize len = 0;
-                const usize max_len = static_cast<usize>(precision);
+                const usize max_len = as<usize>(precision);
                 while (len < max_len && arg.cstr_val[len] != '\0') ++len;
                 sv = StringRef(arg.cstr_val, len);
             } else {
@@ -141,8 +141,8 @@ void format_arg_into(
         } else if (arg.kind == FormatArg::Kind::Bool) {
             sv = arg.u_val ? StringRef("true") : StringRef("false");
         }
-        if (precision >= 0 && static_cast<usize>(precision) < sv.size()) {
-            sv = sv.substr(0, static_cast<usize>(precision));
+        if (precision >= 0 && as<usize>(precision) < sv.size()) {
+            sv = sv.substr(0, as<usize>(precision));
         }
         append_aligned_text(out, sv, width, align, fill);
         break;
@@ -151,10 +151,10 @@ void format_arg_into(
         char ch = '\0';
         bool has_ch = false;
         if (arg.kind == FormatArg::Kind::Char || arg.kind == FormatArg::Kind::Signed) {
-            ch = static_cast<char>(arg.i_val);
+            ch = as<char>(arg.i_val);
             has_ch = true;
         } else if (arg.kind == FormatArg::Kind::Unsigned) {
-            ch = static_cast<char>(arg.u_val);
+            ch = as<char>(arg.u_val);
             has_ch = true;
         }
         if (has_ch) {
@@ -191,7 +191,7 @@ void format_arg_into(
     case 'p': {
         out.append("0x");
         const u64 v = (arg.kind == FormatArg::Kind::Pointer)
-                          ? static_cast<u64>(reinterpret_cast<usize>(arg.ptr_val))
+                          ? as<u64>(reinterpret_cast<usize>(arg.ptr_val))
                           : arg.u_val;
         const usize n = format_u64(num_buf, sizeof(num_buf), v, 16, false);
         append_padded_num(out, num_buf, n, width, zero_pad, false, align, fill);
@@ -200,8 +200,8 @@ void format_arg_into(
     case 'f':
     case 'F': {
         const f64 v = (arg.kind == FormatArg::Kind::Signed)
-                          ? static_cast<f64>(arg.i_val)
-                          : ((arg.kind == FormatArg::Kind::Unsigned) ? static_cast<f64>(arg.u_val) : arg.f_val);
+                          ? as<f64>(arg.i_val)
+                          : ((arg.kind == FormatArg::Kind::Unsigned) ? as<f64>(arg.u_val) : arg.f_val);
         const usize n = format_f64_fixed(num_buf, sizeof(num_buf), v, precision >= 0 ? precision : 6);
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign, align, fill);
         break;
@@ -209,8 +209,8 @@ void format_arg_into(
     case 'g':
     case 'G': {
         const f64 v = (arg.kind == FormatArg::Kind::Signed)
-                          ? static_cast<f64>(arg.i_val)
-                          : ((arg.kind == FormatArg::Kind::Unsigned) ? static_cast<f64>(arg.u_val) : arg.f_val);
+                          ? as<f64>(arg.i_val)
+                          : ((arg.kind == FormatArg::Kind::Unsigned) ? as<f64>(arg.u_val) : arg.f_val);
         const usize n = format_f64_general(num_buf, sizeof(num_buf), v, precision, spec == 'G');
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign, align, fill);
         break;
@@ -218,8 +218,8 @@ void format_arg_into(
     case 'e':
     case 'E': {
         const f64 v = (arg.kind == FormatArg::Kind::Signed)
-                          ? static_cast<f64>(arg.i_val)
-                          : ((arg.kind == FormatArg::Kind::Unsigned) ? static_cast<f64>(arg.u_val) : arg.f_val);
+                          ? as<f64>(arg.i_val)
+                          : ((arg.kind == FormatArg::Kind::Unsigned) ? as<f64>(arg.u_val) : arg.f_val);
         const usize n = format_f64_scientific(num_buf, sizeof(num_buf), v, precision, spec == 'E');
         append_padded_num(out, num_buf, n, width, zero_pad, plus_sign, align, fill);
         break;
@@ -227,7 +227,7 @@ void format_arg_into(
     default: {
         if (arg.kind == FormatArg::Kind::Float) {
             const usize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
-                                             : format_f32(num_buf, sizeof(num_buf), static_cast<f32>(arg.f_val));
+                                             : format_f32(num_buf, sizeof(num_buf), as<f32>(arg.f_val));
             append_padded_num(out, num_buf, n, width, zero_pad, plus_sign, align, fill);
         } else if (arg.kind == FormatArg::Kind::Double) {
             const usize n = (precision >= 0) ? format_f64_fixed(num_buf, sizeof(num_buf), arg.f_val, precision)
@@ -242,24 +242,24 @@ void format_arg_into(
         } else if (arg.kind == FormatArg::Kind::Bool) {
             append_aligned_text(out, arg.u_val ? StringRef("true") : StringRef("false"), width, align, fill);
         } else if (arg.kind == FormatArg::Kind::Char) {
-            const char ch = static_cast<char>(arg.i_val);
+            const char ch = as<char>(arg.i_val);
             append_aligned_text(out, StringRef(&ch, 1), width, align, fill);
         } else if (arg.kind == FormatArg::Kind::StringRef) {
             StringRef sv(arg.cstr_val, arg.str_len);
-            if (precision >= 0 && static_cast<usize>(precision) < sv.size()) {
-                sv = sv.substr(0, static_cast<usize>(precision));
+            if (precision >= 0 && as<usize>(precision) < sv.size()) {
+                sv = sv.substr(0, as<usize>(precision));
             }
             append_aligned_text(out, sv, width, align, fill);
         } else if (arg.kind == FormatArg::Kind::CString) {
             StringRef sv(arg.cstr_val);
-            if (precision >= 0 && static_cast<usize>(precision) < sv.size()) {
-                sv = sv.substr(0, static_cast<usize>(precision));
+            if (precision >= 0 && as<usize>(precision) < sv.size()) {
+                sv = sv.substr(0, as<usize>(precision));
             }
             append_aligned_text(out, sv, width, align, fill);
         } else if (arg.kind == FormatArg::Kind::Pointer) {
             out.append("0x");
             const usize n =
-                format_u64(num_buf, sizeof(num_buf), static_cast<u64>(reinterpret_cast<usize>(arg.ptr_val)), 16, false);
+                format_u64(num_buf, sizeof(num_buf), as<u64>(reinterpret_cast<usize>(arg.ptr_val)), 16, false);
             append_padded_num(out, num_buf, n, width, zero_pad, false, align, fill);
         }
         break;
@@ -316,7 +316,7 @@ bool parse_brace_placeholder(StringRef fmt, usize open_pos, usize& out_close_pos
     if (p < close_pos && fmt[p] >= '0' && fmt[p] <= '9') {
         bs.has_explicit_index = true;
         while (p < close_pos && fmt[p] >= '0' && fmt[p] <= '9') {
-            bs.explicit_index = bs.explicit_index * 10 + static_cast<usize>(fmt[p] - '0');
+            bs.explicit_index = bs.explicit_index * 10 + as<usize>(fmt[p] - '0');
             ++p;
         }
     }
@@ -480,18 +480,18 @@ void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args) {
             const char spec = fmt[p];
             if (has_dyn_width && arg_idx < args.size()) {
                 const FormatArg& wa = args[arg_idx++];
-                const i64 wv = (wa.kind == FormatArg::Kind::Unsigned) ? static_cast<i64>(wa.u_val) : wa.i_val;
+                const i64 wv = (wa.kind == FormatArg::Kind::Unsigned) ? as<i64>(wa.u_val) : wa.i_val;
                 if (wv < 0) {
                     left_align = true;
-                    width = static_cast<int>(-wv);
+                    width = as<int>(-wv);
                 } else {
-                    width = static_cast<int>(wv);
+                    width = as<int>(wv);
                 }
             }
             if (has_dyn_prec && arg_idx < args.size()) {
                 const FormatArg& pa = args[arg_idx++];
-                const i64 pv = (pa.kind == FormatArg::Kind::Unsigned) ? static_cast<i64>(pa.u_val) : pa.i_val;
-                precision = (pv >= 0) ? static_cast<int>(pv) : -1;
+                const i64 pv = (pa.kind == FormatArg::Kind::Unsigned) ? as<i64>(pa.u_val) : pa.i_val;
+                precision = (pv >= 0) ? as<int>(pv) : -1;
             }
             if (arg_idx < args.size()) {
                 const char align = left_align ? '<' : ((spec == 's' || spec == 'S' || spec == 'c') ? '>' : '\0');

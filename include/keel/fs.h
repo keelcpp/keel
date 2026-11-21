@@ -55,7 +55,7 @@ template <usize N> void path_append_small(SmallString<N>& base, StringRef seg) {
     }
     const char* cur = base.data();
     if (cur && seg.data() >= cur && seg.data() <= cur + base.size()) {
-        const usize off = static_cast<usize>(seg.data() - cur);
+        const usize off = as<usize>(seg.data() - cur);
         const usize len = seg.size();
         base.reserve(base.size() + 1 + len);
         seg = StringRef(base.data() + off, len);

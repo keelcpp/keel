@@ -26,11 +26,11 @@ concept ConvertibleTo = requires(From (*f)()) { static_cast<To>(f()); };
 [[nodiscard]] constexpr i32 char_cmp(const char* a, const char* b, usize n) noexcept {
     if (n == 0) return 0;
 #if defined(__clang__) || defined(__GNUC__)
-    return static_cast<i32>(__builtin_memcmp(a, b, n));
+    return as<i32>(__builtin_memcmp(a, b, n));
 #else
     for (usize i = 0; i < n; ++i) {
-        const u8 ca = static_cast<u8>(a[i]);
-        const u8 cb = static_cast<u8>(b[i]);
+        const u8 ca = as<u8>(a[i]);
+        const u8 cb = as<u8>(b[i]);
         if (ca != cb) return (ca < cb) ? -1 : 1;
     }
     return 0;
@@ -42,7 +42,7 @@ concept ConvertibleTo = requires(From (*f)()) { static_cast<To>(f()); };
 }
 
 [[nodiscard]] constexpr char to_ascii_lower(char c) noexcept {
-    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
+    return (c >= 'A' && c <= 'Z') ? as<char>(c + ('a' - 'A')) : c;
 }
 } // namespace detail
 
@@ -65,7 +65,7 @@ public:
                     { r.size() };
                 }
     constexpr StringRef(const R& range) noexcept
-        : m_data(range.data()), m_size(static_cast<usize>(range.size())) {}
+        : m_data(range.data()), m_size(as<usize>(range.size())) {}
 
     // Zero-header conversion to std::basic_string_view<char, ...>
     template <typename SV>
@@ -262,7 +262,7 @@ public:
             { r.size() };
         }
     constexpr ArrayRef(const R& range) noexcept
-        : m_data(range.data()), m_size(static_cast<usize>(range.size())) {}
+        : m_data(range.data()), m_size(as<usize>(range.size())) {}
 
     [[nodiscard]] constexpr const T* data() const noexcept { return m_data; }
     [[nodiscard]] constexpr usize size() const noexcept { return m_size; }
@@ -332,7 +332,7 @@ public:
             { r.size() };
         }
     constexpr MutArrayRef(R& range) noexcept
-        : m_data(range.data()), m_size(static_cast<usize>(range.size())) {}
+        : m_data(range.data()), m_size(as<usize>(range.size())) {}
 
     [[nodiscard]] constexpr operator ArrayRef<T>() const noexcept { return ArrayRef<T>(m_data, m_size); }
 

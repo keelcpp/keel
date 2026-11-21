@@ -202,30 +202,30 @@ template <typename T>
     requires keel::IsFloatingPoint<T>
 struct std::hash<keel::Complex<T>> {
     std::size_t operator()(keel::Complex<T> z) const noexcept {
-        return static_cast<std::size_t>(keel::Hash<keel::Complex<T>>{}(z));
+        return keel::as<std::size_t>(keel::Hash<keel::Complex<T>>{}(z));
     }
 };
 
 template <> struct std::hash<keel::StringRef> {
     std::size_t operator()(keel::StringRef s) const noexcept {
-        return static_cast<std::size_t>(keel::Hash<keel::StringRef>{}(s));
+        return keel::as<std::size_t>(keel::Hash<keel::StringRef>{}(s));
     }
 };
 
 template <> struct std::hash<keel::String> {
     std::size_t operator()(const keel::String& s) const noexcept {
-        return static_cast<std::size_t>(keel::Hash<keel::String>{}(s));
+        return keel::as<std::size_t>(keel::Hash<keel::String>{}(s));
     }
 };
 
 template <keel::usize N> struct std::hash<keel::SmallString<N>> {
     std::size_t operator()(const keel::SmallString<N>& s) const noexcept {
-        return static_cast<std::size_t>(keel::Hash<keel::SmallString<N>>{}(s));
+        return keel::as<std::size_t>(keel::Hash<keel::SmallString<N>>{}(s));
     }
 };
 
 template <keel::usize N> struct std::hash<keel::FixedString<N>> {
     std::size_t operator()(const keel::FixedString<N>& s) const noexcept {
-        return static_cast<std::size_t>(keel::Hash<keel::FixedString<N>>{}(s));
+        return keel::as<std::size_t>(keel::Hash<keel::FixedString<N>>{}(s));
     }
 };

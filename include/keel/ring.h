@@ -253,7 +253,7 @@ public:
     }
 
 private:
-    static constexpr bool kPow2 = is_power_of_two(static_cast<u64>(N));
+    static constexpr bool kPow2 = is_power_of_two(as<u64>(N));
 
     [[nodiscard]] constexpr usize phys_index(usize logical) const noexcept {
         if constexpr (kPow2) {
@@ -413,7 +413,7 @@ public:
 
     void reserve(usize min_cap) {
         if (min_cap <= m_cap) return;
-        const usize pow2 = static_cast<usize>(bit_ceil(static_cast<u64>(min_cap < 8 ? 8 : min_cap)));
+        const usize pow2 = as<usize>(bit_ceil(as<u64>(min_cap < 8 ? 8 : min_cap)));
         reallocate(pow2);
     }
 
@@ -433,7 +433,7 @@ public:
             m_head = 0;
             m_cap = N;
         } else {
-            const usize target_cap = static_cast<usize>(bit_ceil(static_cast<u64>(m_size < 8 ? 8 : m_size)));
+            const usize target_cap = as<usize>(bit_ceil(as<u64>(m_size < 8 ? 8 : m_size)));
             if (target_cap < m_cap) {
                 reallocate(target_cap);
             }
@@ -539,7 +539,7 @@ private:
 
     template <typename... Args> T& emplace_back_slow(Args&&... args) {
         const usize min_next = keel::max<usize>(m_cap * 2, 8);
-        const usize new_cap = static_cast<usize>(bit_ceil(static_cast<u64>(min_next)));
+        const usize new_cap = as<usize>(bit_ceil(as<u64>(min_next)));
         T* new_data = m_alloc->alloc_array<T>(new_cap);
         T* slot = ::new (new_data + m_size) T(keel::forward<Args>(args)...);
         T* cur = buf_ptr();
@@ -562,7 +562,7 @@ private:
 
     template <typename... Args> T& emplace_front_slow(Args&&... args) {
         const usize min_next = keel::max<usize>(m_cap * 2, 8);
-        const usize new_cap = static_cast<usize>(bit_ceil(static_cast<u64>(min_next)));
+        const usize new_cap = as<usize>(bit_ceil(as<u64>(min_next)));
         T* new_data = m_alloc->alloc_array<T>(new_cap);
         T* slot = ::new (new_data) T(keel::forward<Args>(args)...);
         T* cur = buf_ptr();
@@ -742,7 +742,7 @@ public:
 
     void reserve(usize min_cap) {
         if (min_cap <= m_cap) return;
-        const usize pow2 = static_cast<usize>(bit_ceil(static_cast<u64>(min_cap < 8 ? 8 : min_cap)));
+        const usize pow2 = as<usize>(bit_ceil(as<u64>(min_cap < 8 ? 8 : min_cap)));
         reallocate(pow2);
     }
 
@@ -755,7 +755,7 @@ public:
             m_cap = 0;
             return;
         }
-        const usize target_cap = static_cast<usize>(bit_ceil(static_cast<u64>(m_size < 8 ? 8 : m_size)));
+        const usize target_cap = as<usize>(bit_ceil(as<u64>(m_size < 8 ? 8 : m_size)));
         if (target_cap < m_cap) {
             reallocate(target_cap);
         }

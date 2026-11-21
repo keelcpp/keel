@@ -209,7 +209,7 @@ public:
         KEEL_BOUNDS_ASSERT(m_size + count <= N);
         T* dst = data();
         if (items.data() >= dst && items.data() < dst + m_size) {
-            const usize offset = static_cast<usize>(items.data() - dst);
+            const usize offset = as<usize>(items.data() - dst);
             if constexpr (IsTriviallyCopyable<T>) {
                 mem_copy(dst + m_size, dst + offset, count * sizeof(T));
             } else {
@@ -581,7 +581,7 @@ public:
         if (count == 0) return;
         const T* cur = data();
         if (items.data() >= cur && items.data() < cur + m_size) {
-            const usize offset = static_cast<usize>(items.data() - cur);
+            const usize offset = as<usize>(items.data() - cur);
             reserve(m_size + count);
             T* dst = data();
             if constexpr (IsTriviallyCopyable<T>) {

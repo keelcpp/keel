@@ -129,7 +129,7 @@ void path_append(String& base, StringRef seg) {
     }
     const char* cur = base.data();
     if (cur && seg.data() >= cur && seg.data() <= cur + base.size()) {
-        const usize off = static_cast<usize>(seg.data() - cur);
+        const usize off = as<usize>(seg.data() - cur);
         const usize len = seg.size();
         base.reserve(base.size() + 1 + len);
         seg = StringRef(base.data() + off, len);
@@ -307,9 +307,9 @@ Result<FileStat> fs_stat(StringRef path) noexcept {
         return detail::win32_error_to_keel(GetLastError());
     }
     FileStat st{};
-    st.size = (static_cast<u64>(data.nFileSizeHigh) << 32) | static_cast<u64>(data.nFileSizeLow);
-    const i64 ticks = (static_cast<i64>(data.ftLastWriteTime.dwHighDateTime) << 32) |
-                      static_cast<i64>(data.ftLastWriteTime.dwLowDateTime);
+    st.size = (as<u64>(data.nFileSizeHigh) << 32) | as<u64>(data.nFileSizeLow);
+    const i64 ticks = (as<i64>(data.ftLastWriteTime.dwHighDateTime) << 32) |
+                      as<i64>(data.ftLastWriteTime.dwLowDateTime);
     // Windows FILETIME is 100-ns intervals since 1601-01-01; Unix epoch is 116444736000000000 ticks later
     st.mtime_ns = (ticks - 116444736000000000LL) * 100LL;
     st.is_dir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -323,11 +323,11 @@ Result<FileStat> fs_stat(StringRef path) noexcept {
         return detail::errno_to_keel(errno);
     }
     FileStat out{};
-    out.size = static_cast<u64>(st.st_size);
+    out.size = as<u64>(st.st_size);
 #if defined(__APPLE__)
-    out.mtime_ns = static_cast<i64>(st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
+    out.mtime_ns = as<i64>(st.st_mtimespec.tv_sec) * 1000000000LL + st.st_mtimespec.tv_nsec;
 #else
-    out.mtime_ns = static_cast<i64>(st.st_mtim.tv_sec) * 1000000000LL + st.st_mtim.tv_nsec;
+    out.mtime_ns = as<i64>(st.st_mtim.tv_sec) * 1000000000LL + st.st_mtim.tv_nsec;
 #endif
     out.is_dir = S_ISDIR(st.st_mode);
     out.is_file = S_ISREG(st.st_mode);
@@ -341,7 +341,7 @@ Result<Array<u8>> fs_read_file(StringRef path, Allocator* alloc) {
     if (sz < 0) return Error{ErrorCode::IoError, 0};
 
     Array<u8> buf(alloc);
-    buf.resize(static_cast<usize>(sz));
+    buf.resize(as<usize>(sz));
     usize total = 0;
     while (total < buf.size()) {
         KEEL_TRY_ASSIGN(usize n, f.read(MutArrayRef<u8>(buf.data() + total, buf.size() - total)));
@@ -358,7 +358,7 @@ Result<String> fs_read_text(StringRef path, Allocator* alloc) {
     if (sz < 0) return Error{ErrorCode::IoError, 0};
 
     String text(alloc);
-    text.resize(static_cast<usize>(sz));
+    text.resize(as<usize>(sz));
     usize total = 0;
     while (total < text.size()) {
         KEEL_TRY_ASSIGN(
@@ -611,11 +611,11 @@ Result<String> fs_current_dir(Allocator* alloc) {
     if (needed == 0) return detail::win32_error_to_keel(GetLastError());
     ArenaTemp scratch = get_scratch(alloc);
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
-    wbuf.reserve(static_cast<usize>(needed) + 1);
+    wbuf.reserve(as<usize>(needed) + 1);
     const DWORD len = GetCurrentDirectoryW(needed, wbuf.data());
     if (len == 0) return detail::win32_error_to_keel(GetLastError());
     String out(alloc);
-    detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<usize>(len), out);
+    detail::win32_wide_to_utf8_path(wbuf.data(), as<usize>(len), out);
     return out;
 #else
     char buf[4096];
@@ -670,7 +670,7 @@ Result<String> fs_temp_dir(Allocator* alloc) {
     const DWORD len = GetTempPathW(MAX_PATH + 1, wbuf);
     if (len == 0) return detail::win32_error_to_keel(GetLastError());
     String out(alloc);
-    detail::win32_wide_to_utf8_path(wbuf, static_cast<usize>(len), out);
+    detail::win32_wide_to_utf8_path(wbuf, as<usize>(len), out);
     if (out.size() > 1 && out[out.size() - 1] == '/') out.pop_back();
     return out;
 #else
@@ -790,12 +790,12 @@ Result<String> fs_exe_path(Allocator* alloc) {
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
     DWORD cap = 260;
     for (;;) {
-        wbuf.reserve(static_cast<usize>(cap));
+        wbuf.reserve(as<usize>(cap));
         const DWORD len = GetModuleFileNameW(nullptr, wbuf.data(), cap);
         if (len == 0) return detail::win32_error_to_keel(GetLastError());
         if (len < cap) {
             String out(alloc);
-            detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<usize>(len), out);
+            detail::win32_wide_to_utf8_path(wbuf.data(), as<usize>(len), out);
             return out;
         }
         cap *= 2;
@@ -805,7 +805,7 @@ Result<String> fs_exe_path(Allocator* alloc) {
     _NSGetExecutablePath(nullptr, &sz);
     ArenaTemp scratch = get_scratch(alloc);
     String buf(scratch.allocator());
-    buf.resize(static_cast<usize>(sz));
+    buf.resize(as<usize>(sz));
     if (_NSGetExecutablePath(buf.data(), &sz) != 0) {
         return Error{ErrorCode::IoError, 0};
     }
@@ -817,7 +817,7 @@ Result<String> fs_exe_path(Allocator* alloc) {
     const ssize_t len = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (len < 0) return detail::errno_to_keel(errno);
     buf[len] = '\0';
-    return String::from(StringRef(buf, static_cast<usize>(len)), alloc);
+    return String::from(StringRef(buf, as<usize>(len)), alloc);
 #endif
 }
 
@@ -838,11 +838,11 @@ Result<String> fs_absolute(StringRef path, Allocator* alloc) {
     const DWORD needed = GetFullPathNameW(wpath.data(), 0, nullptr, nullptr);
     if (needed == 0) return detail::win32_error_to_keel(GetLastError());
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
-    wbuf.reserve(static_cast<usize>(needed) + 1);
+    wbuf.reserve(as<usize>(needed) + 1);
     const DWORD len = GetFullPathNameW(wpath.data(), needed, wbuf.data(), nullptr);
     if (len == 0) return detail::win32_error_to_keel(GetLastError());
     String out(alloc);
-    detail::win32_wide_to_utf8_path(wbuf.data(), static_cast<usize>(len), out);
+    detail::win32_wide_to_utf8_path(wbuf.data(), as<usize>(len), out);
     return out;
 #else
     if (path_is_absolute(path)) {
@@ -877,7 +877,7 @@ Result<String> fs_realpath(StringRef path, Allocator* alloc) {
         return detail::win32_error_to_keel(err);
     }
     SmallArray<wchar_t, 260> wbuf(scratch.allocator());
-    wbuf.reserve(static_cast<usize>(needed) + 1);
+    wbuf.reserve(as<usize>(needed) + 1);
     const DWORD len = GetFinalPathNameByHandleW(hFile, wbuf.data(), needed, VOLUME_NAME_DOS);
     const DWORD last_err = GetLastError();
     CloseHandle(hFile);
@@ -885,7 +885,7 @@ Result<String> fs_realpath(StringRef path, Allocator* alloc) {
         return detail::win32_error_to_keel(last_err);
     }
     const wchar_t* start = wbuf.data();
-    usize wlen = static_cast<usize>(len);
+    usize wlen = as<usize>(len);
     String out(alloc);
     if (wlen >= 8 && start[0] == L'\\' && start[1] == L'\\' && start[2] == L'?' && start[3] == L'\\' &&
         (start[4] == L'U' || start[4] == L'u') && (start[5] == L'N' || start[5] == L'n') &&

@@ -20,25 +20,25 @@ inline constexpr u32 kReplacementChar = 0xFFFDu;
 }
 [[nodiscard]] constexpr bool is_ascii_blank(char c) noexcept { return c == ' ' || c == '\t'; }
 [[nodiscard]] constexpr bool is_ascii_cntrl(char c) noexcept {
-    const u8 uc = static_cast<u8>(c);
+    const u8 uc = as<u8>(c);
     return uc < 0x20u || uc == 0x7Fu;
 }
 [[nodiscard]] constexpr bool is_ascii_print(char c) noexcept {
-    const u8 uc = static_cast<u8>(c);
+    const u8 uc = as<u8>(c);
     return uc >= 0x20u && uc <= 0x7Eu;
 }
 [[nodiscard]] constexpr bool is_ascii_graph(char c) noexcept {
-    const u8 uc = static_cast<u8>(c);
+    const u8 uc = as<u8>(c);
     return uc >= 0x21u && uc <= 0x7Eu;
 }
 [[nodiscard]] constexpr bool is_ascii_punct(char c) noexcept {
     return is_ascii_graph(c) && !is_ascii_alnum(c);
 }
 [[nodiscard]] constexpr char to_ascii_lower(char c) noexcept {
-    return is_ascii_upper(c) ? static_cast<char>(c + ('a' - 'A')) : c;
+    return is_ascii_upper(c) ? as<char>(c + ('a' - 'A')) : c;
 }
 [[nodiscard]] constexpr char to_ascii_upper(char c) noexcept {
-    return is_ascii_lower(c) ? static_cast<char>(c - ('a' - 'A')) : c;
+    return is_ascii_lower(c) ? as<char>(c - ('a' - 'A')) : c;
 }
 
 // Returns true if `str` is valid UTF-8 (no overlong encodings, surrogates, or out-of-range codepoints).

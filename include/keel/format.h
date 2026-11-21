@@ -30,7 +30,7 @@ struct FormatArg {
     usize str_len = 0;
 
     constexpr FormatArg(bool v) noexcept : kind(Kind::Bool), u_val(v ? 1 : 0) {}
-    constexpr FormatArg(char v) noexcept : kind(Kind::Char), i_val(static_cast<unsigned char>(v)) {}
+    constexpr FormatArg(char v) noexcept : kind(Kind::Char), i_val(as<unsigned char>(v)) {}
     constexpr FormatArg(signed char v) noexcept : kind(Kind::Signed), i_val(v) {}
     constexpr FormatArg(short v) noexcept : kind(Kind::Signed), i_val(v) {}
     constexpr FormatArg(int v) noexcept : kind(Kind::Signed), i_val(v) {}
@@ -43,7 +43,7 @@ struct FormatArg {
     constexpr FormatArg(unsigned long v) noexcept : kind(Kind::Unsigned), u_val(v) {}
     constexpr FormatArg(unsigned long long v) noexcept : kind(Kind::Unsigned), u_val(v) {}
 
-    constexpr FormatArg(float v) noexcept : kind(Kind::Float), f_val(static_cast<f64>(v)) {}
+    constexpr FormatArg(float v) noexcept : kind(Kind::Float), f_val(as<f64>(v)) {}
     constexpr FormatArg(double v) noexcept : kind(Kind::Double), f_val(v) {}
 
     constexpr FormatArg(const char* s) noexcept : kind(Kind::CString), cstr_val(s ? s : "(null)") {}
@@ -65,7 +65,7 @@ struct FormatArg {
                     { r.size() };
                 }
     constexpr FormatArg(const R& range) noexcept
-        : kind(Kind::StringRef), cstr_val(range.data()), str_len(static_cast<usize>(range.size())) {}
+        : kind(Kind::StringRef), cstr_val(range.data()), str_len(as<usize>(range.size())) {}
 
     template <typename T>
         requires(!IsSame<RemoveCv<T>, char>)

@@ -277,7 +277,7 @@ public:
         const usize count = items.size();
         if (count == 0) return;
         if (m_data && items.data() >= m_data && items.data() < m_data + m_size) {
-            const usize offset = static_cast<usize>(items.data() - m_data);
+            const usize offset = as<usize>(items.data() - m_data);
             ensure_capacity(m_size + count);
             if constexpr (IsTriviallyCopyable<T>) {
                 mem_copy(m_data + m_size, m_data + offset, count * sizeof(T));

@@ -46,7 +46,7 @@ void mem_set(void* dst, u8 val, usize bytes) noexcept {
 
 i32 mem_cmp(const void* a, const void* b, usize bytes) noexcept {
     if (bytes == 0) return 0;
-    return static_cast<i32>(std::memcmp(a, b, bytes));
+    return as<i32>(std::memcmp(a, b, bytes));
 }
 
 namespace {
@@ -418,7 +418,7 @@ bool Arena::try_extend(void* ptr, usize old_size, usize new_size) noexcept {
             return false;
         }
         if (new_size <= old_size) {
-            m_offset = static_cast<usize>(byte_ptr - m_base) + new_size;
+            m_offset = as<usize>(byte_ptr - m_base) + new_size;
             m_last_alloc_end = m_offset;
             return true;
         }
@@ -460,7 +460,7 @@ bool Arena::try_extend(void* ptr, usize old_size, usize new_size) noexcept {
             return false;
         }
         if (new_size <= old_size) {
-            const usize new_chunk_used = static_cast<usize>(byte_ptr - base) + new_size;
+            const usize new_chunk_used = as<usize>(byte_ptr - base) + new_size;
             if (new_chunk_used == 0) {
                 return false;
             }

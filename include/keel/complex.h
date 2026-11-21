@@ -230,7 +230,7 @@ template <> struct Hash<c32> {
         const f32 i = (z.im == 0.0f) ? 0.0f : z.im;
         const u32 rb = __builtin_bit_cast(u32, r);
         const u32 ib = __builtin_bit_cast(u32, i);
-        return hash_u64((static_cast<u64>(ib) << 32) | static_cast<u64>(rb));
+        return hash_u64((as<u64>(ib) << 32) | as<u64>(rb));
     }
 };
 

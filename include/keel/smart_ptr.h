@@ -17,11 +17,11 @@ namespace detail {
 #if defined(_MSC_VER) && !defined(__clang__)
 using AtomicRefCount = volatile long;
 
-inline u32 arc_inc(AtomicRefCount& refs) noexcept { return static_cast<u32>(_InterlockedIncrement(&refs)); }
-inline u32 arc_dec(AtomicRefCount& refs) noexcept { return static_cast<u32>(_InterlockedDecrement(&refs)); }
+inline u32 arc_inc(AtomicRefCount& refs) noexcept { return as<u32>(_InterlockedIncrement(&refs)); }
+inline u32 arc_dec(AtomicRefCount& refs) noexcept { return as<u32>(_InterlockedDecrement(&refs)); }
 inline u32 arc_load(const AtomicRefCount& refs) noexcept {
     // Volatile 32-bit aligned load on x86/x64/ARM64 MSVC is atomic.
-    return static_cast<u32>(refs);
+    return as<u32>(refs);
 }
 #else
 using AtomicRefCount = u32;

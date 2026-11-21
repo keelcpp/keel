@@ -65,7 +65,7 @@ u32 utf8_decode_next(StringRef str, usize& byte_offset) noexcept {
             const u8 b1 = s[byte_offset + 1];
             if ((b1 & 0xC0u) == 0x80u) {
                 byte_offset += 2;
-                return (static_cast<u32>(b0 & 0x1Fu) << 6) | static_cast<u32>(b1 & 0x3Fu);
+                return (as<u32>(b0 & 0x1Fu) << 6) | as<u32>(b1 & 0x3Fu);
             }
         }
         ++byte_offset;
@@ -78,8 +78,8 @@ u32 utf8_decode_next(StringRef str, usize& byte_offset) noexcept {
             if ((b1 & 0xC0u) == 0x80u && (b2 & 0xC0u) == 0x80u && !(b0 == 0xE0u && b1 < 0xA0u) &&
                 !(b0 == 0xEDu && b1 >= 0xA0u)) {
                 byte_offset += 3;
-                return (static_cast<u32>(b0 & 0x0Fu) << 12) | (static_cast<u32>(b1 & 0x3Fu) << 6) |
-                       static_cast<u32>(b2 & 0x3Fu);
+                return (as<u32>(b0 & 0x0Fu) << 12) | (as<u32>(b1 & 0x3Fu) << 6) |
+                       as<u32>(b2 & 0x3Fu);
             }
         }
         ++byte_offset;
@@ -93,8 +93,8 @@ u32 utf8_decode_next(StringRef str, usize& byte_offset) noexcept {
             if ((b1 & 0xC0u) == 0x80u && (b2 & 0xC0u) == 0x80u && (b3 & 0xC0u) == 0x80u &&
                 !(b0 == 0xF0u && b1 < 0x90u) && !(b0 == 0xF4u && b1 >= 0x90u)) {
                 byte_offset += 4;
-                return (static_cast<u32>(b0 & 0x07u) << 18) | (static_cast<u32>(b1 & 0x3Fu) << 12) |
-                       (static_cast<u32>(b2 & 0x3Fu) << 6) | static_cast<u32>(b3 & 0x3Fu);
+                return (as<u32>(b0 & 0x07u) << 18) | (as<u32>(b1 & 0x3Fu) << 12) |
+                       (as<u32>(b2 & 0x3Fu) << 6) | as<u32>(b3 & 0x3Fu);
             }
         }
         ++byte_offset;
@@ -110,24 +110,24 @@ usize utf8_encode(u32 cp, char out[4]) noexcept {
         cp = kReplacementChar;
     }
     if (cp < 0x80u) {
-        out[0] = static_cast<char>(cp);
+        out[0] = as<char>(cp);
         return 1;
     }
     if (cp < 0x800u) {
-        out[0] = static_cast<char>(0xC0u | (cp >> 6));
-        out[1] = static_cast<char>(0x80u | (cp & 0x3Fu));
+        out[0] = as<char>(0xC0u | (cp >> 6));
+        out[1] = as<char>(0x80u | (cp & 0x3Fu));
         return 2;
     }
     if (cp < 0x10000u) {
-        out[0] = static_cast<char>(0xE0u | (cp >> 12));
-        out[1] = static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
-        out[2] = static_cast<char>(0x80u | (cp & 0x3Fu));
+        out[0] = as<char>(0xE0u | (cp >> 12));
+        out[1] = as<char>(0x80u | ((cp >> 6) & 0x3Fu));
+        out[2] = as<char>(0x80u | (cp & 0x3Fu));
         return 3;
     }
-    out[0] = static_cast<char>(0xF0u | (cp >> 18));
-    out[1] = static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu));
-    out[2] = static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
-    out[3] = static_cast<char>(0x80u | (cp & 0x3Fu));
+    out[0] = as<char>(0xF0u | (cp >> 18));
+    out[1] = as<char>(0x80u | ((cp >> 12) & 0x3Fu));
+    out[2] = as<char>(0x80u | ((cp >> 6) & 0x3Fu));
+    out[3] = as<char>(0x80u | (cp & 0x3Fu));
     return 4;
 }
 
@@ -153,7 +153,7 @@ enum class Utf8CharCategory : u8 {
     if (char_start >= text.size()) {
         return Utf8CharCategory::Whitespace;
     }
-    const u8 b = static_cast<u8>(text[char_start]);
+    const u8 b = as<u8>(text[char_start]);
     if (b == ' ' || b == '\t' || b == '\n' || b == '\r') {
         return Utf8CharCategory::Whitespace;
     }
@@ -173,7 +173,7 @@ usize utf8_prev_boundary(StringRef str, usize index) noexcept {
         index = str.size();
     }
     --index;
-    while (index > 0 && !utf8_is_lead_byte(static_cast<u8>(str[index]))) {
+    while (index > 0 && !utf8_is_lead_byte(as<u8>(str[index]))) {
         --index;
     }
     return index;
@@ -185,7 +185,7 @@ usize utf8_next_boundary(StringRef str, usize index) noexcept {
         return n;
     }
     ++index;
-    while (index < n && !utf8_is_lead_byte(static_cast<u8>(str[index]))) {
+    while (index < n && !utf8_is_lead_byte(as<u8>(str[index]))) {
         ++index;
     }
     return index;
@@ -227,7 +227,7 @@ usize utf8_next_word_boundary(StringRef str, usize index) noexcept {
         return n;
     }
     usize pos = index;
-    while (pos > 0 && !utf8_is_lead_byte(static_cast<u8>(str[pos]))) {
+    while (pos > 0 && !utf8_is_lead_byte(as<u8>(str[pos]))) {
         --pos;
     }
 
@@ -256,7 +256,7 @@ void utf8_word_bounds_at(StringRef str, usize index, usize& out_start, usize& ou
     if (pos == n) {
         pos = utf8_prev_boundary(str, n);
     } else {
-        while (pos > 0 && !utf8_is_lead_byte(static_cast<u8>(str[pos]))) {
+        while (pos > 0 && !utf8_is_lead_byte(as<u8>(str[pos]))) {
             --pos;
         }
     }

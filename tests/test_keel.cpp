@@ -2271,6 +2271,56 @@ void test_user_dirs_and_process_lock() {
     TEST_CHECK(rem_stack.has_value() && *rem_stack > 16u * 1024u);
 }
 
+void test_arithmetic_casts() {
+    // constexpr & runtime as<To>
+    static_assert(as<f64>(42) == 42.0);
+    static_assert(as<u8>(0x1234u & 0xFFu) == u8{0x34});
+    static_assert(as<i32>(usize{7}) == 7);
+    TEST_CHECK(as<f64>(usize{10}) / as<f64>(usize{4}) == 2.5);
+
+    // constexpr & runtime narrow<To>
+    static_assert(narrow<usize>(i64{123}) == usize{123});
+    static_assert(narrow<i8>(i32{-128}) == i8{-128});
+    static_assert(narrow<i8>(i32{127}) == i8{127});
+    static_assert(narrow<u8>(u32{255}) == u8{255});
+    static_assert(narrow<i32>(f64{-100.0}) == -100);
+    TEST_CHECK(narrow<u16>(usize{65535}) == u16{65535});
+    TEST_CHECK(narrow<f32>(f64{1.5}) == 1.5f);
+
+    // try_narrow<To> — valid & out-of-range cases
+    static_assert(try_narrow<u8>(i32{255}).has_value());
+    static_assert(!try_narrow<u8>(i32{256}).has_value());
+    static_assert(!try_narrow<u8>(i32{-1}).has_value());
+    static_assert(!try_narrow<usize>(i64{-1}).has_value());
+    static_assert(try_narrow<i8>(u32{127}).has_value());
+    static_assert(!try_narrow<i8>(u32{128}).has_value());
+    TEST_CHECK(!try_narrow<i32>(Limits<f64>::quiet_nan()).has_value());
+    TEST_CHECK(!try_narrow<i32>(Limits<f64>::infinity()).has_value());
+    TEST_CHECK(!try_narrow<i64>(9223372036854775808.0).has_value()); // 2^63 must be rejected
+    TEST_CHECK(try_narrow<i64>(-9223372036854775808.0).has_value());
+    TEST_CHECK(!try_narrow<u64>(18446744073709551616.0).has_value()); // 2^64 must be rejected
+    TEST_CHECK(!try_narrow<u64>(-1.0).has_value());
+    TEST_CHECK(!try_narrow<f32>(1e100).has_value());
+    TEST_CHECK(try_narrow<f32>(Limits<f64>::infinity()).has_value());
+
+    // saturate<To>
+    static_assert(saturate<u8>(i32{-50}) == u8{0});
+    static_assert(saturate<u8>(i32{300}) == u8{255});
+    static_assert(saturate<i8>(i32{-500}) == i8{-128});
+    static_assert(saturate<i8>(u32{500}) == i8{127});
+    static_assert(saturate<u8>(f64{-10.5}) == u8{0});
+    static_assert(saturate<u8>(f64{999.9}) == u8{255});
+    static_assert(saturate<u8>(f64{42.9}) == u8{42});
+    TEST_CHECK(saturate<i32>(Limits<f64>::quiet_nan()) == 0);
+    TEST_CHECK(saturate<i64>(Limits<f64>::infinity()) == Limits<i64>::kMax);
+    TEST_CHECK(saturate<i64>(-Limits<f64>::infinity()) == Limits<i64>::kMin);
+    TEST_CHECK(saturate<u64>(Limits<f64>::infinity()) == Limits<u64>::kMax);
+    TEST_CHECK(saturate<u64>(-5.0) == u64{0});
+    TEST_CHECK(saturate<f32>(1e100) == Limits<f32>::kMax);
+    TEST_CHECK(saturate<f32>(-1e100) == Limits<f32>::kLowest);
+    TEST_CHECK(is_nan(saturate<f32>(Limits<f64>::quiet_nan())));
+}
+
 } // namespace
 
 int main() {
@@ -2294,6 +2344,7 @@ int main() {
     test_md_ref_layouts();
     test_process_time_memory_trim_and_ascii();
     test_user_dirs_and_process_lock();
+    test_arithmetic_casts();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

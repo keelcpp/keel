@@ -407,8 +407,8 @@ public:
 
     [[nodiscard]] constexpr T* data() noexcept { return m_data; }
     [[nodiscard]] constexpr const T* data() const noexcept { return m_data; }
-    [[nodiscard]] constexpr usize size() const noexcept { return static_cast<usize>(m_size); }
-    [[nodiscard]] constexpr usize capacity() const noexcept { return static_cast<usize>(m_cap); }
+    [[nodiscard]] constexpr usize size() const noexcept { return as<usize>(m_size); }
+    [[nodiscard]] constexpr usize capacity() const noexcept { return as<usize>(m_cap); }
     [[nodiscard]] constexpr bool empty() const noexcept { return m_size == 0; }
 
     [[nodiscard]] constexpr T* begin() noexcept { return m_data; }
@@ -417,12 +417,12 @@ public:
     [[nodiscard]] constexpr const T* end() const noexcept { return m_data + m_size; }
 
     [[nodiscard]] constexpr T& operator[](usize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        KEEL_BOUNDS_ASSERT(i < as<usize>(m_size));
         return m_data[i];
     }
 
     [[nodiscard]] constexpr const T& operator[](usize i) const noexcept {
-        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        KEEL_BOUNDS_ASSERT(i < as<usize>(m_size));
         return m_data[i];
     }
 
@@ -464,7 +464,7 @@ public:
     }
 
     void reserve(usize new_cap) {
-        if (new_cap <= static_cast<usize>(m_cap)) return;
+        if (new_cap <= as<usize>(m_cap)) return;
         KEEL_ASSERT(m_arena != nullptr);
         KEEL_ASSERT(new_cap <= 0xFFFFFFFFu);
         if (!m_arena) return;
@@ -472,10 +472,10 @@ public:
             handle_oom(~usize{0}, alignof(T));
         }
 
-        const usize old_bytes = sizeof(T) * static_cast<usize>(m_cap);
+        const usize old_bytes = sizeof(T) * as<usize>(m_cap);
         const usize new_bytes = sizeof(T) * new_cap;
         if (m_data && m_arena->try_extend(m_data, old_bytes, new_bytes)) {
-            m_cap = static_cast<u32>(new_cap);
+            m_cap = as<u32>(new_cap);
             return;
         }
 
@@ -491,7 +491,7 @@ public:
             }
         }
         m_data = new_buf;
-        m_cap = static_cast<u32>(new_cap);
+        m_cap = as<u32>(new_cap);
     }
 
     void resize(usize new_size) {
@@ -499,7 +499,7 @@ public:
         if (new_size > 0xFFFFFFFFu) [[unlikely]] {
             handle_oom(~usize{0}, alignof(T));
         }
-        const u32 target = static_cast<u32>(new_size);
+        const u32 target = as<u32>(new_size);
         if (target < m_size) {
             if constexpr (!IsTriviallyDestructible<T>) {
                 for (u32 i = m_size; i > target; --i) {
@@ -532,8 +532,8 @@ public:
         const usize count = items.size();
         if (count == 0) return;
         if (m_data && items.data() >= m_data && items.data() < m_data + m_size) {
-            const usize offset = static_cast<usize>(items.data() - m_data);
-            reserve(static_cast<usize>(m_size) + count);
+            const usize offset = as<usize>(items.data() - m_data);
+            reserve(as<usize>(m_size) + count);
             if constexpr (IsTriviallyCopyable<T>) {
                 mem_copy(m_data + m_size, m_data + offset, count * sizeof(T));
             } else {
@@ -541,10 +541,10 @@ public:
                     ::new (m_data + m_size + i) T(m_data[offset + i]);
                 }
             }
-            m_size += static_cast<u32>(count);
+            m_size += as<u32>(count);
             return;
         }
-        reserve(static_cast<usize>(m_size) + count);
+        reserve(as<usize>(m_size) + count);
         if constexpr (IsTriviallyCopyable<T>) {
             mem_copy(m_data + m_size, items.data(), count * sizeof(T));
         } else {
@@ -552,12 +552,12 @@ public:
                 ::new (m_data + m_size + i) T(items[i]);
             }
         }
-        m_size += static_cast<u32>(count);
+        m_size += as<u32>(count);
     }
 
     void assign(ArrayRef<T> items) {
         if (m_data && items.data() >= m_data && items.data() < m_data + m_size) {
-            const usize offset = static_cast<usize>(items.data() - m_data);
+            const usize offset = as<usize>(items.data() - m_data);
             const usize count = items.size();
             if constexpr (IsTriviallyCopyable<T>) {
                 if (count > 0 && offset > 0) {
@@ -573,7 +573,7 @@ public:
                     m_data[i].~T();
                 }
             }
-            m_size = static_cast<u32>(count);
+            m_size = as<u32>(count);
             return;
         }
         clear();
@@ -589,14 +589,14 @@ public:
     }
 
     void remove_at(usize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
-        const usize tail = static_cast<usize>(m_size) - i - 1;
+        KEEL_BOUNDS_ASSERT(i < as<usize>(m_size));
+        const usize tail = as<usize>(m_size) - i - 1;
         if constexpr (IsTriviallyCopyable<T>) {
             if (tail > 0) {
                 mem_move(m_data + i, m_data + i + 1, tail * sizeof(T));
             }
         } else {
-            for (usize k = i; k < static_cast<usize>(m_size) - 1; ++k) {
+            for (usize k = i; k < as<usize>(m_size) - 1; ++k) {
                 m_data[k] = keel::move(m_data[k + 1]);
             }
             m_data[m_size - 1].~T();
@@ -607,9 +607,9 @@ public:
     void erase(usize i) noexcept { remove_at(i); }
 
     void swap_remove(usize i) noexcept {
-        KEEL_BOUNDS_ASSERT(i < static_cast<usize>(m_size));
+        KEEL_BOUNDS_ASSERT(i < as<usize>(m_size));
         --m_size;
-        if (i != static_cast<usize>(m_size)) {
+        if (i != as<usize>(m_size)) {
             m_data[i] = keel::move(m_data[m_size]);
         }
         if constexpr (!IsTriviallyDestructible<T>) {
@@ -640,8 +640,8 @@ private:
             handle_oom(~usize{0}, alignof(T));
         }
         const u32 next_cap = (m_cap == 0) ? 16u : (m_cap * 2u);
-        const usize old_bytes = sizeof(T) * static_cast<usize>(m_cap);
-        const usize new_bytes = sizeof(T) * static_cast<usize>(next_cap);
+        const usize old_bytes = sizeof(T) * as<usize>(m_cap);
+        const usize new_bytes = sizeof(T) * as<usize>(next_cap);
         if (m_data && m_arena->try_extend(m_data, old_bytes, new_bytes)) {
             m_cap = next_cap;
             T* elem = ::new (m_data + m_size) T(keel::forward<Args>(args)...);

@@ -194,6 +194,9 @@ template <typename T>
 inline constexpr bool IsFloatingPoint =
     IsSame<RemoveCv<T>, float> || IsSame<RemoveCv<T>, double> || IsSame<RemoveCv<T>, long double>;
 
+template <typename T>
+inline constexpr bool IsArithmetic = IsIntegral<T> || IsFloatingPoint<T>;
+
 template <typename Base, typename Derived> inline constexpr bool IsBaseOf = __is_base_of(Base, Derived);
 
 namespace detail {
@@ -332,6 +335,190 @@ template <typename T> [[nodiscard]] constexpr const T& max(const T& a, const T& 
 
 template <typename T> [[nodiscard]] constexpr const T& clamp(const T& v, const T& lo, const T& hi) noexcept {
     return (v < lo) ? lo : ((hi < v) ? hi : v);
+}
+
+// ============================================================================
+// Explicit Arithmetic Conversions: as<To>, narrow<To>, saturate<To>
+// ============================================================================
+
+namespace detail {
+
+template <typename T>
+    requires(IsIntegral<T> && !IsSame<keel::RemoveCv<T>, bool>)
+[[nodiscard]] constexpr keel::RemoveCv<T> int_min_val() noexcept {
+    using CleanT = keel::RemoveCv<T>;
+    if constexpr (IsSigned<CleanT>) {
+        return static_cast<CleanT>(u64{1} << (sizeof(CleanT) * 8 - 1));
+    } else {
+        return static_cast<CleanT>(0);
+    }
+}
+
+template <typename T>
+    requires(IsIntegral<T> && !IsSame<keel::RemoveCv<T>, bool>)
+[[nodiscard]] constexpr keel::RemoveCv<T> int_max_val() noexcept {
+    using CleanT = keel::RemoveCv<T>;
+    if constexpr (IsSigned<CleanT>) {
+        return static_cast<CleanT>((~u64{0}) >> (65 - sizeof(CleanT) * 8));
+    } else {
+        return static_cast<CleanT>((~u64{0}) >> (64 - sizeof(CleanT) * 8));
+    }
+}
+
+template <typename To, typename From>
+    requires(IsArithmetic<To> && IsArithmetic<From>)
+[[nodiscard]] constexpr bool in_numeric_range(From val) noexcept {
+    using ToT = keel::RemoveCv<To>;
+    using FromT = keel::RemoveCv<From>;
+
+    if constexpr (IsSame<ToT, bool>) {
+        return val == static_cast<FromT>(0) || val == static_cast<FromT>(1);
+    } else if constexpr (IsIntegral<ToT> && IsIntegral<FromT>) {
+        if constexpr (IsSame<FromT, bool>) {
+            return true;
+        } else if constexpr (IsSigned<FromT> == IsSigned<ToT>) {
+            if constexpr (sizeof(ToT) >= sizeof(FromT)) {
+                return true;
+            } else {
+                return val >= static_cast<FromT>(int_min_val<ToT>()) &&
+                       val <= static_cast<FromT>(int_max_val<ToT>());
+            }
+        } else if constexpr (IsSigned<FromT> && !IsSigned<ToT>) {
+            if (val < static_cast<FromT>(0)) {
+                return false;
+            }
+            return static_cast<u64>(val) <= static_cast<u64>(int_max_val<ToT>());
+        } else {
+            // Unsigned -> Signed
+            return static_cast<u64>(val) <= static_cast<u64>(int_max_val<ToT>());
+        }
+    } else if constexpr (IsIntegral<ToT> && IsFloatingPoint<FromT>) {
+        if (val != val) {
+            return false; // NaN
+        }
+        const f64 d = static_cast<f64>(val);
+        if constexpr (sizeof(ToT) == 8) {
+            if constexpr (IsSigned<ToT>) {
+                return d >= -9223372036854775808.0 && d < 9223372036854775808.0;
+            } else {
+                return d >= 0.0 && d < 18446744073709551616.0;
+            }
+        } else {
+            return d >= static_cast<f64>(int_min_val<ToT>()) && d <= static_cast<f64>(int_max_val<ToT>());
+        }
+    } else if constexpr (IsFloatingPoint<ToT> && IsIntegral<FromT>) {
+        return true;
+    } else {
+        // FloatingPoint -> FloatingPoint
+        if constexpr (sizeof(ToT) >= sizeof(FromT)) {
+            return true;
+        } else {
+            if (val != val) {
+                return true; // NaN preserved
+            }
+            const f64 d = static_cast<f64>(val);
+            if (d == __builtin_huge_val() || d == -__builtin_huge_val()) {
+                return true; // +/-inf preserved
+            }
+            constexpr f64 kF32Max = 3.4028234663852886e+38;
+            return d >= -kF32Max && d <= kF32Max;
+        }
+    }
+}
+
+} // namespace detail
+
+// Explicit arithmetic-only conversion (rejects pointers, enums, and const/reinterpret casts; zero runtime overhead).
+template <typename To, typename From>
+    requires(IsArithmetic<To> && IsArithmetic<From>)
+[[nodiscard]] constexpr RemoveCv<To> as(From val) noexcept {
+    return static_cast<RemoveCv<To>>(val);
+}
+
+// Checked narrowing / sign-changing arithmetic conversion (asserts representability via KEEL_ASSERT).
+template <typename To, typename From>
+    requires(IsArithmetic<To> && IsArithmetic<From>)
+[[nodiscard]] constexpr RemoveCv<To> narrow(From val) noexcept {
+    KEEL_ASSERT(detail::in_numeric_range<RemoveCv<To>>(val));
+    return static_cast<RemoveCv<To>>(val);
+}
+
+// UB-free saturating arithmetic conversion (clamps out-of-range values to [min, max]; NaN -> 0 for integers).
+template <typename To, typename From>
+    requires(IsArithmetic<To> && IsArithmetic<From> && !IsSame<RemoveCv<To>, bool>)
+[[nodiscard]] constexpr RemoveCv<To> saturate(From val) noexcept {
+    using ToT = RemoveCv<To>;
+    using FromT = RemoveCv<From>;
+
+    if constexpr (IsIntegral<ToT> && IsIntegral<FromT>) {
+        if constexpr (IsSame<FromT, bool>) {
+            return static_cast<ToT>(val);
+        } else if constexpr (IsSigned<FromT> == IsSigned<ToT>) {
+            if constexpr (sizeof(ToT) >= sizeof(FromT)) {
+                return static_cast<ToT>(val);
+            } else {
+                constexpr FromT kLo = static_cast<FromT>(detail::int_min_val<ToT>());
+                constexpr FromT kHi = static_cast<FromT>(detail::int_max_val<ToT>());
+                if (val < kLo) return detail::int_min_val<ToT>();
+                if (val > kHi) return detail::int_max_val<ToT>();
+                return static_cast<ToT>(val);
+            }
+        } else if constexpr (IsSigned<FromT> && !IsSigned<ToT>) {
+            if (val <= static_cast<FromT>(0)) {
+                return static_cast<ToT>(0);
+            }
+            constexpr u64 kHi = static_cast<u64>(detail::int_max_val<ToT>());
+            if (static_cast<u64>(val) > kHi) {
+                return detail::int_max_val<ToT>();
+            }
+            return static_cast<ToT>(val);
+        } else {
+            // Unsigned -> Signed
+            constexpr u64 kHi = static_cast<u64>(detail::int_max_val<ToT>());
+            if (static_cast<u64>(val) > kHi) {
+                return detail::int_max_val<ToT>();
+            }
+            return static_cast<ToT>(val);
+        }
+    } else if constexpr (IsIntegral<ToT> && IsFloatingPoint<FromT>) {
+        if (val != val) {
+            return static_cast<ToT>(0); // NaN -> 0
+        }
+        const f64 d = static_cast<f64>(val);
+        if constexpr (sizeof(ToT) == 8) {
+            if constexpr (IsSigned<ToT>) {
+                if (d <= -9223372036854775808.0) return detail::int_min_val<ToT>();
+                if (d >= 9223372036854775808.0) return detail::int_max_val<ToT>();
+                return static_cast<ToT>(d);
+            } else {
+                if (d <= 0.0) return static_cast<ToT>(0);
+                if (d >= 18446744073709551616.0) return detail::int_max_val<ToT>();
+                return static_cast<ToT>(d);
+            }
+        } else {
+            constexpr f64 kLo = static_cast<f64>(detail::int_min_val<ToT>());
+            constexpr f64 kHi = static_cast<f64>(detail::int_max_val<ToT>());
+            if (d <= kLo) return detail::int_min_val<ToT>();
+            if (d >= kHi) return detail::int_max_val<ToT>();
+            return static_cast<ToT>(d);
+        }
+    } else if constexpr (IsFloatingPoint<ToT> && IsIntegral<FromT>) {
+        return static_cast<ToT>(val);
+    } else {
+        // FloatingPoint -> FloatingPoint
+        if constexpr (sizeof(ToT) >= sizeof(FromT)) {
+            return static_cast<ToT>(val);
+        } else {
+            if (val != val) {
+                return static_cast<ToT>(val); // NaN -> NaN
+            }
+            constexpr f64 kF32Max = 3.4028234663852886e+38;
+            const f64 d = static_cast<f64>(val);
+            if (d > kF32Max) return static_cast<ToT>(kF32Max);
+            if (d < -kF32Max) return static_cast<ToT>(-kF32Max);
+            return static_cast<ToT>(d);
+        }
+    }
 }
 
 } // namespace keel
