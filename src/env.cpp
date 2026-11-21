@@ -15,7 +15,8 @@ namespace detail {
 #if defined(_WIN32)
 Error win32_error_to_keel(DWORD err) noexcept;
 
-static bool env_utf8_to_wide(StringRef utf8, SmallArray<wchar_t, 256>& out) {
+template <usize N>
+static bool env_utf8_to_wide(StringRef utf8, SmallArray<wchar_t, N>& out) {
     out.clear();
     if (utf8.empty()) {
         out.push_back(L'\0');
