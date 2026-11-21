@@ -235,6 +235,12 @@ template <typename E>
     requires IsEnum<E>
 using UnderlyingType = typename detail::UnderlyingTypeImpl<RemoveCv<E>>::Type;
 
+template <typename E>
+    requires IsEnum<E>
+[[nodiscard]] constexpr UnderlyingType<E> to_underlying(E val) noexcept {
+    return static_cast<UnderlyingType<E>>(val);
+}
+
 template <typename From, typename To>
 inline constexpr bool IsConvertible =
     detail::ImplicitlyConvertibleImpl<From, To> || (IsSame<RemoveCv<From>, void> && IsSame<RemoveCv<To>, void>);
@@ -426,11 +432,20 @@ template <typename To, typename From>
     }
 }
 
+#if defined(__SIZEOF_INT128__)
+template <typename T>
+inline constexpr bool IsInt128 =
+    IsSame<keel::RemoveCv<T>, __int128> || IsSame<keel::RemoveCv<T>, unsigned __int128>;
+#else
+template <typename T> inline constexpr bool IsInt128 = false;
+#endif
+
 } // namespace detail
 
-// Explicit arithmetic-only conversion (rejects pointers, enums, and const/reinterpret casts; zero runtime overhead).
+// Explicit numeric / enum-to-int conversion (rejects pointers, int->enum, and const/reinterpret casts; zero overhead).
 template <typename To, typename From>
-    requires(IsArithmetic<To> && IsArithmetic<From>)
+    requires(((IsArithmetic<To> || detail::IsInt128<To>) && (IsArithmetic<From> || detail::IsInt128<From>)) ||
+             (IsIntegral<To> && IsEnum<From>))
 [[nodiscard]] constexpr RemoveCv<To> as(From val) noexcept {
     return static_cast<RemoveCv<To>>(val);
 }

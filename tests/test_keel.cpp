@@ -2276,6 +2276,12 @@ void test_arithmetic_casts() {
     static_assert(as<f64>(42) == 42.0);
     static_assert(as<u8>(0x1234u & 0xFFu) == u8{0x34});
     static_assert(as<i32>(usize{7}) == 7);
+    enum class TestEnum : u8 { kZero = 0, kSeven = 7 };
+    static_assert(to_underlying(TestEnum::kSeven) == u8{7});
+    static_assert(as<usize>(TestEnum::kSeven) == usize{7});
+#if defined(__SIZEOF_INT128__)
+    static_assert(as<u64>(as<__uint128_t>(u64{10}) * as<__uint128_t>(u64{20})) == u64{200});
+#endif
     TEST_CHECK(as<f64>(usize{10}) / as<f64>(usize{4}) == 2.5);
 
     // constexpr & runtime narrow<To>

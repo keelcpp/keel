@@ -23,8 +23,8 @@ struct U128 {
 
 constexpr U128 mul64x64(u64 a, u64 b) noexcept {
 #if defined(__SIZEOF_INT128__)
-    __uint128_t p = static_cast<__uint128_t>(a) * static_cast<__uint128_t>(b);
-    return U128{static_cast<u64>(p >> 64), static_cast<u64>(p)};
+    __uint128_t p = as<__uint128_t>(a) * as<__uint128_t>(b);
+    return U128{as<u64>(p >> 64), as<u64>(p)};
 #else
     const u64 a_lo = a & 0xFFFFFFFFULL;
     const u64 a_hi = a >> 32;

@@ -16,15 +16,15 @@ enum class DynLibFlags : u32 {
 };
 
 [[nodiscard]] constexpr DynLibFlags operator|(DynLibFlags a, DynLibFlags b) noexcept {
-    return static_cast<DynLibFlags>(static_cast<u32>(a) | static_cast<u32>(b));
+    return static_cast<DynLibFlags>(to_underlying(a) | to_underlying(b));
 }
 
 [[nodiscard]] constexpr DynLibFlags operator&(DynLibFlags a, DynLibFlags b) noexcept {
-    return static_cast<DynLibFlags>(static_cast<u32>(a) & static_cast<u32>(b));
+    return static_cast<DynLibFlags>(to_underlying(a) & to_underlying(b));
 }
 
 [[nodiscard]] constexpr bool has_flag(DynLibFlags flags, DynLibFlags bit) noexcept {
-    return (static_cast<u32>(flags) & static_cast<u32>(bit)) != 0;
+    return (to_underlying(flags) & to_underlying(bit)) != 0;
 }
 
 // Platform default shared library filename extension (".so", ".dylib", ".dll") and prefix ("lib", "").

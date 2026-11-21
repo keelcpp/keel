@@ -37,8 +37,8 @@ static inline u64 read_le32(const u8* p) noexcept {
 
 static inline u64 wymix(u64 a, u64 b) noexcept {
 #if defined(__SIZEOF_INT128__)
-    __uint128_t r = static_cast<__uint128_t>(a) * static_cast<__uint128_t>(b);
-    return static_cast<u64>(r) ^ static_cast<u64>(r >> 64);
+    __uint128_t r = as<__uint128_t>(a) * as<__uint128_t>(b);
+    return as<u64>(r) ^ as<u64>(r >> 64);
 #elif defined(_MSC_VER) && defined(_M_X64)
     u64 hi = 0;
     u64 lo = 0;
