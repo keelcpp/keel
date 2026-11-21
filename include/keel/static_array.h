@@ -53,7 +53,15 @@ template <typename T, usize N> struct StaticArray {
         return as_ref().slice(offset, count);
     }
 
-    [[nodiscard]] constexpr bool operator==(const StaticArray& other) const noexcept = default;
+    [[nodiscard]] constexpr bool operator==(const StaticArray& other) const
+        noexcept(noexcept(m_data[0] == other.m_data[0])) {
+        for (usize i = 0; i < N; ++i) {
+            if (!(m_data[i] == other.m_data[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 template <typename T> struct StaticArray<T, 0> {
