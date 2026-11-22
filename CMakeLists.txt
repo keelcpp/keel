@@ -21,10 +21,15 @@ else()
         src/format.cpp
         src/io.cpp
         src/fs.cpp
+        src/mmap.cpp
         src/env.cpp
         src/process.cpp
         src/dynlib.cpp
+        src/random.cpp
+        src/sync.cpp
+        src/thread.cpp
         src/thread_pool.cpp
+        src/sysinfo.cpp
         src/time.cpp
     )
 endif()

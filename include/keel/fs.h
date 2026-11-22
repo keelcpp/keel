@@ -141,6 +141,11 @@ struct DirEntry {
 Error fs_write_file(StringRef path, ArrayRef<u8> data) noexcept;
 Error fs_write_text(StringRef path, StringRef text) noexcept;
 
+// Atomically replaces `path` by writing to a unique sibling temp file, flushing to disk (`fsync`/
+// `FlushFileBuffers`), and atomically renaming into place. Cleans up the temp file on failure.
+Error fs_write_file_atomic(StringRef path, ArrayRef<u8> data) noexcept;
+Error fs_write_text_atomic(StringRef path, StringRef text) noexcept;
+
 Error fs_create_dir(StringRef path) noexcept;
 Error fs_create_dirs(StringRef path) noexcept;
 Error fs_remove(StringRef path) noexcept;

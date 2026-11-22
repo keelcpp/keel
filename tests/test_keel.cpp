@@ -2359,6 +2359,316 @@ void test_arithmetic_casts() {
     TEST_CHECK(is_nan(saturate<f32>(Limits<f64>::quiet_nan())));
 }
 
+void test_tier1_platform_primitives() {
+    // 1. Atomic file writes
+    TEST_CHECK(fs_write_text_atomic(StringRef{}, "x").code == ErrorCode::InvalidArgument);
+    auto tdir = fs_create_temp_dir("keel_tier1_");
+    TEST_CHECK(tdir.is_ok());
+    if (tdir.is_ok()) {
+        const String cfg_path = path_join(tdir->as_ref(), "config.dat");
+        TEST_CHECK(fs_write_text_atomic(cfg_path.as_ref(), "version=1\n").is_ok());
+        auto read1 = fs_read_text(cfg_path.as_ref());
+        TEST_CHECK(read1.is_ok() && read1->as_ref() == "version=1\n");
+
+        // Atomic overwrite with different length
+        TEST_CHECK(fs_write_text_atomic(cfg_path.as_ref(), "version=2;atomic=true\n").is_ok());
+        auto read2 = fs_read_text(cfg_path.as_ref());
+        TEST_CHECK(read2.is_ok() && read2->as_ref() == "version=2;atomic=true\n");
+
+        // Atomic empty write
+        const String empty_path = path_join(tdir->as_ref(), "empty.dat");
+        TEST_CHECK(fs_write_file_atomic(empty_path.as_ref(), ArrayRef<u8>{}).is_ok());
+        auto read_empty = fs_read_file(empty_path.as_ref());
+        TEST_CHECK(read_empty.is_ok() && read_empty->empty());
+
+        // Nonexistent parent directory fails cleanly
+        const String bad_path = path_join(path_join(tdir->as_ref(), "no_such_dir").as_ref(), "x.bin");
+        TEST_CHECK(fs_write_text_atomic(bad_path.as_ref(), "fail").is_err());
+
+        // Verify no leftover temp files in directory
+        usize tmp_leftovers = 0;
+        TEST_CHECK(fs_walk_dir(tdir->as_ref(), [&](const DirEntry& ent) {
+            if (ent.name.contains(".keel_tmp_")) {
+                ++tmp_leftovers;
+            }
+            return true;
+        }).is_ok());
+        TEST_CHECK(tmp_leftovers == 0);
+
+        // 2. Memory-mapped files (MappedFile)
+        TEST_CHECK(MappedFile::open(StringRef{}).error().code == ErrorCode::InvalidArgument);
+        TEST_CHECK(MappedFile::open(bad_path.as_ref()).error().code == ErrorCode::NotFound);
+
+        auto ro_map = MappedFile::open(cfg_path.as_ref(), MapMode::ReadOnly);
+        TEST_CHECK(ro_map.is_ok() && ro_map->is_open() && static_cast<bool>(*ro_map));
+        if (ro_map.is_ok()) {
+            TEST_CHECK(ro_map->mode() == MapMode::ReadOnly);
+            TEST_CHECK(ro_map->text() == "version=2;atomic=true\n");
+            TEST_CHECK(ro_map->mutable_data() == nullptr);
+            TEST_CHECK(ro_map->mutable_bytes().empty());
+            TEST_CHECK(ro_map->flush().is_ok());
+
+            // Move semantics
+            MappedFile moved = keel::move(*ro_map);
+            TEST_CHECK(!ro_map->is_open() && moved.is_open());
+            TEST_CHECK(moved.text() == "version=2;atomic=true\n");
+            moved.close();
+            TEST_CHECK(!moved.is_open() && moved.data() == nullptr && moved.size() == 0);
+        }
+
+        // ReadWrite mapping + in-place mutation + flush
+        {
+            auto rw_map = MappedFile::open(cfg_path.as_ref(), MapMode::ReadWrite);
+            TEST_CHECK(rw_map.is_ok() && rw_map->is_open() && rw_map->mutable_data() != nullptr);
+            if (rw_map.is_ok()) {
+                u8* p = rw_map->mutable_data();
+                p[0] = static_cast<u8>('V');
+                TEST_CHECK(rw_map->flush().is_ok());
+            }
+        }
+        auto read_mut = fs_read_text(cfg_path.as_ref());
+        TEST_CHECK(read_mut.is_ok() && read_mut->as_ref() == "Version=2;atomic=true\n");
+
+        // CopyOnWrite mapping: in-memory mutation must NOT alter the file on disk
+        {
+            auto cow_map = MappedFile::open(cfg_path.as_ref(), MapMode::CopyOnWrite);
+            TEST_CHECK(cow_map.is_ok() && cow_map->is_open() && cow_map->mode() == MapMode::CopyOnWrite);
+            if (cow_map.is_ok()) {
+                u8* p = cow_map->mutable_data();
+                TEST_CHECK(p != nullptr && cow_map->mutable_bytes().size() == cow_map->size());
+                p[0] = static_cast<u8>('X');
+                TEST_CHECK(cow_map->text().starts_with("Xersion=2"));
+                TEST_CHECK(cow_map->flush().is_ok()); // no-op for CopyOnWrite
+            }
+        }
+        auto read_after_cow = fs_read_text(cfg_path.as_ref());
+        TEST_CHECK(read_after_cow.is_ok() && read_after_cow->as_ref() == "Version=2;atomic=true\n");
+
+        // open_create non-empty + 0-byte mapping
+        const String created_path = path_join(tdir->as_ref(), "created.bin");
+        {
+            auto cmap = MappedFile::open_create(created_path.as_ref(), 16);
+            TEST_CHECK(cmap.is_ok() && cmap->is_open() && cmap->size() == 16);
+            if (cmap.is_ok()) {
+                MutArrayRef<u8> dst = cmap->mutable_bytes();
+                for (usize i = 0; i < dst.size(); ++i) {
+                    dst[i] = static_cast<u8>(0x30u + i);
+                }
+                TEST_CHECK(cmap->flush().is_ok());
+            }
+        }
+        auto verify_created = MappedFile::open(created_path.as_ref(), MapMode::ReadOnly);
+        TEST_CHECK(verify_created.is_ok() && verify_created->size() == 16 && verify_created->bytes()[15] == 0x3Fu);
+
+        const String zero_path = path_join(tdir->as_ref(), "zero.bin");
+        auto zmap = MappedFile::open_create(zero_path.as_ref(), 0);
+        TEST_CHECK(zmap.is_ok() && zmap->is_open() && zmap->empty() && zmap->data() == nullptr);
+        auto zopen = MappedFile::open(zero_path.as_ref(), MapMode::ReadOnly);
+        TEST_CHECK(zopen.is_ok() && zopen->is_open() && zopen->empty() && zopen->data() == nullptr);
+
+        TEST_CHECK(fs_remove_all(tdir->as_ref()).is_ok());
+    }
+
+    // 3. OS cryptographic entropy
+    TEST_CHECK(os_random_bytes(MutArrayRef<u8>{}).is_ok());
+    u8 rand_buf[64]{};
+    TEST_CHECK(os_random_bytes(MutArrayRef<u8>(rand_buf, sizeof(rand_buf))).is_ok());
+    bool any_nonzero = false;
+    bool any_diff = false;
+    for (usize i = 0; i < sizeof(rand_buf); ++i) {
+        if (rand_buf[i] != 0) any_nonzero = true;
+        if (rand_buf[i] != rand_buf[0]) any_diff = true;
+    }
+    TEST_CHECK(any_nonzero && any_diff);
+
+    auto r64_a = os_random_u64();
+    auto r64_b = os_random_u64();
+    auto r32 = os_random_u32();
+    TEST_CHECK(r64_a.is_ok() && r64_b.is_ok() && r32.is_ok());
+    if (r64_a.is_ok() && r64_b.is_ok()) {
+        TEST_CHECK(*r64_a != *r64_b);
+    }
+
+    // 4. Synchronization primitives & Thread
+    const u64 main_tid = thread_id();
+    TEST_CHECK(main_tid != 0);
+    thread_yield();
+    thread_set_name("keel_test_main");
+
+    {
+        Mutex mtx;
+        TEST_CHECK(mtx.try_lock());
+        mtx.unlock();
+        {
+            LockGuard<Mutex> lg(mtx);
+        }
+        {
+            UniqueLock<Mutex> ul(mtx);
+            TEST_CHECK(ul.owns_lock() && ul.mutex() == &mtx);
+            ul.unlock();
+            TEST_CHECK(!ul.owns_lock());
+            ul.lock();
+            TEST_CHECK(ul.owns_lock());
+            UniqueLock<Mutex> ul2 = keel::move(ul);
+            TEST_CHECK(!ul.owns_lock() && ul2.owns_lock());
+        }
+    }
+
+    TEST_CHECK(Thread::spawn(Function<void()>{}).error().code == ErrorCode::InvalidArgument);
+
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    {
+        Mutex counter_mtx;
+        u64 counter = 0;
+        u64 worker_tid = 0;
+        Array<Thread> workers;
+        for (i32 t = 0; t < 4; ++t) {
+            auto th = Thread::spawn(
+                [&counter_mtx, &counter, &worker_tid, t]() {
+                    if (t == 0) {
+                        LockGuard<Mutex> g(counter_mtx);
+                        worker_tid = thread_id();
+                    }
+                    for (i32 i = 0; i < 2000; ++i) {
+                        LockGuard<Mutex> g(counter_mtx);
+                        ++counter;
+                    }
+                },
+                "keel_worker");
+            TEST_CHECK(th.is_ok() && th->joinable());
+            if (th.is_ok()) {
+                workers.push_back(keel::move(*th));
+            }
+        }
+        for (usize i = 0; i < workers.size(); ++i) {
+            workers[i].join();
+            TEST_CHECK(!workers[i].joinable());
+        }
+        TEST_CHECK(counter == 8000ULL);
+        TEST_CHECK(worker_tid != 0 && worker_tid != main_tid);
+    }
+
+    // CondVar timeout & producer-consumer wakeup (testing UniqueLock<Mutex> overload)
+    {
+        Mutex cv_mtx;
+        CondVar cv;
+        bool ready = false;
+        {
+            UniqueLock<Mutex> lk(cv_mtx);
+            TEST_CHECK(!cv.wait_for_ms(lk, 5, [&ready]() { return ready; }));
+        }
+        auto producer = Thread::spawn([&cv_mtx, &cv, &ready]() {
+            sleep_ms(10);
+            {
+                LockGuard<Mutex> g(cv_mtx);
+                ready = true;
+            }
+            cv.notify_one();
+        });
+        TEST_CHECK(producer.is_ok());
+        {
+            UniqueLock<Mutex> lk(cv_mtx);
+            TEST_CHECK(cv.wait_for_ms(lk, 2000, [&ready]() { return ready; }));
+            TEST_CHECK(ready && lk.owns_lock());
+        }
+        // Scope-exit auto-join in ~Thread()
+    }
+
+    // SharedMutex & SharedLock: concurrent readers + exclusive writer exclusion
+    {
+        SharedMutex rw;
+        {
+            SharedLock<SharedMutex> r1(rw);
+            SharedLock<SharedMutex> r2(rw);
+            TEST_CHECK(r1.owns_lock() && r2.owns_lock());
+            // Move transfer of SharedLock
+            SharedLock<SharedMutex> r3 = keel::move(r2);
+            TEST_CHECK(!r2.owns_lock() && r3.owns_lock());
+        }
+        u64 shared_val = 42;
+        u64 reader_sum = 0;
+        Mutex sum_mtx;
+        Event writer_done(true, false);
+        auto writer = Thread::spawn([&]() {
+            LockGuard<SharedMutex> w(rw);
+            shared_val = 100;
+            writer_done.set();
+        });
+        TEST_CHECK(writer.is_ok());
+        TEST_CHECK(writer_done.wait_for_ms(2000));
+        Array<Thread> readers;
+        for (i32 i = 0; i < 4; ++i) {
+            auto rth = Thread::spawn([&]() {
+                SharedLock<SharedMutex> r(rw);
+                const u64 v = shared_val;
+                LockGuard<Mutex> sg(sum_mtx);
+                reader_sum += v;
+            });
+            TEST_CHECK(rth.is_ok());
+            if (rth.is_ok()) readers.push_back(keel::move(*rth));
+        }
+        for (usize i = 0; i < readers.size(); ++i) readers[i].join();
+        TEST_CHECK(reader_sum == 400ULL);
+    }
+
+    // Event: manual-reset and auto-reset
+    {
+        Event manual_ev(true, false);
+        TEST_CHECK(!manual_ev.is_set());
+        TEST_CHECK(!manual_ev.wait_for_ms(5));
+        auto sig_th = Thread::spawn([&manual_ev]() {
+            sleep_ms(5);
+            manual_ev.set();
+        });
+        TEST_CHECK(sig_th.is_ok());
+        TEST_CHECK(manual_ev.wait_for_ms(2000));
+        TEST_CHECK(manual_ev.is_set());
+        TEST_CHECK(manual_ev.wait_for_ms(1)); // still set because manual-reset
+        manual_ev.reset();
+        TEST_CHECK(!manual_ev.is_set());
+
+        Event auto_ev(false, false);
+        auto_ev.set();
+        TEST_CHECK(auto_ev.wait_for_ms(100));
+        TEST_CHECK(!auto_ev.is_set()); // consumed by wait
+        TEST_CHECK(!auto_ev.wait_for_ms(5));
+    }
+#endif
+
+    // 5. System & hardware info
+    static_assert(!sys_os_name().empty());
+    static_assert(!sys_cpu_arch().empty());
+    TEST_CHECK(sys_cpu_count() >= 1u && sys_cpu_count() == hardware_concurrency());
+    const usize ps = sys_page_size();
+    TEST_CHECK(ps >= 4096u && (ps & (ps - 1u)) == 0u);
+    const u64 total_ram = sys_total_ram_bytes();
+    const u64 avail_ram = sys_available_ram_bytes();
+#if !defined(__EMSCRIPTEN__)
+    TEST_CHECK(total_ram > 0ULL);
+    TEST_CHECK(avail_ram <= total_ram);
+#else
+    (void)total_ram;
+    (void)avail_ram;
+#endif
+    const String os_ver = sys_os_version();
+    TEST_CHECK(!os_ver.empty());
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+    // Verify strict POSIX LC_ALL precedence over LANG
+    {
+        const Optional<String> prev_lc_all = env_get("LC_ALL");
+        TEST_CHECK(env_set("LC_ALL", "C").is_ok());
+        TEST_CHECK(sys_locale().as_ref() == "C");
+        if (prev_lc_all.has_value()) {
+            (void)env_set("LC_ALL", prev_lc_all->as_ref());
+        } else {
+            (void)env_unset("LC_ALL");
+        }
+    }
+#endif
+    const String loc = sys_locale();
+    (void)loc;
+}
+
 } // namespace
 
 int main() {
@@ -2383,6 +2693,7 @@ int main() {
     test_process_time_memory_trim_and_ascii();
     test_user_dirs_and_process_lock();
     test_arithmetic_casts();
+    test_tier1_platform_primitives();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

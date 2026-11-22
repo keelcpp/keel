@@ -380,6 +380,208 @@ Error fs_write_text(StringRef path, StringRef text) noexcept {
     return fs_write_file(path, ArrayRef<u8>(reinterpret_cast<const u8*>(text.data()), text.size()));
 }
 
+Error fs_write_file_atomic(StringRef path, ArrayRef<u8> data) noexcept {
+    if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+
+    static std::atomic<u64> s_atomic_seq{0};
+    const u64 pid = process_id();
+    const StringRef dir = path_dirname(path);
+    const StringRef base = path_basename(path);
+    if (base.empty()) return Error{ErrorCode::InvalidArgument, 0};
+
+    ArenaTemp scratch = get_scratch();
+
+    auto build_tmp_path = [&](u64 seq) -> String {
+        String name(scratch.allocator());
+        name.reserve(base.size() + 48u);
+        name.push_back('.');
+        name.append(base);
+        name.append(".keel_tmp_");
+        char num_buf[32]{};
+        usize n1 = format_u64(num_buf, sizeof(num_buf), pid);
+        name.append(StringRef(num_buf, n1));
+        name.push_back('_');
+        usize n2 = format_u64(num_buf, sizeof(num_buf), seq);
+        name.append(StringRef(num_buf, n2));
+        if (dir == "." && path.find('/') == kInvalidIndex && path.find('\\') == kInvalidIndex) {
+            return name;
+        }
+        return path_join(dir, name, scratch.allocator());
+    };
+
+#if defined(_WIN32)
+    SmallArray<wchar_t, 260> wtarget(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(path, wtarget)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+
+    HANDLE h = INVALID_HANDLE_VALUE;
+    SmallArray<wchar_t, 260> wtmp(scratch.allocator());
+    for (u32 attempt = 0; attempt < 64u; ++attempt) {
+        const u64 seq = s_atomic_seq.fetch_add(1u, std::memory_order_relaxed);
+        const String tmp_path = build_tmp_path(seq);
+        wtmp.clear();
+        if (!detail::utf8_path_to_win32_wide(tmp_path, wtmp)) {
+            return Error{ErrorCode::InvalidArgument, 0};
+        }
+        h = CreateFileW(
+            wtmp.data(),
+            GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        );
+        if (h != INVALID_HANDLE_VALUE) {
+            break;
+        }
+        const DWORD err = GetLastError();
+        if (err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS) {
+            return detail::win32_error_to_keel(err);
+        }
+    }
+    if (h == INVALID_HANDLE_VALUE) {
+        return Error{ErrorCode::AlreadyExists, 0};
+    }
+
+    Error write_err = Error::ok();
+    usize written_total = 0;
+    while (written_total < data.size()) {
+        const usize rem = data.size() - written_total;
+        const DWORD chunk = (rem > 0x40000000u) ? 0x40000000u : as<DWORD>(rem);
+        DWORD written = 0;
+        if (!WriteFile(h, data.data() + written_total, chunk, &written, nullptr)) {
+            write_err = detail::win32_error_to_keel(GetLastError());
+            break;
+        }
+        if (written == 0) {
+            write_err = Error{ErrorCode::IoError, 0};
+            break;
+        }
+        written_total += as<usize>(written);
+    }
+
+    if (write_err.is_ok() && !FlushFileBuffers(h)) {
+        write_err = detail::win32_error_to_keel(GetLastError());
+    }
+    if (!CloseHandle(h) && write_err.is_ok()) {
+        write_err = detail::win32_error_to_keel(GetLastError());
+    }
+    if (write_err.is_err()) {
+        DeleteFileW(wtmp.data());
+        return write_err;
+    }
+
+    if (!MoveFileExW(wtmp.data(), wtarget.data(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DWORD move_win_err = GetLastError();
+        if (move_win_err == ERROR_ACCESS_DENIED) {
+            const DWORD attrs = GetFileAttributesW(wtarget.data());
+            if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+                SetFileAttributesW(wtarget.data(), attrs & ~static_cast<DWORD>(FILE_ATTRIBUTE_READONLY));
+                if (MoveFileExW(wtmp.data(), wtarget.data(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+                    return Error::ok();
+                }
+                move_win_err = GetLastError();
+            }
+        }
+        const Error move_err = detail::win32_error_to_keel(move_win_err);
+        DeleteFileW(wtmp.data());
+        return move_err;
+    }
+    return Error::ok();
+#else
+    const String ctarget = String::from(path, scratch.allocator());
+    struct stat existing_st{};
+    const bool had_existing = (::stat(ctarget.c_str(), &existing_st) == 0);
+
+    int fd = -1;
+    String ctmp(scratch.allocator());
+    for (u32 attempt = 0; attempt < 64u; ++attempt) {
+        const u64 seq = s_atomic_seq.fetch_add(1u, std::memory_order_relaxed);
+        ctmp = build_tmp_path(seq);
+        const mode_t create_mode = had_existing ? (existing_st.st_mode & 0777u) : static_cast<mode_t>(0666);
+        int open_flags = O_WRONLY | O_CREAT | O_EXCL;
+#if defined(O_CLOEXEC)
+        open_flags |= O_CLOEXEC;
+#endif
+        fd = ::open(ctmp.c_str(), open_flags, create_mode);
+        if (fd >= 0) {
+            break;
+        }
+        if (errno != EEXIST) {
+            return detail::errno_to_keel(errno);
+        }
+    }
+    if (fd < 0) {
+        return Error{ErrorCode::AlreadyExists, EEXIST};
+    }
+
+    Error write_err = Error::ok();
+    usize written_total = 0;
+    while (written_total < data.size()) {
+        const ssize_t n = ::write(fd, data.data() + written_total, data.size() - written_total);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            write_err = detail::errno_to_keel(errno);
+            break;
+        }
+        if (n == 0) {
+            write_err = Error{ErrorCode::IoError, 0};
+            break;
+        }
+        written_total += as<usize>(n);
+    }
+
+    if (write_err.is_ok()) {
+#if !defined(__EMSCRIPTEN__)
+        if (::fsync(fd) != 0 && errno != EINVAL && errno != EROFS && errno != ENOTSUP) {
+            write_err = detail::errno_to_keel(errno);
+        }
+#endif
+    }
+    if (had_existing && write_err.is_ok()) {
+        (void)::fchmod(fd, existing_st.st_mode & 0777u);
+    }
+    if (::close(fd) != 0 && write_err.is_ok()) {
+        write_err = detail::errno_to_keel(errno);
+    }
+    if (write_err.is_err()) {
+        (void)::unlink(ctmp.c_str());
+        return write_err;
+    }
+
+    if (std::rename(ctmp.c_str(), ctarget.c_str()) != 0) {
+        const Error ren_err = detail::errno_to_keel(errno);
+        (void)::unlink(ctmp.c_str());
+        return ren_err;
+    }
+#if !defined(__EMSCRIPTEN__)
+    // Best-effort parent directory fsync so the directory entry rename survives power loss.
+    {
+        const String cdir = String::from(dir.empty() ? StringRef(".") : dir, scratch.allocator());
+        int dir_flags = O_RDONLY;
+#if defined(O_DIRECTORY)
+        dir_flags |= O_DIRECTORY;
+#endif
+#if defined(O_CLOEXEC)
+        dir_flags |= O_CLOEXEC;
+#endif
+        const int dir_fd = ::open(cdir.c_str(), dir_flags);
+        if (dir_fd >= 0) {
+            (void)::fsync(dir_fd);
+            (void)::close(dir_fd);
+        }
+    }
+#endif
+    return Error::ok();
+#endif
+}
+
+Error fs_write_text_atomic(StringRef path, StringRef text) noexcept {
+    return fs_write_file_atomic(path, ArrayRef<u8>(reinterpret_cast<const u8*>(text.data()), text.size()));
+}
+
 Error fs_create_dir(StringRef path) noexcept {
     if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
 #if defined(_WIN32)
