@@ -17,10 +17,12 @@ struct ProcessEnvVar {
 struct ProcessOptions {
     StringRef cwd{};                              // Working directory (empty = inherit parent cwd)
     ArrayRef<ProcessEnvVar> env{};                // Additional/overridden environment variables for child
+    StringRef stdin_data{};                       // Optional data piped to child stdin before closing stdin
     bool capture_stdout = true;                   // Capture child stdout into ProcessOutput::stdout_text
     bool capture_stderr = true;                   // Capture child stderr into ProcessOutput::stderr_text
     bool merge_stderr = false;                    // Redirect child stderr into stdout_text
     usize max_output_bytes = 64u * 1024u * 1024u; // Cap per captured stream (0 = unlimited)
+    u64 timeout_ms = 0;                           // Timeout in milliseconds (0 = unlimited; kills child on timeout)
 };
 
 struct ProcessOutput {
@@ -40,6 +42,75 @@ struct ProcessOutput {
 [[nodiscard]] Result<ProcessOutput> process_run_shell(StringRef command,
                                                       const ProcessOptions& opts = {},
                                                       Allocator* alloc = nullptr);
+
+// Move-only asynchronous child process handle (`spawn`, `try_wait`, `wait`, `wait_for_ms`, `kill`).
+class ChildProcess {
+public:
+    ChildProcess() noexcept = default;
+    ~ChildProcess() noexcept;
+
+    ChildProcess(const ChildProcess&) = delete;
+    ChildProcess& operator=(const ChildProcess&) = delete;
+
+    ChildProcess(ChildProcess&& other) noexcept
+        : m_handle(other.m_handle), m_pid(other.m_pid), m_exit_code(other.m_exit_code), m_exited(other.m_exited) {
+        other.m_handle = 0;
+        other.m_pid = 0;
+        other.m_exit_code = -1;
+        other.m_exited = false;
+    }
+
+    ChildProcess& operator=(ChildProcess&& other) noexcept {
+        if (this != &other) {
+            close_handle();
+            m_handle = other.m_handle;
+            m_pid = other.m_pid;
+            m_exit_code = other.m_exit_code;
+            m_exited = other.m_exited;
+            other.m_handle = 0;
+            other.m_pid = 0;
+            other.m_exit_code = -1;
+            other.m_exited = false;
+        }
+        return *this;
+    }
+
+    // Spawns a child process asynchronously from `argv` (respects `opts.cwd` and `opts.env`).
+    [[nodiscard]] static Result<ChildProcess> spawn(ArrayRef<StringRef> argv,
+                                                    const ProcessOptions& opts = {});
+
+    [[nodiscard]] bool valid() const noexcept { return m_handle != 0 || m_exited; }
+    [[nodiscard]] explicit operator bool() const noexcept { return valid(); }
+    [[nodiscard]] u64 pid() const noexcept { return m_pid; }
+
+    // Non-blocking poll: returns exit code if exited, kNullOpt if still running.
+    [[nodiscard]] Result<Optional<i32>> try_wait() noexcept;
+
+    // Blocks until the child exits and returns its exit code.
+    [[nodiscard]] Result<i32> wait() noexcept;
+
+    // Blocks up to `timeout_ms` ms; returns ErrorCode::TimedOut if still running.
+    [[nodiscard]] Result<i32> wait_for_ms(u64 timeout_ms) noexcept;
+
+    // Forcefully terminates the child process (`SIGKILL` on POSIX, `TerminateProcess` on Win32).
+    Error kill() noexcept;
+
+private:
+    void close_handle() noexcept;
+
+    usize m_handle = 0;
+    u64 m_pid = 0;
+    i32 m_exit_code = -1;
+    bool m_exited = false;
+};
+
+// Returns the current process's command-line arguments as UTF-8 strings (even on Windows).
+[[nodiscard]] Result<Array<String>> process_args(Allocator* alloc = nullptr);
+
+// Installs an async-signal-safe graceful-shutdown handler for SIGINT/SIGTERM (or Ctrl+C/Break on Win32).
+void process_install_interrupt_handler() noexcept;
+[[nodiscard]] bool process_interrupt_requested() noexcept;
+void process_reset_interrupt() noexcept;
 
 // Searches PATH (and PATHEXT on Win32) for an executable `program` without spawning a shell.
 [[nodiscard]] Optional<String> process_which(StringRef program, Allocator* alloc = nullptr);

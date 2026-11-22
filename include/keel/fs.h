@@ -2,6 +2,7 @@
 
 #include "keel/array.h"
 #include "keel/function_ref.h"
+#include "keel/io.h"
 #include "keel/result.h"
 #include "keel/string.h"
 
@@ -158,6 +159,26 @@ Error fs_set_mtime_now(StringRef path) noexcept;
 Error fs_set_current_dir(StringRef path) noexcept;
 [[nodiscard]] Result<String> fs_temp_dir(Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_create_temp_dir(StringRef prefix = "keel_", Allocator* alloc = nullptr);
+
+// Atomically created & opened unique temporary file (eliminates TOCTOU races).
+struct TempFile {
+    File file;
+    String path;
+};
+[[nodiscard]] Result<TempFile> fs_create_temp_file(StringRef prefix = "keel_", Allocator* alloc = nullptr);
+
+// Filesystem volume capacity & free space at `path`.
+struct DiskSpace {
+    u64 total_bytes = 0;     // Total capacity of the filesystem
+    u64 free_bytes = 0;      // Total unallocated bytes (including root/reserved blocks)
+    u64 available_bytes = 0; // Bytes available to the calling non-privileged user
+};
+[[nodiscard]] Result<DiskSpace> fs_disk_space(StringRef path) noexcept;
+
+// Symbolic link inspection, creation, and resolution.
+[[nodiscard]] bool fs_is_symlink(StringRef path) noexcept;
+Error fs_create_symlink(StringRef target, StringRef link_path) noexcept;
+[[nodiscard]] Result<String> fs_read_symlink(StringRef link_path, Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_home_dir(Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_config_dir(Allocator* alloc = nullptr);
 [[nodiscard]] Result<String> fs_data_dir(Allocator* alloc = nullptr);

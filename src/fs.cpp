@@ -11,6 +11,7 @@
 
 #if defined(_WIN32)
 #include "win32_compat.h"
+#include <winioctl.h>
 #else
 #include <cerrno>
 #include <cstdio>
@@ -19,6 +20,7 @@
 #include <fcntl.h>
 #if !defined(__EMSCRIPTEN__)
 #include <pwd.h>
+#include <sys/statvfs.h>
 #endif
 #include <sys/stat.h>
 #include <time.h>
@@ -1398,6 +1400,273 @@ Result<String> fs_create_temp_dir(StringRef prefix, Allocator* alloc) {
         }
     }
     return Error{ErrorCode::AlreadyExists, 0};
+#endif
+}
+
+File file_from_native_handle_internal(i64 handle) noexcept;
+
+Result<TempFile> fs_create_temp_file(StringRef prefix, Allocator* alloc) {
+    for (usize i = 0; i < prefix.size(); ++i) {
+        if (prefix[i] == '/' || prefix[i] == '\\') {
+            return Error{ErrorCode::InvalidArgument, 0};
+        }
+    }
+    const StringRef pfx = prefix.empty() ? StringRef("keel_") : prefix;
+    ArenaTemp scratch = get_scratch(alloc);
+    KEEL_TRY_ASSIGN(String tmp_root, fs_temp_dir(scratch.allocator()));
+
+    static std::atomic<u64> s_temp_file_seq{0};
+    const u64 pid = process_id();
+
+    for (u32 attempt = 0; attempt < 64u; ++attempt) {
+        const u64 seq = s_temp_file_seq.fetch_add(1u, std::memory_order_relaxed);
+        const u64 ns = monotonic_ns();
+        char hex_buf[32]{};
+        String leaf(scratch.allocator());
+        leaf.reserve(pfx.size() + 48u);
+        leaf.append(pfx);
+        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), pid, 16, false)));
+        leaf.push_back('_');
+        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), ns, 16, false)));
+        leaf.push_back('_');
+        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), seq, 16, false)));
+        String cand = path_join(tmp_root.as_ref(), leaf.as_ref(), scratch.allocator());
+
+#if defined(_WIN32)
+        SmallArray<wchar_t, 260> wpath(scratch.allocator());
+        if (!detail::utf8_path_to_win32_wide(cand.as_ref(), wpath)) {
+            return Error{ErrorCode::InvalidArgument, 0};
+        }
+        HANDLE h = CreateFileW(
+            wpath.data(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_TEMPORARY,
+            nullptr
+        );
+        if (h != INVALID_HANDLE_VALUE) {
+            String norm = path_normalize(cand.as_ref(), alloc);
+            return TempFile{
+                file_from_native_handle_internal(static_cast<i64>(reinterpret_cast<isize>(h))),
+                keel::move(norm)
+            };
+        }
+        const DWORD err = GetLastError();
+        if (err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS) {
+            return detail::win32_error_to_keel(err);
+        }
+#else
+        int flags = O_RDWR | O_CREAT | O_EXCL;
+#if defined(O_CLOEXEC)
+        flags |= O_CLOEXEC;
+#endif
+        const int fd = ::open(cand.c_str(), flags, static_cast<mode_t>(0600));
+        if (fd >= 0) {
+            String norm = path_normalize(cand.as_ref(), alloc);
+            return TempFile{
+                file_from_native_handle_internal(as<i64>(fd)),
+                keel::move(norm)
+            };
+        }
+        if (errno != EEXIST) {
+            return detail::errno_to_keel(errno);
+        }
+#endif
+    }
+    return Error{ErrorCode::AlreadyExists, 0};
+}
+
+Result<DiskSpace> fs_disk_space(StringRef path) noexcept {
+    if (path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(__EMSCRIPTEN__)
+    return Error{ErrorCode::NotSupported, 0};
+#elif defined(_WIN32)
+    ArenaTemp scratch = get_scratch();
+    SmallArray<wchar_t, 260> wpath(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(path, wpath)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    ULARGE_INTEGER avail{};
+    ULARGE_INTEGER total{};
+    ULARGE_INTEGER free_b{};
+    if (!GetDiskFreeSpaceExW(wpath.data(), &avail, &total, &free_b)) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    return DiskSpace{
+        static_cast<u64>(total.QuadPart),
+        static_cast<u64>(free_b.QuadPart),
+        static_cast<u64>(avail.QuadPart)
+    };
+#else
+    ArenaTemp scratch = get_scratch();
+    const String cpath = String::from(path, scratch.allocator());
+    struct statvfs sv{};
+    if (::statvfs(cpath.c_str(), &sv) != 0) {
+        return detail::errno_to_keel(errno);
+    }
+    const u64 unit = (sv.f_frsize > 0) ? static_cast<u64>(sv.f_frsize) : static_cast<u64>(sv.f_bsize);
+    return DiskSpace{
+        static_cast<u64>(sv.f_blocks) * unit,
+        static_cast<u64>(sv.f_bfree) * unit,
+        static_cast<u64>(sv.f_bavail) * unit
+    };
+#endif
+}
+
+bool fs_is_symlink(StringRef path) noexcept {
+    if (path.empty()) return false;
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch();
+    SmallArray<wchar_t, 260> wpath(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(path, wpath)) return false;
+    const DWORD attrs = GetFileAttributesW(wpath.data());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+        return false;
+    }
+    WIN32_FIND_DATAW fdata{};
+    HANDLE fh = FindFirstFileW(wpath.data(), &fdata);
+    if (fh == INVALID_HANDLE_VALUE) return false;
+    FindClose(fh);
+    return fdata.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+#else
+    ArenaTemp scratch = get_scratch();
+    const String cpath = String::from(path, scratch.allocator());
+    struct stat st{};
+    if (::lstat(cpath.c_str(), &st) != 0) return false;
+    return S_ISLNK(st.st_mode);
+#endif
+}
+
+Error fs_create_symlink(StringRef target, StringRef link_path) noexcept {
+    if (target.empty() || link_path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch();
+    SmallArray<wchar_t, 260> wtarget(scratch.allocator());
+    SmallArray<wchar_t, 260> wlink(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(target, wtarget) || !detail::utf8_path_to_win32_wide(link_path, wlink)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    static constexpr DWORD kUnprivilegedFlag = 0x2u; // SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+    DWORD flags = kUnprivilegedFlag;
+    bool target_is_dir = false;
+    if (path_is_absolute(target)) {
+        target_is_dir = fs_is_dir(target);
+    } else {
+        const StringRef link_dir = path_dirname(link_path);
+        const String resolved = path_join(link_dir, target, scratch.allocator());
+        target_is_dir = fs_is_dir(resolved.as_ref());
+    }
+    if (target_is_dir) {
+        flags |= SYMBOLIC_LINK_FLAG_DIRECTORY;
+    }
+    if (!CreateSymbolicLinkW(wlink.data(), wtarget.data(), flags)) {
+        // Retry without unprivileged flag on older Windows builds
+        const DWORD first_err = GetLastError();
+        if (first_err == ERROR_INVALID_PARAMETER) {
+            flags &= ~kUnprivilegedFlag;
+            if (CreateSymbolicLinkW(wlink.data(), wtarget.data(), flags)) {
+                return Error::ok();
+            }
+            return detail::win32_error_to_keel(GetLastError());
+        }
+        return detail::win32_error_to_keel(first_err);
+    }
+    return Error::ok();
+#else
+    ArenaTemp scratch = get_scratch();
+    const String ctarget = String::from(target, scratch.allocator());
+    const String clink = String::from(link_path, scratch.allocator());
+    if (::symlink(ctarget.c_str(), clink.c_str()) != 0) {
+        return detail::errno_to_keel(errno);
+    }
+    return Error::ok();
+#endif
+}
+
+Result<String> fs_read_symlink(StringRef link_path, Allocator* alloc) {
+    if (link_path.empty()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(_WIN32)
+    ArenaTemp scratch = get_scratch(alloc);
+    SmallArray<wchar_t, 260> wlink(scratch.allocator());
+    if (!detail::utf8_path_to_win32_wide(link_path, wlink)) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    HANDLE h = CreateFileW(
+        wlink.data(),
+        0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr
+    );
+    if (h == INVALID_HANDLE_VALUE) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    u8 raw_buf[MAXIMUM_REPARSE_DATA_BUFFER_SIZE]{};
+    DWORD bytes_ret = 0;
+    const BOOL ok = DeviceIoControl(
+        h, FSCTL_GET_REPARSE_POINT, nullptr, 0, raw_buf, sizeof(raw_buf), &bytes_ret, nullptr);
+    const DWORD io_err = ok ? 0 : GetLastError();
+    CloseHandle(h);
+    if (!ok) {
+        return detail::win32_error_to_keel(io_err);
+    }
+    struct KeelReparseSymlinkHeader {
+        ULONG reparse_tag;
+        USHORT reparse_data_length;
+        USHORT reserved;
+        USHORT substitute_name_offset;
+        USHORT substitute_name_length;
+        USHORT print_name_offset;
+        USHORT print_name_length;
+        ULONG flags;
+    };
+    if (bytes_ret < sizeof(KeelReparseSymlinkHeader)) {
+        return Error{ErrorCode::InvalidData, 0};
+    }
+    KeelReparseSymlinkHeader hdr{};
+    mem_copy(&hdr, raw_buf, sizeof(hdr));
+    if (hdr.reparse_tag != IO_REPARSE_TAG_SYMLINK) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    const usize base_off = sizeof(KeelReparseSymlinkHeader);
+    const usize name_off = (hdr.print_name_length > 0) ? hdr.print_name_offset : hdr.substitute_name_offset;
+    const usize name_len = (hdr.print_name_length > 0) ? hdr.print_name_length : hdr.substitute_name_length;
+    if (base_off + name_off + name_len > as<usize>(bytes_ret)) {
+        return Error{ErrorCode::InvalidData, 0};
+    }
+    const usize wchars = name_len / sizeof(wchar_t);
+    SmallArray<wchar_t, 260> wtarget(scratch.allocator());
+    wtarget.resize(wchars);
+    if (name_len > 0) {
+        mem_copy(wtarget.data(), raw_buf + base_off + name_off, wchars * sizeof(wchar_t));
+    }
+    String out(alloc);
+    detail::win32_wide_to_utf8_path(wtarget.data(), wchars, out);
+    return out;
+#else
+    ArenaTemp scratch = get_scratch(alloc);
+    const String clink = String::from(link_path, scratch.allocator());
+    usize cap = 256u;
+    for (;;) {
+        String buf(alloc);
+        buf.resize(cap);
+        const ssize_t n = ::readlink(clink.c_str(), buf.data(), cap);
+        if (n < 0) {
+            return detail::errno_to_keel(errno);
+        }
+        if (as<usize>(n) < cap) {
+            buf.resize(as<usize>(n));
+            return buf;
+        }
+        if (cap >= 65536u) {
+            return Error{ErrorCode::OutOfRange, 0};
+        }
+        cap *= 2u;
+    }
 #endif
 }
 

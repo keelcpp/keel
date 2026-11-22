@@ -1,5 +1,6 @@
 // Single-file unity translation unit for keel (`KEEL_UNITY_BUILD=ON` or direct embedding).
 #include "core.cpp"
+#include "atomic.cpp"
 #include "math.cpp"
 #include "complex.cpp"
 #include "memory.cpp"
@@ -8,6 +9,7 @@
 #include "format.cpp"
 #include "io.cpp"
 #include "fs.cpp"
+#include "fs_watch.cpp"
 #include "mmap.cpp"
 #include "env.cpp"
 #include "process.cpp"

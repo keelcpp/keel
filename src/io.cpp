@@ -10,11 +10,17 @@
 #else
 #include <cerrno>
 #include <fcntl.h>
+#if !defined(__EMSCRIPTEN__)
+#include <sys/file.h>
+#include <sys/ioctl.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 namespace keel {
+
+File file_from_native_handle_internal(i64 handle) noexcept { return File(handle); }
 
 namespace detail {
 
@@ -395,5 +401,240 @@ void stderr_write(StringRef str) noexcept {
 
 void stdout_flush() noexcept { (void)std::fflush(stdout); }
 void stderr_flush() noexcept { (void)std::fflush(stderr); }
+
+Result<usize> File::pread(MutArrayRef<u8> buf, i64 offset) const noexcept {
+    if (!is_open() || offset < 0) return Error{ErrorCode::InvalidArgument, 0};
+    if (buf.empty()) return usize{0};
+
+#if defined(_WIN32)
+    HANDLE h = reinterpret_cast<HANDLE>(static_cast<isize>(m_handle));
+    const DWORD to_read = (buf.size() > 0x7FFFFFFFu) ? 0x7FFFFFFFu : static_cast<DWORD>(buf.size());
+    OVERLAPPED ov{};
+    const u64 uoff = static_cast<u64>(offset);
+    ov.Offset = static_cast<DWORD>(uoff & 0xFFFFFFFFULL);
+    ov.OffsetHigh = static_cast<DWORD>(uoff >> 32);
+    DWORD bytes_read = 0;
+    if (!ReadFile(h, buf.data(), to_read, &bytes_read, &ov)) {
+        const DWORD e = GetLastError();
+        if (e == ERROR_HANDLE_EOF) return usize{0};
+        return detail::win32_error_to_keel(e);
+    }
+    return as<usize>(bytes_read);
+#else
+    const int fd = as<int>(m_handle);
+    for (;;) {
+        const ssize_t n = ::pread(fd, buf.data(), buf.size(), static_cast<off_t>(offset));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return detail::errno_to_keel(errno);
+        }
+        return as<usize>(n);
+    }
+#endif
+}
+
+Result<usize> File::pwrite(ArrayRef<u8> data, i64 offset) noexcept {
+    if (!is_open() || offset < 0) return Error{ErrorCode::InvalidArgument, 0};
+    if (data.empty()) return usize{0};
+
+#if defined(_WIN32)
+    HANDLE h = reinterpret_cast<HANDLE>(static_cast<isize>(m_handle));
+    usize total = 0;
+    while (total < data.size()) {
+        const usize rem = data.size() - total;
+        const DWORD chunk = (rem > 0x7FFFFFFFu) ? 0x7FFFFFFFu : static_cast<DWORD>(rem);
+        OVERLAPPED ov{};
+        const u64 uoff = static_cast<u64>(offset) + static_cast<u64>(total);
+        ov.Offset = static_cast<DWORD>(uoff & 0xFFFFFFFFULL);
+        ov.OffsetHigh = static_cast<DWORD>(uoff >> 32);
+        DWORD written = 0;
+        if (!WriteFile(h, data.data() + total, chunk, &written, &ov)) {
+            return detail::win32_error_to_keel(GetLastError());
+        }
+        if (written == 0) return Error{ErrorCode::IoError, 0};
+        total += as<usize>(written);
+    }
+    return total;
+#else
+    const int fd = as<int>(m_handle);
+    usize total = 0;
+    while (total < data.size()) {
+        const ssize_t n =
+            ::pwrite(fd, data.data() + total, data.size() - total, static_cast<off_t>(offset + as<i64>(total)));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return detail::errno_to_keel(errno);
+        }
+        if (n == 0) return Error{ErrorCode::IoError, 0};
+        total += as<usize>(n);
+    }
+    return total;
+#endif
+}
+
+namespace detail::io_lock_impl {
+
+inline Error do_file_lock(i64 handle, FileLockMode mode, bool non_blocking) noexcept {
+#if defined(__EMSCRIPTEN__)
+    (void)handle;
+    (void)mode;
+    (void)non_blocking;
+    return Error{ErrorCode::NotSupported, 0};
+#elif defined(_WIN32)
+    HANDLE h = reinterpret_cast<HANDLE>(static_cast<isize>(handle));
+    DWORD flags = 0;
+    if (mode == FileLockMode::Exclusive) flags |= LOCKFILE_EXCLUSIVE_LOCK;
+    if (non_blocking) flags |= LOCKFILE_FAIL_IMMEDIATELY;
+    OVERLAPPED ov{};
+    if (!LockFileEx(h, flags, 0, MAXDWORD, MAXDWORD, &ov)) {
+        const DWORD e = GetLastError();
+        if (non_blocking && e == ERROR_LOCK_VIOLATION) {
+            return Error{ErrorCode::WouldBlock, as<i32>(e)};
+        }
+        return detail::win32_error_to_keel(e);
+    }
+    return Error::ok();
+#else
+    const int fd = as<int>(handle);
+    int op = (mode == FileLockMode::Exclusive) ? LOCK_EX : LOCK_SH;
+    if (non_blocking) op |= LOCK_NB;
+    for (;;) {
+        if (::flock(fd, op) == 0) return Error::ok();
+        if (errno == EINTR) continue;
+        return detail::errno_to_keel(errno);
+    }
+#endif
+}
+
+} // namespace detail::io_lock_impl
+
+Error File::lock(FileLockMode mode) noexcept {
+    if (!is_open()) return Error{ErrorCode::InvalidArgument, 0};
+    return detail::io_lock_impl::do_file_lock(m_handle, mode, false);
+}
+
+Error File::try_lock(FileLockMode mode) noexcept {
+    if (!is_open()) return Error{ErrorCode::InvalidArgument, 0};
+    return detail::io_lock_impl::do_file_lock(m_handle, mode, true);
+}
+
+Error File::unlock() noexcept {
+    if (!is_open()) return Error{ErrorCode::InvalidArgument, 0};
+#if defined(__EMSCRIPTEN__)
+    return Error{ErrorCode::NotSupported, 0};
+#elif defined(_WIN32)
+    HANDLE h = reinterpret_cast<HANDLE>(static_cast<isize>(m_handle));
+    OVERLAPPED ov{};
+    if (!UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, &ov)) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    return Error::ok();
+#else
+    const int fd = as<int>(m_handle);
+    for (;;) {
+        if (::flock(fd, LOCK_UN) == 0) return Error::ok();
+        if (errno == EINTR) continue;
+        return detail::errno_to_keel(errno);
+    }
+#endif
+}
+
+Result<usize> stdin_read(MutArrayRef<u8> buf) noexcept {
+    if (buf.empty()) return usize{0};
+#if defined(_WIN32)
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    if (!h || h == INVALID_HANDLE_VALUE) return Error{ErrorCode::IoError, 0};
+    const DWORD to_read = (buf.size() > 0x7FFFFFFFu) ? 0x7FFFFFFFu : static_cast<DWORD>(buf.size());
+    DWORD nread = 0;
+    if (!ReadFile(h, buf.data(), to_read, &nread, nullptr)) {
+        const DWORD e = GetLastError();
+        if (e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF) return usize{0};
+        return detail::win32_error_to_keel(e);
+    }
+    return as<usize>(nread);
+#else
+    for (;;) {
+        const ssize_t n = ::read(STDIN_FILENO, buf.data(), buf.size());
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return detail::errno_to_keel(errno);
+        }
+        return as<usize>(n);
+    }
+#endif
+}
+
+bool is_tty(StdStream stream) noexcept {
+#if defined(__EMSCRIPTEN__)
+    (void)stream;
+    return false;
+#elif defined(_WIN32)
+    DWORD id = STD_OUTPUT_HANDLE;
+    if (stream == StdStream::Stdin) id = STD_INPUT_HANDLE;
+    else if (stream == StdStream::Stderr) id = STD_ERROR_HANDLE;
+    HANDLE h = GetStdHandle(id);
+    if (!h || h == INVALID_HANDLE_VALUE) return false;
+    DWORD mode = 0;
+    return GetConsoleMode(h, &mode) != 0;
+#else
+    int fd = STDOUT_FILENO;
+    if (stream == StdStream::Stdin) fd = STDIN_FILENO;
+    else if (stream == StdStream::Stderr) fd = STDERR_FILENO;
+    return ::isatty(fd) != 0;
+#endif
+}
+
+Optional<TerminalSize> terminal_size(StdStream stream) noexcept {
+#if defined(__EMSCRIPTEN__)
+    (void)stream;
+    return kNullOpt;
+#elif defined(_WIN32)
+    DWORD id = STD_OUTPUT_HANDLE;
+    if (stream == StdStream::Stdin) id = STD_INPUT_HANDLE;
+    else if (stream == StdStream::Stderr) id = STD_ERROR_HANDLE;
+    HANDLE h = GetStdHandle(id);
+    if (!h || h == INVALID_HANDLE_VALUE) return kNullOpt;
+    CONSOLE_SCREEN_BUFFER_INFO csbi{};
+    if (!GetConsoleScreenBufferInfo(h, &csbi)) return kNullOpt;
+    const i32 cols = as<i32>(csbi.srWindow.Right) - as<i32>(csbi.srWindow.Left) + 1;
+    const i32 rows = as<i32>(csbi.srWindow.Bottom) - as<i32>(csbi.srWindow.Top) + 1;
+    if (cols <= 0 || rows <= 0) return kNullOpt;
+    return TerminalSize{as<u32>(cols), as<u32>(rows)};
+#else
+    int fd = STDOUT_FILENO;
+    if (stream == StdStream::Stdin) fd = STDIN_FILENO;
+    else if (stream == StdStream::Stderr) fd = STDERR_FILENO;
+    struct winsize ws{};
+    if (::ioctl(fd, TIOCGWINSZ, &ws) != 0 || ws.ws_col == 0 || ws.ws_row == 0) {
+        return kNullOpt;
+    }
+    return TerminalSize{as<u32>(ws.ws_col), as<u32>(ws.ws_row)};
+#endif
+}
+
+bool terminal_enable_ansi() noexcept {
+#if defined(__EMSCRIPTEN__)
+    return false;
+#elif defined(_WIN32)
+    (void)SetConsoleOutputCP(CP_UTF8);
+    (void)SetConsoleCP(CP_UTF8);
+    static constexpr DWORD kEnableVtProcessing = 0x0004u;
+    bool ok_any = false;
+    const DWORD handles[2] = {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    for (usize i = 0; i < 2; ++i) {
+        HANDLE h = GetStdHandle(handles[i]);
+        if (!h || h == INVALID_HANDLE_VALUE) continue;
+        DWORD mode = 0;
+        if (GetConsoleMode(h, &mode)) {
+            if (SetConsoleMode(h, mode | kEnableVtProcessing)) {
+                ok_any = true;
+            }
+        }
+    }
+    return ok_any;
+#else
+    return is_tty(StdStream::Stdout) || is_tty(StdStream::Stderr);
+#endif
+}
 
 } // namespace keel

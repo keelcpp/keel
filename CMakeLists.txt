@@ -13,6 +13,7 @@ if(KEEL_UNITY_BUILD)
 else()
     set(KEEL_SOURCES
         src/core.cpp
+        src/atomic.cpp
         src/math.cpp
         src/complex.cpp
         src/memory.cpp
@@ -21,6 +22,7 @@ else()
         src/format.cpp
         src/io.cpp
         src/fs.cpp
+        src/fs_watch.cpp
         src/mmap.cpp
         src/env.cpp
         src/process.cpp

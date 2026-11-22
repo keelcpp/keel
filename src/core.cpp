@@ -143,6 +143,8 @@ StringRef error_message(ErrorCode code) noexcept {
         return "unexpected end of file";
     case ErrorCode::WouldBlock:
         return "operation would block";
+    case ErrorCode::TimedOut:
+        return "operation timed out";
     case ErrorCode::NotSupported:
         return "operation not supported";
     case ErrorCode::Unknown:

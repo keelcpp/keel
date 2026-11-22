@@ -1,5 +1,6 @@
 #pragma once
 
+#include "keel/atomic.h"
 #include "keel/core.h"
 #include "keel/time.h"
 
@@ -313,5 +314,114 @@ private:
     bool m_manual_reset = true;
     bool m_signaled = false;
 };
+
+// Cross-platform zero-allocation counting semaphore with monotonic timed acquire.
+class CountingSemaphore {
+public:
+    explicit CountingSemaphore(i64 initial_count = 0) noexcept
+        : m_count((initial_count > 0) ? initial_count : 0) {}
+
+    CountingSemaphore(const CountingSemaphore&) = delete;
+    CountingSemaphore& operator=(const CountingSemaphore&) = delete;
+
+    void release(i64 update = 1) noexcept {
+        if (update <= 0) return;
+        LockGuard<Mutex> guard(m_mutex);
+        m_count += update;
+        if (update == 1) {
+            m_cv.notify_one();
+        } else {
+            m_cv.notify_all();
+        }
+    }
+
+    void acquire() noexcept {
+        LockGuard<Mutex> guard(m_mutex);
+        m_cv.wait(m_mutex, [this]() noexcept { return m_count > 0; });
+        --m_count;
+    }
+
+    [[nodiscard]] bool try_acquire() noexcept {
+        LockGuard<Mutex> guard(m_mutex);
+        if (m_count > 0) {
+            --m_count;
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool try_acquire_for_ms(u64 timeout_ms) noexcept {
+        LockGuard<Mutex> guard(m_mutex);
+        if (!m_cv.wait_for_ms(m_mutex, timeout_ms, [this]() noexcept { return m_count > 0; })) {
+            return false;
+        }
+        --m_count;
+        return true;
+    }
+
+private:
+    Mutex m_mutex;
+    CondVar m_cv;
+    i64 m_count = 0;
+};
+
+// Thread-safe one-time initialization flag (lock-free fast path after completion).
+class OnceFlag {
+public:
+    OnceFlag() noexcept = default;
+
+    OnceFlag(const OnceFlag&) = delete;
+    OnceFlag& operator=(const OnceFlag&) = delete;
+
+    [[nodiscard]] bool is_done() const noexcept { return m_state.load(MemoryOrder::Acquire) == kDone; }
+
+private:
+    template <typename Fn> friend void call_once(OnceFlag& flag, Fn&& fn);
+
+    static constexpr u32 kUninit = 0;
+    static constexpr u32 kRunning = 1;
+    static constexpr u32 kDone = 2;
+
+    Atomic<u32> m_state{kUninit};
+    Mutex m_mutex;
+    CondVar m_cv;
+};
+
+// Invokes `fn()` exactly once across all threads sharing `flag`.
+// If `fn()` throws an exception, another caller may retry initialization.
+template <typename Fn>
+void call_once(OnceFlag& flag, Fn&& fn) {
+    if (flag.m_state.load(MemoryOrder::Acquire) == OnceFlag::kDone) {
+        return;
+    }
+    UniqueLock<Mutex> lock(flag.m_mutex);
+    for (;;) {
+        const u32 st = flag.m_state.load(MemoryOrder::Acquire);
+        if (st == OnceFlag::kDone) return;
+        if (st == OnceFlag::kUninit) {
+            flag.m_state.store(OnceFlag::kRunning, MemoryOrder::Release);
+            lock.unlock();
+#if defined(__cpp_exceptions)
+            try {
+                fn();
+            } catch (...) {
+                lock.lock();
+                flag.m_state.store(OnceFlag::kUninit, MemoryOrder::Release);
+                flag.m_cv.notify_all();
+                throw;
+            }
+#else
+            fn();
+#endif
+            lock.lock();
+            flag.m_state.store(OnceFlag::kDone, MemoryOrder::Release);
+            flag.m_cv.notify_all();
+            return;
+        }
+        flag.m_cv.wait(lock, [&flag]() noexcept {
+            return flag.m_state.load(MemoryOrder::Acquire) != OnceFlag::kRunning;
+        });
+    }
+}
 
 } // namespace keel

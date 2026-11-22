@@ -2669,6 +2669,261 @@ void test_tier1_platform_primitives() {
     (void)loc;
 }
 
+void test_tier2_platform_primitives() {
+    // 1. Atomic<T> + CountingSemaphore + OnceFlag / call_once
+    {
+        enum class AtomState : u8 { Idle = 0, Running = 1, Done = 2 };
+        Atomic<u32> a32{10u};
+        TEST_CHECK(a32.load() == 10u);
+        TEST_CHECK(a32.fetch_add(5u) == 10u && a32.load() == 15u);
+        TEST_CHECK(a32.fetch_sub(3u) == 15u && a32.load() == 12u);
+        TEST_CHECK(a32.fetch_or(0x10u) == 12u && a32.load() == 28u);
+        TEST_CHECK(a32.fetch_and(0x0Fu) == 28u && a32.load() == 12u);
+        TEST_CHECK(a32.fetch_xor(0x05u) == 12u && a32.load() == 9u);
+        TEST_CHECK(++a32 == 10u && a32++ == 10u && a32.load() == 11u);
+        TEST_CHECK(--a32 == 10u && a32-- == 10u && a32.load() == 9u);
+
+        u32 expected = 5u;
+        TEST_CHECK(!a32.compare_exchange_strong(expected, 99u) && expected == 9u);
+        TEST_CHECK(a32.compare_exchange_strong(expected, 99u) && a32.load() == 99u);
+        TEST_CHECK(a32.exchange(0u) == 99u && a32.load() == 0u);
+
+        Atomic<bool> abool{false};
+        TEST_CHECK(!abool.load());
+        abool.store(true, MemoryOrder::Release);
+        TEST_CHECK(abool.load(MemoryOrder::Acquire));
+
+        Atomic<AtomState> aenum{AtomState::Idle};
+        TEST_CHECK(aenum.exchange(AtomState::Running) == AtomState::Idle);
+        TEST_CHECK(aenum.load() == AtomState::Running);
+
+        int arr[4] = {10, 20, 30, 40};
+        static_assert(Atomic<u32>::is_always_lock_free);
+        static constinit Atomic<int*> g_constinit_null_ptr{nullptr};
+        TEST_CHECK(g_constinit_null_ptr.load() == nullptr);
+        Atomic<int*> aptr{&arr[0]};
+        TEST_CHECK(aptr.fetch_add(2) == &arr[0] && aptr.load() == &arr[2]);
+        TEST_CHECK(aptr.fetch_sub(1) == &arr[2] && *aptr.load() == 20);
+        atomic_thread_fence(MemoryOrder::SeqCst);
+
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+        // Multi-threaded lock-free atomic counter
+        Atomic<u64> mt_cnt{0ULL};
+        Array<Thread> threads;
+        for (i32 t = 0; t < 4; ++t) {
+            auto th = Thread::spawn([&mt_cnt]() {
+                for (i32 i = 0; i < 5000; ++i) {
+                    (void)mt_cnt.fetch_add(1ULL, MemoryOrder::Relaxed);
+                }
+            });
+            TEST_CHECK(th.is_ok());
+            if (th.is_ok()) threads.push_back(keel::move(*th));
+        }
+        for (usize i = 0; i < threads.size(); ++i) threads[i].join();
+        TEST_CHECK(mt_cnt.load() == 20000ULL);
+
+        // CountingSemaphore
+        CountingSemaphore sem(0);
+        TEST_CHECK(!sem.try_acquire());
+        TEST_CHECK(!sem.try_acquire_for_ms(5));
+        sem.release(2);
+        TEST_CHECK(sem.try_acquire());
+        TEST_CHECK(sem.try_acquire());
+        TEST_CHECK(!sem.try_acquire());
+        auto releaser = Thread::spawn([&sem]() {
+            sleep_ms(10);
+            sem.release(1);
+        });
+        TEST_CHECK(releaser.is_ok());
+        TEST_CHECK(sem.try_acquire_for_ms(2000));
+
+        // OnceFlag + call_once
+        OnceFlag once;
+        Atomic<u32> init_calls{0u};
+        Array<Thread> once_threads;
+        for (i32 t = 0; t < 4; ++t) {
+            auto th = Thread::spawn([&once, &init_calls]() {
+                call_once(once, [&init_calls]() {
+                    sleep_ms(5);
+                    (void)init_calls.fetch_add(1u);
+                });
+            });
+            TEST_CHECK(th.is_ok());
+            if (th.is_ok()) once_threads.push_back(keel::move(*th));
+        }
+        for (usize i = 0; i < once_threads.size(); ++i) once_threads[i].join();
+        TEST_CHECK(once.is_done() && init_calls.load() == 1u);
+#endif
+    }
+
+    // 2. IO/FS additions: pread/pwrite, File::lock, temp_file, disk_space, symlinks, CLI TTY
+    {
+        (void)is_tty(StdStream::Stdout);
+        (void)terminal_size(StdStream::Stdout);
+        (void)terminal_enable_ansi();
+        TEST_CHECK(stdin_read(MutArrayRef<u8>{}).is_ok());
+
+        auto tf = fs_create_temp_file("keel_tf_");
+        TEST_CHECK(tf.is_ok() && tf->file.is_open() && !tf->path.empty());
+        if (tf.is_ok()) {
+            const u8 a[5] = {'h', 'e', 'l', 'l', 'o'};
+            const u8 b[5] = {'w', 'o', 'r', 'l', 'd'};
+            auto pw1 = tf->file.pwrite(ArrayRef<u8>(a, 5), 0);
+            auto pw2 = tf->file.pwrite(ArrayRef<u8>(b, 5), 5);
+            TEST_CHECK(pw1.is_ok() && *pw1 == 5 && pw2.is_ok() && *pw2 == 5);
+
+            u8 rbuf[5]{};
+            auto pr = tf->file.pread(MutArrayRef<u8>(rbuf, 5), 5);
+            TEST_CHECK(pr.is_ok() && *pr == 5 && StringRef(reinterpret_cast<const char*>(rbuf), 5) == "world");
+
+#if !defined(__EMSCRIPTEN__)
+            // Advisory file locks across two open handles to the same file
+            auto f2 = File::open(tf->path.as_ref(), FileMode::ReadWrite);
+            TEST_CHECK(f2.is_ok());
+            if (f2.is_ok()) {
+                TEST_CHECK(tf->file.try_lock(FileLockMode::Exclusive).is_ok());
+                const Error conflict = f2->try_lock(FileLockMode::Exclusive);
+                TEST_CHECK(conflict.code == ErrorCode::WouldBlock);
+                TEST_CHECK(tf->file.unlock().is_ok());
+
+                // Shared locks can coexist
+                TEST_CHECK(tf->file.try_lock(FileLockMode::Shared).is_ok());
+                TEST_CHECK(f2->try_lock(FileLockMode::Shared).is_ok());
+                TEST_CHECK(f2->unlock().is_ok());
+                TEST_CHECK(tf->file.unlock().is_ok());
+            }
+#endif
+            const String tf_path = tf->path.clone();
+            TEST_CHECK(tf->file.close().is_ok());
+            TEST_CHECK(fs_remove(tf_path.as_ref()).is_ok());
+        }
+
+        auto tdir = fs_create_temp_dir("keel_tier2_");
+        TEST_CHECK(tdir.is_ok());
+        if (tdir.is_ok()) {
+#if !defined(__EMSCRIPTEN__)
+            auto ds = fs_disk_space(tdir->as_ref());
+            TEST_CHECK(ds.is_ok() && ds->total_bytes > 0ULL && ds->available_bytes <= ds->total_bytes);
+
+            // Symlinks
+            const String target = path_join(tdir->as_ref(), "target.txt");
+            const String link = path_join(tdir->as_ref(), "link.txt");
+            TEST_CHECK(fs_write_text(target.as_ref(), "symdata").is_ok());
+            const Error sym_err = fs_create_symlink(target.as_ref(), link.as_ref());
+            if (sym_err.is_ok()) {
+                TEST_CHECK(fs_is_symlink(link.as_ref()));
+                TEST_CHECK(!fs_is_symlink(target.as_ref()));
+                auto read_link = fs_read_symlink(link.as_ref());
+                TEST_CHECK(read_link.is_ok() && read_link->as_ref() == target.as_ref());
+            }
+#endif
+            // 3. FileWatcher (Linux inotify / Win32 ReadDirectoryChangesW / macOS kqueue)
+#if !defined(__EMSCRIPTEN__)
+            auto watcher = FileWatcher::create();
+            TEST_CHECK(watcher.is_ok() && watcher->is_open());
+            if (watcher.is_ok()) {
+                TEST_CHECK(watcher->watch_dir(tdir->as_ref(), true).is_ok());
+                const String watched_file = path_join(tdir->as_ref(), "hot.txt");
+                TEST_CHECK(fs_write_text(watched_file.as_ref(), "v1").is_ok());
+
+                bool saw_event = false;
+                for (i32 tries = 0; tries < 10 && !saw_event; ++tries) {
+                    TEST_CHECK(watcher->poll(100, [&](const WatchEvent& ev) {
+                        if (ev.path.ends_with("hot.txt")) {
+                            saw_event = true;
+                            return false;
+                        }
+                        return true;
+                    }).is_ok());
+                }
+                TEST_CHECK(saw_event);
+
+                // Lossless early-stop test: create 2 files, return false after first event, verify second is delivered
+                const String f_a = path_join(tdir->as_ref(), "batch_a.txt");
+                const String f_b = path_join(tdir->as_ref(), "batch_b.txt");
+                TEST_CHECK(fs_write_text(f_a.as_ref(), "a").is_ok());
+                TEST_CHECK(fs_write_text(f_b.as_ref(), "b").is_ok());
+                bool saw_a = false;
+                bool saw_b = false;
+                for (i32 tries = 0; tries < 10 && !(saw_a && saw_b); ++tries) {
+                    TEST_CHECK(watcher->poll(100, [&](const WatchEvent& ev) {
+                        if (ev.path.ends_with("batch_a.txt")) {
+                            saw_a = true;
+                            return false; // stop early mid-batch
+                        }
+                        if (ev.path.ends_with("batch_b.txt")) {
+                            saw_b = true;
+                            return false;
+                        }
+                        return true;
+                    }).is_ok());
+                }
+                TEST_CHECK(saw_a && saw_b);
+
+                TEST_CHECK(watcher->unwatch_dir(tdir->as_ref()).is_ok());
+                watcher->close();
+                TEST_CHECK(!watcher->is_open());
+            }
+#endif
+            TEST_CHECK(fs_remove_all(tdir->as_ref()).is_ok());
+        }
+    }
+
+    // 4. Processes & CLI: stdin_data, timeout_ms, ChildProcess, process_args, interrupt handler
+    {
+        process_install_interrupt_handler();
+        process_reset_interrupt();
+        TEST_CHECK(!process_interrupt_requested());
+
+#if !defined(__EMSCRIPTEN__)
+        auto args = process_args();
+        TEST_CHECK(args.is_ok() && !args->empty() && !(*args)[0].empty());
+
+#if !defined(_WIN32)
+        // Pipe stdin_data into `cat`
+        {
+            ProcessOptions opts{};
+            opts.stdin_data = "hello-via-stdin\n";
+            const StringRef argv[1] = {"cat"};
+            auto res = process_run(ArrayRef<StringRef>(argv, 1), opts);
+            TEST_CHECK(res.is_ok() && res->ok() && res->stdout_text.as_ref() == "hello-via-stdin\n");
+        }
+        // Timeout kills long-running child promptly
+        {
+            ProcessOptions opts{};
+            opts.timeout_ms = 80;
+            const StringRef argv[2] = {"sleep", "5"};
+            auto res = process_run(ArrayRef<StringRef>(argv, 2), opts);
+            TEST_CHECK(res.is_err() && res.error().code == ErrorCode::TimedOut);
+        }
+        // ChildProcess async spawn / try_wait / wait_for_ms / kill / wait
+        {
+            const StringRef argv_fast[1] = {"true"};
+            auto cp_fast = ChildProcess::spawn(ArrayRef<StringRef>(argv_fast, 1));
+            TEST_CHECK(cp_fast.is_ok() && cp_fast->valid() && cp_fast->pid() > 0);
+            if (cp_fast.is_ok()) {
+                auto ec = cp_fast->wait();
+                TEST_CHECK(ec.is_ok() && *ec == 0);
+            }
+
+            const StringRef argv_slow[2] = {"sleep", "5"};
+            auto cp_slow = ChildProcess::spawn(ArrayRef<StringRef>(argv_slow, 2));
+            TEST_CHECK(cp_slow.is_ok() && cp_slow->valid());
+            if (cp_slow.is_ok()) {
+                auto tw = cp_slow->try_wait();
+                TEST_CHECK(tw.is_ok() && !tw->has_value());
+                auto wf = cp_slow->wait_for_ms(20);
+                TEST_CHECK(wf.is_err() && wf.error().code == ErrorCode::TimedOut);
+                TEST_CHECK(cp_slow->kill().is_ok());
+                auto ec = cp_slow->wait();
+                TEST_CHECK(ec.is_ok() && *ec != 0);
+            }
+        }
+#endif
+#endif
+    }
+}
+
 } // namespace
 
 int main() {
@@ -2694,6 +2949,7 @@ int main() {
     test_user_dirs_and_process_lock();
     test_arithmetic_casts();
     test_tier1_platform_primitives();
+    test_tier2_platform_primitives();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

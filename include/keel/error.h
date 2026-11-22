@@ -16,6 +16,7 @@ enum class ErrorCode : u16 {
     IoError,
     EndOfFile,
     WouldBlock,
+    TimedOut,
     NotSupported,
     Unknown
 };

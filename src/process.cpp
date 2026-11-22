@@ -1,14 +1,19 @@
 #include "keel/process.h"
 #include "keel/arena.h"
+#include "keel/atomic.h"
 #include "keel/env.h"
 #include "keel/fs.h"
 #include "keel/hash.h"
 #include "keel/number.h"
 #include "keel/small_array.h"
+#include "keel/time.h"
 #include "keel/utf8.h"
 
 namespace keel::detail {
 
+inline Atomic<u32> g_process_interrupt_flag{0};
+
+#if !defined(__EMSCRIPTEN__)
 [[nodiscard]] static SmallString<96> build_process_lock_key(StringRef app_id) noexcept {
     SmallString<96> key;
     const usize prefix_len = min(app_id.size(), usize{48});
@@ -28,8 +33,21 @@ namespace keel::detail {
     }
     return key;
 }
+#endif
 
 } // namespace keel::detail
+
+namespace keel {
+
+bool process_interrupt_requested() noexcept {
+    return detail::g_process_interrupt_flag.load(MemoryOrder::Acquire) != 0;
+}
+
+void process_reset_interrupt() noexcept {
+    detail::g_process_interrupt_flag.store(0, MemoryOrder::Release);
+}
+
+} // namespace keel
 
 #if defined(__EMSCRIPTEN__)
 
@@ -69,6 +87,19 @@ Result<ProcessLock> ProcessLock::try_acquire(StringRef /*app_id*/, LockScope /*s
 }
 
 void ProcessLock::release() noexcept { m_handle = 0; }
+
+ChildProcess::~ChildProcess() noexcept { close_handle(); }
+void ChildProcess::close_handle() noexcept { m_handle = 0; }
+Result<ChildProcess> ChildProcess::spawn(ArrayRef<StringRef>, const ProcessOptions&) {
+    return Error{ErrorCode::NotSupported, 0};
+}
+Result<Optional<i32>> ChildProcess::try_wait() noexcept { return Error{ErrorCode::NotSupported, 0}; }
+Result<i32> ChildProcess::wait() noexcept { return Error{ErrorCode::NotSupported, 0}; }
+Result<i32> ChildProcess::wait_for_ms(u64) noexcept { return Error{ErrorCode::NotSupported, 0}; }
+Error ChildProcess::kill() noexcept { return Error{ErrorCode::NotSupported, 0}; }
+
+Result<Array<String>> process_args(Allocator* alloc) { return Array<String>(alloc); }
+void process_install_interrupt_handler() noexcept {}
 
 } // namespace keel
 
@@ -154,6 +185,27 @@ static DWORD WINAPI win_pipe_reader_thread(LPVOID param) {
             ctx->dst->append(StringRef(buf, to_add));
         }
     }
+    return 0;
+}
+
+struct WinPipeWriterCtx {
+    HANDLE pipe = nullptr;
+    StringRef data{};
+};
+
+static DWORD WINAPI win_pipe_writer_thread(LPVOID param) {
+    auto* ctx = static_cast<WinPipeWriterCtx*>(param);
+    usize off = 0;
+    while (off < ctx->data.size()) {
+        const usize rem = ctx->data.size() - off;
+        const DWORD chunk = (rem > 0x40000000u) ? 0x40000000u : as<DWORD>(rem);
+        DWORD written = 0;
+        if (!WriteFile(ctx->pipe, ctx->data.data() + off, chunk, &written, nullptr) || written == 0) {
+            break;
+        }
+        off += as<usize>(written);
+    }
+    CloseHandle(ctx->pipe);
     return 0;
 }
 
@@ -252,18 +304,31 @@ static Result<ProcessOutput> run_win32_cmdline(StringRef cmdline_utf8, const Pro
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
 
+    HANDLE in_read = nullptr, in_write = nullptr;
     HANDLE out_read = nullptr, out_write = nullptr;
     HANDLE err_read = nullptr, err_write = nullptr;
+    const bool need_in = !opts.stdin_data.empty();
     const bool need_out = opts.capture_stdout || opts.merge_stderr;
     const bool need_err = opts.capture_stderr && !opts.merge_stderr;
+    const bool need_any_pipe = need_in || need_out || need_err;
 
     auto close_pipes = [&]() {
+        if (in_read) CloseHandle(in_read);
+        if (in_write) CloseHandle(in_write);
         if (out_read) CloseHandle(out_read);
         if (out_write) CloseHandle(out_write);
         if (err_read) CloseHandle(err_read);
         if (err_write) CloseHandle(err_write);
     };
 
+    if (need_in) {
+        if (!CreatePipe(&in_read, &in_write, &sa, 0)) {
+            const DWORD err = GetLastError();
+            close_pipes();
+            return win32_error_to_keel(err);
+        }
+        SetHandleInformation(in_write, HANDLE_FLAG_INHERIT, 0);
+    }
     if (need_out) {
         if (!CreatePipe(&out_read, &out_write, &sa, 0)) {
             const DWORD err = GetLastError();
@@ -283,15 +348,15 @@ static Result<ProcessOutput> run_win32_cmdline(StringRef cmdline_utf8, const Pro
 
     STARTUPINFOW si{};
     si.cb = sizeof(si);
-    if (need_out || need_err) {
+    if (need_any_pipe) {
         si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        si.hStdInput = need_in ? in_read : GetStdHandle(STD_INPUT_HANDLE);
         si.hStdOutput = need_out ? out_write : GetStdHandle(STD_OUTPUT_HANDLE);
         si.hStdError = opts.merge_stderr ? out_write : (need_err ? err_write : GetStdHandle(STD_ERROR_HANDLE));
     }
 
     PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, (need_out || need_err) ? TRUE : FALSE,
+    const BOOL ok = CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, need_any_pipe ? TRUE : FALSE,
                                    creation_flags, env_ptr, cwd_ptr, &si, &pi);
     if (!ok) {
         const DWORD err = GetLastError();
@@ -299,6 +364,10 @@ static Result<ProcessOutput> run_win32_cmdline(StringRef cmdline_utf8, const Pro
         return win32_error_to_keel(err);
     }
 
+    if (in_read) {
+        CloseHandle(in_read);
+        in_read = nullptr;
+    }
     if (out_write) {
         CloseHandle(out_write);
         out_write = nullptr;
@@ -310,23 +379,67 @@ static Result<ProcessOutput> run_win32_cmdline(StringRef cmdline_utf8, const Pro
 
     ProcessOutput result{-1, String(a), String(a)};
 
+    HANDLE in_thread = nullptr;
+    WinPipeWriterCtx in_ctx{in_write, opts.stdin_data};
+    if (in_write) {
+        in_thread = CreateThread(nullptr, 0, win_pipe_writer_thread, &in_ctx, 0, nullptr);
+        if (!in_thread) {
+            win_pipe_writer_thread(&in_ctx);
+        }
+        in_write = nullptr; // owned/closed by win_pipe_writer_thread
+    }
+
+    HANDLE out_thread = nullptr;
+    WinPipeReaderCtx out_ctx{out_read, &result.stdout_text, opts.max_output_bytes};
+    if (out_read) {
+        out_thread = CreateThread(nullptr, 0, win_pipe_reader_thread, &out_ctx, 0, nullptr);
+    }
+
     HANDLE err_thread = nullptr;
     WinPipeReaderCtx err_ctx{err_read, &result.stderr_text, opts.max_output_bytes};
     if (err_read) {
         err_thread = CreateThread(nullptr, 0, win_pipe_reader_thread, &err_ctx, 0, nullptr);
     }
 
-    if (out_read) {
-        WinPipeReaderCtx out_ctx{out_read, &result.stdout_text, opts.max_output_bytes};
+    bool timed_out = false;
+    if (opts.timeout_ms > 0) {
+        const DWORD wait_ms = (opts.timeout_ms >= 0xFFFFFFFEULL) ? 0xFFFFFFFEu : as<DWORD>(opts.timeout_ms);
+        if (WaitForSingleObject(pi.hProcess, wait_ms) == WAIT_TIMEOUT) {
+            timed_out = true;
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, INFINITE);
+        }
+    } else {
+        WaitForSingleObject(pi.hProcess, INFINITE);
+    }
+
+    auto join_helper_thread = [&](HANDLE& th) {
+        if (!th) return;
+        if (timed_out) {
+            for (u32 attempt = 0; attempt < 10u; ++attempt) {
+                (void)CancelSynchronousIo(th);
+                if (WaitForSingleObject(th, 50u) == WAIT_OBJECT_0) break;
+            }
+        }
+        WaitForSingleObject(th, INFINITE);
+        CloseHandle(th);
+        th = nullptr;
+    };
+
+    join_helper_thread(in_thread);
+    if (out_thread) {
+        join_helper_thread(out_thread);
+    } else if (out_read && !timed_out) {
         win_pipe_reader_thread(&out_ctx);
+    }
+    if (out_read) {
         CloseHandle(out_read);
         out_read = nullptr;
     }
 
     if (err_thread) {
-        WaitForSingleObject(err_thread, INFINITE);
-        CloseHandle(err_thread);
-    } else if (err_read) {
+        join_helper_thread(err_thread);
+    } else if (err_read && !timed_out) {
         win_pipe_reader_thread(&err_ctx);
     }
     if (err_read) {
@@ -334,13 +447,15 @@ static Result<ProcessOutput> run_win32_cmdline(StringRef cmdline_utf8, const Pro
         err_read = nullptr;
     }
 
-    WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD exit_code = 0;
     GetExitCodeProcess(pi.hProcess, &exit_code);
     result.exit_code = as<i32>(exit_code);
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (timed_out) {
+        return Error{ErrorCode::TimedOut, 0};
+    }
     return result;
 }
 } // namespace detail
@@ -513,6 +628,214 @@ void ProcessLock::release() noexcept {
     }
 }
 
+ChildProcess::~ChildProcess() noexcept { close_handle(); }
+
+void ChildProcess::close_handle() noexcept {
+    if (m_handle != 0) {
+        CloseHandle(reinterpret_cast<HANDLE>(m_handle));
+        m_handle = 0;
+    }
+}
+
+Result<ChildProcess> ChildProcess::spawn(ArrayRef<StringRef> argv, const ProcessOptions& opts) {
+    if (argv.empty() || argv[0].empty()) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+    String cmdline;
+    for (usize i = 0; i < argv.size(); ++i) {
+        if (i > 0) cmdline.push_back(' ');
+        detail::append_win32_arg(cmdline, argv[i]);
+    }
+    Array<wchar_t> wcmd;
+    if (!detail::proc_utf8_to_wide(cmdline, wcmd)) {
+        return Error{ErrorCode::InvalidData, 0};
+    }
+    SmallArray<wchar_t, 260> wcwd;
+    const wchar_t* cwd_ptr = nullptr;
+    if (!opts.cwd.empty()) {
+        if (!detail::utf8_path_to_win32_wide(opts.cwd, wcwd)) {
+            return Error{ErrorCode::InvalidArgument, 0};
+        }
+        cwd_ptr = wcwd.data();
+    }
+    Array<wchar_t> env_block;
+    void* env_ptr = nullptr;
+    DWORD creation_flags = 0;
+    if (!opts.env.empty()) {
+        if (!detail::build_win32_env_block(opts.env, env_block)) {
+            return Error{ErrorCode::InvalidData, 0};
+        }
+        env_ptr = env_block.data();
+        creation_flags |= CREATE_UNICODE_ENVIRONMENT;
+    }
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, wcmd.data(), nullptr, nullptr, FALSE, creation_flags, env_ptr, cwd_ptr, &si, &pi)) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    CloseHandle(pi.hThread);
+    ChildProcess out;
+    out.m_handle = reinterpret_cast<usize>(pi.hProcess);
+    out.m_pid = as<u64>(pi.dwProcessId);
+    out.m_exited = false;
+    return out;
+}
+
+Result<Optional<i32>> ChildProcess::try_wait() noexcept {
+    if (m_exited) return Optional<i32>(m_exit_code);
+    if (m_handle == 0) return Error{ErrorCode::InvalidArgument, 0};
+    HANDLE h = reinterpret_cast<HANDLE>(m_handle);
+    const DWORD wr = WaitForSingleObject(h, 0);
+    if (wr == WAIT_TIMEOUT) return Optional<i32>(kNullOpt);
+    if (wr != WAIT_OBJECT_0) return detail::win32_error_to_keel(GetLastError());
+    DWORD code = 0;
+    GetExitCodeProcess(h, &code);
+    m_exit_code = as<i32>(code);
+    m_exited = true;
+    close_handle();
+    return Optional<i32>(m_exit_code);
+}
+
+Result<i32> ChildProcess::wait() noexcept {
+    if (m_exited) return m_exit_code;
+    if (m_handle == 0) return Error{ErrorCode::InvalidArgument, 0};
+    HANDLE h = reinterpret_cast<HANDLE>(m_handle);
+    if (WaitForSingleObject(h, INFINITE) != WAIT_OBJECT_0) {
+        return detail::win32_error_to_keel(GetLastError());
+    }
+    DWORD code = 0;
+    GetExitCodeProcess(h, &code);
+    m_exit_code = as<i32>(code);
+    m_exited = true;
+    close_handle();
+    return m_exit_code;
+}
+
+Result<i32> ChildProcess::wait_for_ms(u64 timeout_ms) noexcept {
+    if (m_exited) return m_exit_code;
+    if (m_handle == 0) return Error{ErrorCode::InvalidArgument, 0};
+    HANDLE h = reinterpret_cast<HANDLE>(m_handle);
+    const DWORD ms = (timeout_ms >= 0xFFFFFFFEULL) ? 0xFFFFFFFEu : as<DWORD>(timeout_ms);
+    const DWORD wr = WaitForSingleObject(h, ms);
+    if (wr == WAIT_TIMEOUT) return Error{ErrorCode::TimedOut, 0};
+    if (wr != WAIT_OBJECT_0) return detail::win32_error_to_keel(GetLastError());
+    DWORD code = 0;
+    GetExitCodeProcess(h, &code);
+    m_exit_code = as<i32>(code);
+    m_exited = true;
+    close_handle();
+    return m_exit_code;
+}
+
+Error ChildProcess::kill() noexcept {
+    if (m_exited || m_handle == 0) return Error::ok();
+    HANDLE h = reinterpret_cast<HANDLE>(m_handle);
+    if (!TerminateProcess(h, 1)) {
+        const DWORD e = GetLastError();
+        if (e != ERROR_ACCESS_DENIED) {
+            return detail::win32_error_to_keel(e);
+        }
+    }
+    return Error::ok();
+}
+
+Result<Array<String>> process_args(Allocator* alloc) {
+    Allocator* a = alloc ? alloc : default_allocator();
+    Array<String> out(a);
+    const wchar_t* p = GetCommandLineW();
+    if (!p) return out;
+
+    auto push_wide_arg = [&](const SmallArray<wchar_t, 128>& warg) {
+        if (warg.empty()) {
+            out.push_back(String(a));
+            return;
+        }
+        const int u8len =
+            WideCharToMultiByte(CP_UTF8, 0, warg.data(), as<int>(warg.size()), nullptr, 0, nullptr, nullptr);
+        if (u8len <= 0) {
+            out.push_back(String(a));
+            return;
+        }
+        String s(a);
+        s.resize(as<usize>(u8len));
+        WideCharToMultiByte(CP_UTF8, 0, warg.data(), as<int>(warg.size()), s.data(), u8len, nullptr, nullptr);
+        out.push_back(keel::move(s));
+    };
+
+    // Parse argv[0] (executable name) per Windows CommandLineToArgvW rules
+    while (*p == L' ' || *p == L'\t') ++p;
+    if (*p != L'\0') {
+        SmallArray<wchar_t, 128> arg0;
+        if (*p == L'"') {
+            ++p;
+            while (*p != L'\0' && *p != L'"') arg0.push_back(*p++);
+            if (*p == L'"') ++p;
+        } else {
+            while (*p != L'\0' && *p != L' ' && *p != L'\t') arg0.push_back(*p++);
+        }
+        push_wide_arg(arg0);
+    }
+
+    // Parse remaining arguments
+    while (*p != L'\0') {
+        while (*p == L' ' || *p == L'\t') ++p;
+        if (*p == L'\0') break;
+        SmallArray<wchar_t, 128> arg;
+        bool in_quotes = false;
+        while (*p != L'\0') {
+            if (!in_quotes && (*p == L' ' || *p == L'\t')) break;
+            if (*p == L'\\') {
+                usize bs = 0;
+                while (*p == L'\\') {
+                    ++bs;
+                    ++p;
+                }
+                if (*p == L'"') {
+                    for (usize k = 0; k < bs / 2u; ++k) arg.push_back(L'\\');
+                    if ((bs & 1u) != 0) {
+                        arg.push_back(L'"');
+                    } else {
+                        in_quotes = !in_quotes;
+                    }
+                    ++p;
+                } else {
+                    for (usize k = 0; k < bs; ++k) arg.push_back(L'\\');
+                }
+            } else if (*p == L'"') {
+                if (in_quotes && p[1] == L'"') {
+                    arg.push_back(L'"');
+                    p += 2;
+                } else {
+                    in_quotes = !in_quotes;
+                    ++p;
+                }
+            } else {
+                arg.push_back(*p++);
+            }
+        }
+        push_wide_arg(arg);
+    }
+    return out;
+}
+
+namespace detail::win_sig_impl {
+static BOOL WINAPI console_ctrl_handler(DWORD ctrl_type) noexcept {
+    if (ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT) {
+        g_process_interrupt_flag.store(1, MemoryOrder::Release);
+        return TRUE;
+    }
+    return FALSE;
+}
+} // namespace detail::win_sig_impl
+
+void process_install_interrupt_handler() noexcept {
+    static Atomic<u32> s_installed{0};
+    if (s_installed.exchange(1, MemoryOrder::AcqRel) == 0) {
+        (void)SetConsoleCtrlHandler(&detail::win_sig_impl::console_ctrl_handler, TRUE);
+    }
+}
+
 } // namespace keel
 
 #else // POSIX
@@ -522,12 +845,14 @@ void ProcessLock::release() noexcept {
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
+#include <crt_externs.h>
 #include <mach/mach.h>
 #endif
 
@@ -599,14 +924,18 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
         }
     }
 
+    const bool need_in = !opts.stdin_data.empty();
     const bool need_out = opts.capture_stdout || opts.merge_stderr;
     const bool need_err = opts.capture_stderr && !opts.merge_stderr;
 
+    int in_pipe[2] = {-1, -1};
     int out_pipe[2] = {-1, -1};
     int err_pipe[2] = {-1, -1};
     int exec_pipe[2] = {-1, -1}; // Reports child exec/chdir errno back to parent
 
     auto close_all_pipes = [&]() {
+        if (in_pipe[0] >= 0) ::close(in_pipe[0]);
+        if (in_pipe[1] >= 0) ::close(in_pipe[1]);
         if (out_pipe[0] >= 0) ::close(out_pipe[0]);
         if (out_pipe[1] >= 0) ::close(out_pipe[1]);
         if (err_pipe[0] >= 0) ::close(err_pipe[0]);
@@ -615,6 +944,11 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
         if (exec_pipe[1] >= 0) ::close(exec_pipe[1]);
     };
 
+    if (need_in && !detail::create_cloexec_pipe(in_pipe)) {
+        const int err = errno;
+        close_all_pipes();
+        return detail::errno_to_keel(err);
+    }
     if (need_out && !detail::create_cloexec_pipe(out_pipe)) {
         const int err = errno;
         close_all_pipes();
@@ -641,6 +975,11 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
     if (pid == 0) {
         // Child process
         ::close(exec_pipe[0]);
+        if (need_in) {
+            ::close(in_pipe[1]);
+            while (::dup2(in_pipe[0], STDIN_FILENO) < 0 && errno == EINTR) {}
+            ::close(in_pipe[0]);
+        }
         if (need_out) {
             ::close(out_pipe[0]);
             while (::dup2(out_pipe[1], STDOUT_FILENO) < 0 && errno == EINTR) {}
@@ -675,6 +1014,7 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
 
     // Parent process
     ::close(exec_pipe[1]);
+    if (in_pipe[0] >= 0) ::close(in_pipe[0]);
     if (out_pipe[1] >= 0) ::close(out_pipe[1]);
     if (err_pipe[1] >= 0) ::close(err_pipe[1]);
 
@@ -687,6 +1027,7 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
     ::close(exec_pipe[0]);
 
     if (er == static_cast<ssize_t>(sizeof(child_exec_errno))) {
+        if (in_pipe[1] >= 0) ::close(in_pipe[1]);
         if (out_pipe[0] >= 0) ::close(out_pipe[0]);
         if (err_pipe[0] >= 0) ::close(err_pipe[0]);
         int status = 0;
@@ -694,16 +1035,45 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
         return detail::errno_to_keel(child_exec_errno);
     }
 
+    if (in_pipe[1] >= 0) {
+        const int fl = ::fcntl(in_pipe[1], F_GETFL, 0);
+        if (fl >= 0) (void)::fcntl(in_pipe[1], F_SETFL, fl | O_NONBLOCK);
+#if defined(F_SETNOSIGPIPE)
+        (void)::fcntl(in_pipe[1], F_SETNOSIGPIPE, 1);
+#endif
+    }
+
+    const u64 start_ns = monotonic_ns();
+    u64 deadline_ns = 0;
+    if (opts.timeout_ms > 0) {
+        const u64 max_add_ms = (~u64{0} - start_ns) / 1000000ULL;
+        deadline_ns = (opts.timeout_ms >= max_add_ms) ? ~u64{0} : (start_ns + opts.timeout_ms * 1000000ULL);
+    }
+
     ProcessOutput result{-1, String(a), String(a)};
 
-    // Drain stdout and stderr concurrently with poll() so full pipe buffers cannot deadlock.
+    // Drain stdout/stderr and feed stdin concurrently with poll() so full pipe buffers cannot deadlock.
     int read_fds[2] = {out_pipe[0], err_pipe[0]};
+    int in_fd = in_pipe[1];
+    usize stdin_off = 0;
     String* dsts[2] = {&result.stdout_text, &result.stderr_text};
     char buf[4096];
+    bool timed_out = false;
 
-    while (read_fds[0] >= 0 || read_fds[1] >= 0) {
-        struct pollfd pfds[2]{};
-        int map_idx[2] = {-1, -1};
+    while (in_fd >= 0 || read_fds[0] >= 0 || read_fds[1] >= 0) {
+        int poll_timeout = -1;
+        if (opts.timeout_ms > 0) {
+            const u64 now = monotonic_ns();
+            if (now >= deadline_ns) {
+                timed_out = true;
+                break;
+            }
+            const u64 rem_ms = (deadline_ns - now + 999999ULL) / 1000000ULL;
+            poll_timeout = (rem_ms > 0x7FFFFFFFULL) ? 0x7FFFFFFF : as<int>(rem_ms);
+        }
+
+        struct pollfd pfds[3]{};
+        int map_idx[3] = {-1, -1, -1}; // 0 = out, 1 = err, 2 = in
         nfds_t nfds = 0;
         for (int i = 0; i < 2; ++i) {
             if (read_fds[i] >= 0) {
@@ -713,14 +1083,67 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
                 ++nfds;
             }
         }
-        const int pr = ::poll(pfds, nfds, -1);
+        if (in_fd >= 0) {
+            pfds[nfds].fd = in_fd;
+            pfds[nfds].events = POLLOUT;
+            map_idx[nfds] = 2;
+            ++nfds;
+        }
+        const int pr = ::poll(pfds, nfds, poll_timeout);
         if (pr < 0) {
             if (errno == EINTR) continue;
+            break;
+        }
+        if (pr == 0) {
+            timed_out = true;
             break;
         }
         for (nfds_t k = 0; k < nfds; ++k) {
             if (pfds[k].revents == 0) continue;
             const int slot = map_idx[k];
+            if (slot == 2) {
+                if ((pfds[k].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                    ::close(in_fd);
+                    in_fd = -1;
+                    continue;
+                }
+                // Temporarily block SIGPIPE on this thread while writing to child stdin
+                sigset_t pipe_mask{};
+                sigset_t old_mask{};
+                sigemptyset(&pipe_mask);
+                sigaddset(&pipe_mask, SIGPIPE);
+                const bool masked = (::pthread_sigmask(SIG_BLOCK, &pipe_mask, &old_mask) == 0);
+                const ssize_t wn = ::write(in_fd, opts.stdin_data.data() + stdin_off,
+                                           opts.stdin_data.size() - stdin_off);
+                const int werr = (wn < 0) ? errno : 0;
+                if (masked) {
+                    if (werr == EPIPE) {
+                        sigset_t pend{};
+                        if (sigpending(&pend) == 0 && sigismember(&pend, SIGPIPE)) {
+                            int sig = 0;
+#if defined(__APPLE__)
+                            sigwait(&pipe_mask, &sig);
+#else
+                            struct timespec zero_ts{};
+                            (void)::sigtimedwait(&pipe_mask, nullptr, &zero_ts);
+                            (void)sig;
+#endif
+                        }
+                    }
+                    (void)::pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);
+                }
+                if (wn > 0) {
+                    stdin_off += as<usize>(wn);
+                    if (stdin_off >= opts.stdin_data.size()) {
+                        ::close(in_fd);
+                        in_fd = -1;
+                    }
+                } else if (wn < 0 && werr != EINTR && werr != EAGAIN && werr != EWOULDBLOCK) {
+                    ::close(in_fd);
+                    in_fd = -1;
+                }
+                continue;
+            }
             const ssize_t n = ::read(read_fds[slot], buf, sizeof(buf));
             if (n > 0) {
                 String& dst = *dsts[slot];
@@ -737,13 +1160,37 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
             }
         }
     }
+    if (in_fd >= 0) ::close(in_fd);
     if (read_fds[0] >= 0) ::close(read_fds[0]);
     if (read_fds[1] >= 0) ::close(read_fds[1]);
 
     int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) {
-        if (errno == EINTR) continue;
-        return detail::errno_to_keel(errno);
+    if (timed_out) {
+        (void)::kill(pid, SIGKILL);
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        return Error{ErrorCode::TimedOut, 0};
+    }
+
+    if (opts.timeout_ms > 0) {
+        for (;;) {
+            const pid_t w = ::waitpid(pid, &status, WNOHANG);
+            if (w == pid) break;
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                return detail::errno_to_keel(errno);
+            }
+            if (monotonic_ns() >= deadline_ns) {
+                (void)::kill(pid, SIGKILL);
+                while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                return Error{ErrorCode::TimedOut, 0};
+            }
+            sleep_ms(1);
+        }
+    } else {
+        while (::waitpid(pid, &status, 0) < 0) {
+            if (errno == EINTR) continue;
+            return detail::errno_to_keel(errno);
+        }
     }
 
     if (WIFEXITED(status)) {
@@ -960,6 +1407,240 @@ Optional<usize> thread_stack_remaining_bytes() noexcept {
 #else
     return kNullOpt;
 #endif
+}
+
+namespace detail::posix_child_impl {
+static i32 decode_wait_status(int status) noexcept {
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return -1;
+}
+} // namespace detail::posix_child_impl
+
+ChildProcess::~ChildProcess() noexcept { close_handle(); }
+
+void ChildProcess::close_handle() noexcept {
+    if (m_handle != 0 && !m_exited) {
+        int status = 0;
+        (void)::waitpid(static_cast<pid_t>(m_handle), &status, WNOHANG);
+    }
+    m_handle = 0;
+}
+
+Result<ChildProcess> ChildProcess::spawn(ArrayRef<StringRef> argv, const ProcessOptions& opts) {
+    if (argv.empty() || argv[0].empty()) {
+        return Error{ErrorCode::InvalidArgument, 0};
+    }
+
+    Array<String> arg_storage;
+    arg_storage.reserve(argv.size());
+    Array<char*> c_argv;
+    c_argv.reserve(argv.size() + 1);
+    for (usize i = 0; i < argv.size(); ++i) {
+        arg_storage.push_back(String::from(argv[i]));
+    }
+    for (usize i = 0; i < arg_storage.size(); ++i) {
+        c_argv.push_back(const_cast<char*>(arg_storage[i].c_str()));
+    }
+    c_argv.push_back(nullptr);
+
+    String cwd_storage;
+    const char* c_cwd = nullptr;
+    if (!opts.cwd.empty()) {
+        cwd_storage = String::from(opts.cwd);
+        c_cwd = cwd_storage.c_str();
+    }
+
+    Array<String> env_names;
+    Array<String> env_vals;
+    if (!opts.env.empty()) {
+        env_names.reserve(opts.env.size());
+        env_vals.reserve(opts.env.size());
+        for (usize i = 0; i < opts.env.size(); ++i) {
+            if (opts.env[i].name.empty()) return Error{ErrorCode::InvalidArgument, 0};
+            env_names.push_back(String::from(opts.env[i].name));
+            env_vals.push_back(String::from(opts.env[i].value));
+        }
+    }
+
+    int exec_pipe[2] = {-1, -1};
+    if (!detail::create_cloexec_pipe(exec_pipe)) {
+        return detail::errno_to_keel(errno);
+    }
+
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        const int err = errno;
+        ::close(exec_pipe[0]);
+        ::close(exec_pipe[1]);
+        return detail::errno_to_keel(err);
+    }
+
+    if (pid == 0) {
+        ::close(exec_pipe[0]);
+        if (c_cwd && ::chdir(c_cwd) != 0) {
+            int child_err = errno;
+            const ssize_t ignored = ::write(exec_pipe[1], &child_err, sizeof(child_err));
+            (void)ignored;
+            ::_exit(127);
+        }
+        for (usize i = 0; i < env_names.size(); ++i) {
+            ::setenv(env_names[i].c_str(), env_vals[i].c_str(), 1);
+        }
+        ::execvp(c_argv[0], c_argv.data());
+        int child_err = errno;
+        const ssize_t ignored = ::write(exec_pipe[1], &child_err, sizeof(child_err));
+        (void)ignored;
+        ::_exit(child_err == ENOENT ? 127 : 126);
+    }
+
+    ::close(exec_pipe[1]);
+    int child_exec_errno = 0;
+    ssize_t er = 0;
+    do {
+        er = ::read(exec_pipe[0], &child_exec_errno, sizeof(child_exec_errno));
+    } while (er < 0 && errno == EINTR);
+    ::close(exec_pipe[0]);
+
+    if (er == static_cast<ssize_t>(sizeof(child_exec_errno))) {
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        return detail::errno_to_keel(child_exec_errno);
+    }
+
+    ChildProcess out;
+    out.m_handle = static_cast<usize>(pid);
+    out.m_pid = as<u64>(pid);
+    out.m_exited = false;
+    return out;
+}
+
+Result<Optional<i32>> ChildProcess::try_wait() noexcept {
+    if (m_exited) return Optional<i32>(m_exit_code);
+    if (m_handle == 0) return Error{ErrorCode::InvalidArgument, 0};
+    int status = 0;
+    const pid_t w = ::waitpid(static_cast<pid_t>(m_handle), &status, WNOHANG);
+    if (w == 0) return Optional<i32>(kNullOpt);
+    if (w < 0) return detail::errno_to_keel(errno);
+    m_exit_code = detail::posix_child_impl::decode_wait_status(status);
+    m_exited = true;
+    m_handle = 0;
+    return Optional<i32>(m_exit_code);
+}
+
+Result<i32> ChildProcess::wait() noexcept {
+    if (m_exited) return m_exit_code;
+    if (m_handle == 0) return Error{ErrorCode::InvalidArgument, 0};
+    int status = 0;
+    while (::waitpid(static_cast<pid_t>(m_handle), &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        return detail::errno_to_keel(errno);
+    }
+    m_exit_code = detail::posix_child_impl::decode_wait_status(status);
+    m_exited = true;
+    m_handle = 0;
+    return m_exit_code;
+}
+
+Result<i32> ChildProcess::wait_for_ms(u64 timeout_ms) noexcept {
+    if (m_exited) return m_exit_code;
+    if (m_handle == 0) return Error{ErrorCode::InvalidArgument, 0};
+    const u64 start = monotonic_ns();
+    const u64 max_add_ms = (~u64{0} - start) / 1000000ULL;
+    const u64 deadline = (timeout_ms >= max_add_ms) ? ~u64{0} : (start + timeout_ms * 1000000ULL);
+    for (;;) {
+        int status = 0;
+        const pid_t w = ::waitpid(static_cast<pid_t>(m_handle), &status, WNOHANG);
+        if (w > 0) {
+            m_exit_code = detail::posix_child_impl::decode_wait_status(status);
+            m_exited = true;
+            m_handle = 0;
+            return m_exit_code;
+        }
+        if (w < 0 && errno != EINTR) {
+            return detail::errno_to_keel(errno);
+        }
+        if (monotonic_ns() >= deadline) {
+            return Error{ErrorCode::TimedOut, 0};
+        }
+        sleep_ms(1);
+    }
+}
+
+Error ChildProcess::kill() noexcept {
+    if (m_exited || m_handle == 0) return Error::ok();
+    if (::kill(static_cast<pid_t>(m_handle), SIGKILL) != 0 && errno != ESRCH) {
+        return detail::errno_to_keel(errno);
+    }
+    return Error::ok();
+}
+
+Result<Array<String>> process_args(Allocator* alloc) {
+    Allocator* a = alloc ? alloc : default_allocator();
+    Array<String> out(a);
+#if defined(__APPLE__)
+    int* argc_ptr = _NSGetArgc();
+    char*** argv_ptr = _NSGetArgv();
+    if (argc_ptr && argv_ptr && *argv_ptr) {
+        const int argc = *argc_ptr;
+        char** argv = *argv_ptr;
+        out.reserve(as<usize>(argc > 0 ? argc : 0));
+        for (int i = 0; i < argc; ++i) {
+            out.push_back(String::from(argv[i] ? StringRef(argv[i]) : StringRef{}, a));
+        }
+    }
+    return out;
+#elif defined(__linux__)
+    const int fd = ::open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return detail::errno_to_keel(errno);
+    Array<char> raw(a);
+    char buf[4096];
+    for (;;) {
+        const ssize_t n = ::read(fd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            const int e = errno;
+            ::close(fd);
+            return detail::errno_to_keel(e);
+        }
+        if (n == 0) break;
+        const usize prev = raw.size();
+        raw.resize(prev + as<usize>(n));
+        mem_copy(raw.data() + prev, buf, as<usize>(n));
+    }
+    ::close(fd);
+    usize start = 0;
+    for (usize i = 0; i < raw.size(); ++i) {
+        if (raw[i] == '\0') {
+            out.push_back(String::from(StringRef(raw.data() + start, i - start), a));
+            start = i + 1u;
+        }
+    }
+    if (start < raw.size()) {
+        out.push_back(String::from(StringRef(raw.data() + start, raw.size() - start), a));
+    }
+    return out;
+#else
+    return out;
+#endif
+}
+
+namespace detail::posix_sig_impl {
+static void on_signal(int) noexcept {
+    g_process_interrupt_flag.store(1, MemoryOrder::Release);
+}
+} // namespace detail::posix_sig_impl
+
+void process_install_interrupt_handler() noexcept {
+    static Atomic<u32> s_installed{0};
+    if (s_installed.exchange(1, MemoryOrder::AcqRel) == 0) {
+        struct sigaction sa{};
+        sa.sa_handler = &detail::posix_sig_impl::on_signal;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        (void)::sigaction(SIGINT, &sa, nullptr);
+        (void)::sigaction(SIGTERM, &sa, nullptr);
+    }
 }
 
 } // namespace keel
