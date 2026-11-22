@@ -44,6 +44,26 @@ template <typename T>
     requires IsFloatingPoint<T>
 inline constexpr T ln10 = static_cast<T>(2.302585092994045684017991454684364208L);
 
+template <typename T>
+    requires IsFloatingPoint<T>
+inline constexpr T sqrt_pi = static_cast<T>(1.772453850905516027298167483341145183L);
+
+template <typename T>
+    requires IsFloatingPoint<T>
+inline constexpr T inv_sqrt_pi = static_cast<T>(0.564189583547756286948079451560772586L);
+
+template <typename T>
+    requires IsFloatingPoint<T>
+inline constexpr T sqrt_2pi = static_cast<T>(2.506628274631000502415765284811045253L);
+
+template <typename T>
+    requires IsFloatingPoint<T>
+inline constexpr T inv_sqrt_2pi = static_cast<T>(0.398942280401432677939946059934381868L);
+
+template <typename T>
+    requires IsFloatingPoint<T>
+inline constexpr T euler_gamma = static_cast<T>(0.577215664901532860606512090082402431L);
+
 inline constexpr f64 kPi = pi<f64>;
 inline constexpr f32 kPiF = pi<f32>;
 inline constexpr f64 kTau = tau<f64>;
@@ -62,6 +82,16 @@ inline constexpr f64 kLn2 = ln2<f64>;
 inline constexpr f32 kLn2F = ln2<f32>;
 inline constexpr f64 kLn10 = ln10<f64>;
 inline constexpr f32 kLn10F = ln10<f32>;
+inline constexpr f64 kSqrtPi = sqrt_pi<f64>;
+inline constexpr f32 kSqrtPiF = sqrt_pi<f32>;
+inline constexpr f64 kInvSqrtPi = inv_sqrt_pi<f64>;
+inline constexpr f32 kInvSqrtPiF = inv_sqrt_pi<f32>;
+inline constexpr f64 kSqrt2Pi = sqrt_2pi<f64>;
+inline constexpr f32 kSqrt2PiF = sqrt_2pi<f32>;
+inline constexpr f64 kInvSqrt2Pi = inv_sqrt_2pi<f64>;
+inline constexpr f32 kInvSqrt2PiF = inv_sqrt_2pi<f32>;
+inline constexpr f64 kEulerGamma = euler_gamma<f64>;
+inline constexpr f32 kEulerGammaF = euler_gamma<f32>;
 
 template <typename T>
     requires IsFloatingPoint<T>

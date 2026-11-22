@@ -256,6 +256,48 @@ public:
     [[nodiscard]] StringRef trim() const noexcept { return as_ref().trim(); }
     [[nodiscard]] StringRef trim_left() const noexcept { return as_ref().trim_left(); }
     [[nodiscard]] StringRef trim_right() const noexcept { return as_ref().trim_right(); }
+    [[nodiscard]] bool equals_ignore_ascii_case(StringRef other) const noexcept {
+        return as_ref().equals_ignore_ascii_case(other);
+    }
+    [[nodiscard]] bool starts_with_ignore_ascii_case(StringRef prefix) const noexcept {
+        return as_ref().starts_with_ignore_ascii_case(prefix);
+    }
+    [[nodiscard]] bool ends_with_ignore_ascii_case(StringRef suffix) const noexcept {
+        return as_ref().ends_with_ignore_ascii_case(suffix);
+    }
+    [[nodiscard]] usize find_ignore_ascii_case(StringRef needle, usize from = 0) const noexcept {
+        return as_ref().find_ignore_ascii_case(needle, from);
+    }
+    [[nodiscard]] bool contains_ignore_ascii_case(StringRef needle) const noexcept {
+        return as_ref().contains_ignore_ascii_case(needle);
+    }
+    [[nodiscard]] i32 compare_ignore_ascii_case(StringRef other) const noexcept {
+        return as_ref().compare_ignore_ascii_case(other);
+    }
+    [[nodiscard]] bool is_one_of(std::initializer_list<StringRef> options) const noexcept {
+        return as_ref().is_one_of(options);
+    }
+    [[nodiscard]] bool is_one_of(ArrayRef<StringRef> options) const noexcept {
+        return as_ref().is_one_of(options);
+    }
+    [[nodiscard]] bool is_one_of_ignore_ascii_case(std::initializer_list<StringRef> options) const noexcept {
+        return as_ref().is_one_of_ignore_ascii_case(options);
+    }
+    [[nodiscard]] bool is_one_of_ignore_ascii_case(ArrayRef<StringRef> options) const noexcept {
+        return as_ref().is_one_of_ignore_ascii_case(options);
+    }
+
+    void to_ascii_lower_in_place() noexcept {
+        for (usize i = 0; i < m_size; ++i) {
+            m_data[i] = detail::to_ascii_lower(m_data[i]);
+        }
+    }
+
+    void to_ascii_upper_in_place() noexcept {
+        for (usize i = 0; i < m_size; ++i) {
+            m_data[i] = detail::to_ascii_upper(m_data[i]);
+        }
+    }
 
     [[nodiscard]] friend bool operator==(const String& a, const String& b) noexcept {
         return a.as_ref() == b.as_ref();
@@ -545,6 +587,50 @@ public:
     [[nodiscard]] StringRef trim() const noexcept { return as_ref().trim(); }
     [[nodiscard]] StringRef trim_left() const noexcept { return as_ref().trim_left(); }
     [[nodiscard]] StringRef trim_right() const noexcept { return as_ref().trim_right(); }
+    [[nodiscard]] bool equals_ignore_ascii_case(StringRef other) const noexcept {
+        return as_ref().equals_ignore_ascii_case(other);
+    }
+    [[nodiscard]] bool starts_with_ignore_ascii_case(StringRef prefix) const noexcept {
+        return as_ref().starts_with_ignore_ascii_case(prefix);
+    }
+    [[nodiscard]] bool ends_with_ignore_ascii_case(StringRef suffix) const noexcept {
+        return as_ref().ends_with_ignore_ascii_case(suffix);
+    }
+    [[nodiscard]] usize find_ignore_ascii_case(StringRef needle, usize from = 0) const noexcept {
+        return as_ref().find_ignore_ascii_case(needle, from);
+    }
+    [[nodiscard]] bool contains_ignore_ascii_case(StringRef needle) const noexcept {
+        return as_ref().contains_ignore_ascii_case(needle);
+    }
+    [[nodiscard]] i32 compare_ignore_ascii_case(StringRef other) const noexcept {
+        return as_ref().compare_ignore_ascii_case(other);
+    }
+    [[nodiscard]] bool is_one_of(std::initializer_list<StringRef> options) const noexcept {
+        return as_ref().is_one_of(options);
+    }
+    [[nodiscard]] bool is_one_of(ArrayRef<StringRef> options) const noexcept {
+        return as_ref().is_one_of(options);
+    }
+    [[nodiscard]] bool is_one_of_ignore_ascii_case(std::initializer_list<StringRef> options) const noexcept {
+        return as_ref().is_one_of_ignore_ascii_case(options);
+    }
+    [[nodiscard]] bool is_one_of_ignore_ascii_case(ArrayRef<StringRef> options) const noexcept {
+        return as_ref().is_one_of_ignore_ascii_case(options);
+    }
+
+    void to_ascii_lower_in_place() noexcept {
+        char* p = data();
+        for (usize i = 0; i < m_size; ++i) {
+            p[i] = detail::to_ascii_lower(p[i]);
+        }
+    }
+
+    void to_ascii_upper_in_place() noexcept {
+        char* p = data();
+        for (usize i = 0; i < m_size; ++i) {
+            p[i] = detail::to_ascii_upper(p[i]);
+        }
+    }
 
     [[nodiscard]] friend bool operator==(const SmallString& a, const SmallString& b) noexcept {
         return a.as_ref() == b.as_ref();

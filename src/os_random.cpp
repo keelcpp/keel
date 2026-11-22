@@ -1,4 +1,4 @@
-#include "keel/random.h"
+#include "keel/os_random.h"
 #include "keel/memory.h"
 
 #if defined(__EMSCRIPTEN__)

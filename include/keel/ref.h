@@ -44,9 +44,14 @@ concept ConvertibleTo = requires(From (*f)()) { static_cast<To>(f()); };
 [[nodiscard]] constexpr char to_ascii_lower(char c) noexcept {
     return (c >= 'A' && c <= 'Z') ? as<char>(c + ('a' - 'A')) : c;
 }
+
+[[nodiscard]] constexpr char to_ascii_upper(char c) noexcept {
+    return (c >= 'a' && c <= 'z') ? as<char>(c - ('a' - 'A')) : c;
+}
 } // namespace detail
 
 struct StringSplit;
+template <typename T> class ArrayRef;
 
 class StringRef {
 public:
@@ -200,6 +205,61 @@ public:
         return true;
     }
 
+    [[nodiscard]] constexpr bool starts_with_ignore_ascii_case(StringRef prefix) const noexcept {
+        return m_size >= prefix.m_size && substr(0, prefix.m_size).equals_ignore_ascii_case(prefix);
+    }
+
+    [[nodiscard]] constexpr bool ends_with_ignore_ascii_case(StringRef suffix) const noexcept {
+        return m_size >= suffix.m_size && substr(m_size - suffix.m_size, suffix.m_size).equals_ignore_ascii_case(suffix);
+    }
+
+    [[nodiscard]] constexpr usize find_ignore_ascii_case(StringRef needle, usize from = 0) const noexcept {
+        if (from > m_size) return kInvalidIndex;
+        if (needle.m_size == 0) return from;
+        if (needle.m_size > m_size - from) return kInvalidIndex;
+        const usize limit = m_size - needle.m_size;
+        const char first = detail::to_ascii_lower(needle.m_data[0]);
+        for (usize i = from; i <= limit; ++i) {
+            if (detail::to_ascii_lower(m_data[i]) == first &&
+                substr(i, needle.m_size).equals_ignore_ascii_case(needle)) {
+                return i;
+            }
+        }
+        return kInvalidIndex;
+    }
+
+    [[nodiscard]] constexpr bool contains_ignore_ascii_case(StringRef needle) const noexcept {
+        return find_ignore_ascii_case(needle) != kInvalidIndex;
+    }
+
+    [[nodiscard]] constexpr i32 compare_ignore_ascii_case(StringRef other) const noexcept {
+        const usize common = keel::min(m_size, other.m_size);
+        for (usize i = 0; i < common; ++i) {
+            const u8 ca = as<u8>(detail::to_ascii_lower(m_data[i]));
+            const u8 cb = as<u8>(detail::to_ascii_lower(other.m_data[i]));
+            if (ca != cb) return (ca < cb) ? -1 : 1;
+        }
+        return (m_size < other.m_size) ? -1 : ((m_size > other.m_size) ? 1 : 0);
+    }
+
+    [[nodiscard]] constexpr bool is_one_of(std::initializer_list<StringRef> options) const noexcept {
+        for (StringRef opt : options) {
+            if (*this == opt) return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] constexpr bool is_one_of(ArrayRef<StringRef> options) const noexcept;
+
+    [[nodiscard]] constexpr bool is_one_of_ignore_ascii_case(std::initializer_list<StringRef> options) const noexcept {
+        for (StringRef opt : options) {
+            if (equals_ignore_ascii_case(opt)) return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] constexpr bool is_one_of_ignore_ascii_case(ArrayRef<StringRef> options) const noexcept;
+
     [[nodiscard]] constexpr i32 compare(StringRef other) const noexcept {
         const usize common = keel::min(m_size, other.m_size);
         const i32 cmp = detail::char_cmp(m_data, other.m_data, common);
@@ -317,6 +377,20 @@ private:
     const T* m_data = nullptr;
     usize m_size = 0;
 };
+
+constexpr bool StringRef::is_one_of(ArrayRef<StringRef> options) const noexcept {
+    for (usize i = 0; i < options.size(); ++i) {
+        if (*this == options[i]) return true;
+    }
+    return false;
+}
+
+constexpr bool StringRef::is_one_of_ignore_ascii_case(ArrayRef<StringRef> options) const noexcept {
+    for (usize i = 0; i < options.size(); ++i) {
+        if (equals_ignore_ascii_case(options[i])) return true;
+    }
+    return false;
+}
 
 template <typename T> class MutArrayRef {
 public:

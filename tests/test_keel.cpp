@@ -2924,6 +2924,87 @@ void test_tier2_platform_primitives() {
     }
 }
 
+void test_string_icase_math_and_algo() {
+    // StringRef / String / SmallString case-insensitive helpers & is_one_of
+    {
+        constexpr StringRef m("Bicubic");
+        static_assert(m.equals_ignore_ascii_case("bicubic"));
+        static_assert(m.is_one_of_ignore_ascii_case({"bicubic", "cubic"}));
+        static_assert(!m.is_one_of_ignore_ascii_case({"nearest", "bilinear"}));
+        static_assert(m.is_one_of({"Bicubic", "Cubic"}));
+        static_assert(!m.is_one_of({"bicubic", "cubic"}));
+        static_assert(m.starts_with_ignore_ascii_case("bi"));
+        static_assert(m.ends_with_ignore_ascii_case("CUBIC"));
+        static_assert(m.contains_ignore_ascii_case("CUB"));
+        static_assert(m.find_ignore_ascii_case("CUB") == 2);
+        static_assert(m.compare_ignore_ascii_case("bicubic") == 0);
+        static_assert(StringRef("alpha").compare_ignore_ascii_case("BETA") < 0);
+
+        constexpr StringRef kOpts[] = {"full", "same", "valid"};
+        static_assert(StringRef("SAME").is_one_of_ignore_ascii_case(ArrayRef<StringRef>(kOpts)));
+        static_assert(!StringRef("SAME").is_one_of(ArrayRef<StringRef>(kOpts)));
+
+        String s = String::from("BiCuBiC");
+        TEST_CHECK(s.equals_ignore_ascii_case("bicubic"));
+        TEST_CHECK(s.is_one_of_ignore_ascii_case({"bicubic", "cubic"}));
+        TEST_CHECK(s.starts_with_ignore_ascii_case("BI"));
+        TEST_CHECK(s.ends_with_ignore_ascii_case("bic"));
+        TEST_CHECK(s.contains_ignore_ascii_case("cub"));
+        s.to_ascii_lower_in_place();
+        TEST_CHECK(s == "bicubic");
+        s.to_ascii_upper_in_place();
+        TEST_CHECK(s == "BICUBIC");
+
+        SmallString<16> ss("ShortG");
+        TEST_CHECK(ss.is_one_of_ignore_ascii_case({"short", "shortg", "longg"}));
+        ss.to_ascii_lower_in_place();
+        TEST_CHECK(ss == "shortg");
+    }
+
+    // Extended math constants
+    {
+        TEST_CHECK(keel::abs(keel::kSqrtPi * keel::kSqrtPi - keel::kPi) < 1e-15);
+        TEST_CHECK(keel::abs(keel::kSqrtPi * keel::kInvSqrtPi - 1.0) < 1e-15);
+        TEST_CHECK(keel::abs(keel::kSqrt2Pi * keel::kSqrt2Pi - keel::kTau) < 1e-14);
+        TEST_CHECK(keel::abs(keel::kSqrt2Pi * keel::kInvSqrt2Pi - 1.0) < 1e-15);
+        TEST_CHECK(keel::abs(keel::kEulerGamma - 0.57721566490153286) < 1e-15);
+    }
+
+    // algo.h: for_each, transform, iota, all_of, any_of, none_of, find, find_if, count, count_if
+    {
+        Array<i32> a;
+        a.resize(5);
+        keel::iota(a, i32{1});
+        TEST_CHECK(a[0] == 1 && a[4] == 5);
+
+        keel::for_each(a, [](i32& x) { x *= 2; });
+        TEST_CHECK(a[0] == 2 && a[4] == 10);
+
+        i32 sum = 0;
+        const Array<i32>& ca = a;
+        keel::for_each(ca, [&](i32 x) { sum += x; });
+        TEST_CHECK(sum == 30);
+
+        Array<i32> b;
+        b.resize(5);
+        keel::transform(ca, b, [](i32 x) { return x + 1; });
+        TEST_CHECK(b[0] == 3 && b[4] == 11);
+
+        TEST_CHECK(keel::all_of(b, [](i32 x) { return (x % 2) == 1; }));
+        TEST_CHECK(keel::any_of(b, [](i32 x) { return x == 7; }));
+        TEST_CHECK(keel::none_of(b, [](i32 x) { return x < 0; }));
+        TEST_CHECK(keel::find(b, 7) == 2);
+        TEST_CHECK(keel::find(b, 99) == kInvalidIndex);
+        TEST_CHECK(keel::find_if(b, [](i32 x) { return x > 8; }) == 3);
+        TEST_CHECK(keel::count(ArrayRef<i32>(b), 7) == 1);
+        TEST_CHECK(keel::count_if(ArrayRef<i32>(b), [](i32 x) { return x >= 7; }) == 3);
+
+        String txt = String::from("AbC");
+        keel::for_each(txt, [](char& c) { c = to_ascii_lower(c); });
+        TEST_CHECK(txt == "abc");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -2950,6 +3031,7 @@ int main() {
     test_arithmetic_casts();
     test_tier1_platform_primitives();
     test_tier2_platform_primitives();
+    test_string_icase_math_and_algo();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

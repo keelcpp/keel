@@ -152,4 +152,217 @@ template <typename T> constexpr void fill(MutArrayRef<T> slice, const T& value) 
     }
 }
 
+template <typename R, typename T>
+    requires requires(R& r) {
+        r.data();
+        r.size();
+    }
+constexpr void fill(R& range, const T& value) {
+    auto* p = range.data();
+    const usize n = as<usize>(range.size());
+    for (usize i = 0; i < n; ++i) {
+        p[i] = value;
+    }
+}
+
+template <typename T, typename Fn> constexpr void for_each(T* data, usize count, Fn&& fn) {
+    for (usize i = 0; i < count; ++i) {
+        fn(data[i]);
+    }
+}
+
+template <typename T, typename Fn> constexpr void for_each(const T* data, usize count, Fn&& fn) {
+    for (usize i = 0; i < count; ++i) {
+        fn(data[i]);
+    }
+}
+
+template <typename T, typename Fn> constexpr void for_each(MutArrayRef<T> slice, Fn&& fn) {
+    keel::for_each(slice.data(), slice.size(), keel::forward<Fn>(fn));
+}
+
+template <typename T, typename Fn> constexpr void for_each(ArrayRef<T> slice, Fn&& fn) {
+    keel::for_each(slice.data(), slice.size(), keel::forward<Fn>(fn));
+}
+
+template <typename R, typename Fn>
+    requires requires(R& r) {
+        r.data();
+        r.size();
+    }
+constexpr void for_each(R& range, Fn&& fn) {
+    keel::for_each(range.data(), as<usize>(range.size()), keel::forward<Fn>(fn));
+}
+
+template <typename R, typename Fn>
+    requires requires(const R& r) {
+        r.data();
+        r.size();
+    }
+constexpr void for_each(const R& range, Fn&& fn) {
+    keel::for_each(range.data(), as<usize>(range.size()), keel::forward<Fn>(fn));
+}
+
+template <typename In, typename Out, typename Fn>
+constexpr void transform(ArrayRef<In> src, MutArrayRef<Out> dst, Fn&& fn) {
+    KEEL_BOUNDS_ASSERT(src.size() <= dst.size());
+    const usize n = src.size();
+    for (usize i = 0; i < n; ++i) {
+        dst[i] = fn(src[i]);
+    }
+}
+
+template <typename InR, typename OutR, typename Fn>
+    requires requires(const InR& a, OutR& b) {
+        a.data();
+        a.size();
+        b.data();
+        b.size();
+    }
+constexpr void transform(const InR& src, OutR& dst, Fn&& fn) {
+    KEEL_BOUNDS_ASSERT(as<usize>(src.size()) <= as<usize>(dst.size()));
+    const auto* in = src.data();
+    auto* out = dst.data();
+    const usize n = as<usize>(src.size());
+    for (usize i = 0; i < n; ++i) {
+        out[i] = fn(in[i]);
+    }
+}
+
+template <typename T> constexpr void iota(MutArrayRef<T> slice, T start = T{0}) {
+    for (usize i = 0; i < slice.size(); ++i) {
+        slice[i] = start;
+        ++start;
+    }
+}
+
+template <typename R, typename T = RemoveCvRef<decltype(*declval<R&>().data())>>
+    requires requires(R& r) {
+        r.data();
+        r.size();
+    }
+constexpr void iota(R& range, T start = T{0}) {
+    keel::iota(MutArrayRef<RemoveReference<decltype(*range.data())>>(range.data(), as<usize>(range.size())), start);
+}
+
+template <typename T, typename Pred>
+[[nodiscard]] constexpr bool all_of(ArrayRef<T> slice, Pred&& pred) {
+    for (usize i = 0; i < slice.size(); ++i) {
+        if (!pred(slice[i])) return false;
+    }
+    return true;
+}
+
+template <typename R, typename Pred>
+    requires requires(const R& r) {
+        r.data();
+        r.size();
+    }
+[[nodiscard]] constexpr bool all_of(const R& range, Pred&& pred) {
+    const auto* p = range.data();
+    const usize n = as<usize>(range.size());
+    for (usize i = 0; i < n; ++i) {
+        if (!pred(p[i])) return false;
+    }
+    return true;
+}
+
+template <typename T, typename Pred>
+[[nodiscard]] constexpr bool any_of(ArrayRef<T> slice, Pred&& pred) {
+    for (usize i = 0; i < slice.size(); ++i) {
+        if (pred(slice[i])) return true;
+    }
+    return false;
+}
+
+template <typename R, typename Pred>
+    requires requires(const R& r) {
+        r.data();
+        r.size();
+    }
+[[nodiscard]] constexpr bool any_of(const R& range, Pred&& pred) {
+    const auto* p = range.data();
+    const usize n = as<usize>(range.size());
+    for (usize i = 0; i < n; ++i) {
+        if (pred(p[i])) return true;
+    }
+    return false;
+}
+
+template <typename T, typename Pred>
+[[nodiscard]] constexpr bool none_of(ArrayRef<T> slice, Pred&& pred) {
+    return !keel::any_of(slice, keel::forward<Pred>(pred));
+}
+
+template <typename R, typename Pred>
+    requires requires(const R& r) {
+        r.data();
+        r.size();
+    }
+[[nodiscard]] constexpr bool none_of(const R& range, Pred&& pred) {
+    return !keel::any_of(range, keel::forward<Pred>(pred));
+}
+
+template <typename T, typename V>
+[[nodiscard]] constexpr usize find(ArrayRef<T> slice, const V& value) {
+    for (usize i = 0; i < slice.size(); ++i) {
+        if (slice[i] == value) return i;
+    }
+    return kInvalidIndex;
+}
+
+template <typename R, typename V>
+    requires requires(const R& r) {
+        r.data();
+        r.size();
+    }
+[[nodiscard]] constexpr usize find(const R& range, const V& value) {
+    const auto* p = range.data();
+    const usize n = as<usize>(range.size());
+    for (usize i = 0; i < n; ++i) {
+        if (p[i] == value) return i;
+    }
+    return kInvalidIndex;
+}
+
+template <typename T, typename Pred>
+[[nodiscard]] constexpr usize find_if(ArrayRef<T> slice, Pred&& pred) {
+    for (usize i = 0; i < slice.size(); ++i) {
+        if (pred(slice[i])) return i;
+    }
+    return kInvalidIndex;
+}
+
+template <typename R, typename Pred>
+    requires requires(const R& r) {
+        r.data();
+        r.size();
+    }
+[[nodiscard]] constexpr usize find_if(const R& range, Pred&& pred) {
+    const auto* p = range.data();
+    const usize n = as<usize>(range.size());
+    for (usize i = 0; i < n; ++i) {
+        if (pred(p[i])) return i;
+    }
+    return kInvalidIndex;
+}
+
+template <typename T, typename V>
+[[nodiscard]] constexpr usize count(ArrayRef<T> slice, const V& value) {
+    usize n = 0;
+    for (usize i = 0; i < slice.size(); ++i) {
+        if (slice[i] == value) ++n;
+    }
+    return n;
+}
+
+template <typename T, typename Pred>
+[[nodiscard]] constexpr usize count_if(ArrayRef<T> slice, Pred&& pred) {
+    usize n = 0;
+    for (usize i = 0; i < slice.size(); ++i) {
+        if (pred(slice[i])) ++n;
+    }
+    return n;
+}
+
 } // namespace keel

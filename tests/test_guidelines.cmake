@@ -296,4 +296,35 @@ if(RES_BF EQUAL 0 OR NOT COMBINED_BF MATCHES "src/bad_float.cpp:2:" OR NOT COMBI
     message(FATAL_ERROR "Case 6 (BAN_RAW_FLOATS) failed:\n${COMBINED_BF}")
 endif()
 
+# ---------------------------------------------------------------------------
+# Case 7: Non-standard math macros (_USE_MATH_DEFINES / M_PI) rejected
+# ---------------------------------------------------------------------------
+file(WRITE "${WORK_DIR}/src/bad_math_macro.cpp"
+"#define _USE_MATH_DEFINES
+#include <keel/math.h>
+keel::f64 a = M_PI;
+keel::f64 b = keel::kPi;
+")
+file(WRITE "${WORK_DIR}/cfg_bad_math.cmake"
+"set(KG_TARGET \"test_bad_math\")
+set(KG_SCOPE \"ALL\")
+set(KG_BAN_STL ON)
+set(KG_BAN_RAW_INTS \"ALL\")
+set(KG_BAN_RAW_FLOATS \"ALL\")
+set(KG_ALLOW_STDEXCEPT ON)
+set(KG_ALLOW_STDEXCEPT_IN_HEADERS OFF)
+set(KG_SOURCE_ROOT \"${WORK_DIR}\")
+set(KG_BINARY_DIR \"${WORK_DIR}/bin\")
+set(KG_ALLOWED_ANGLE_PREFIXES \"keel/;myproj/\")
+set(KG_FILES \"${WORK_DIR}/src/bad_math_macro.cpp\")
+")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DCONFIG_FILE=${WORK_DIR}/cfg_bad_math.cmake" "-DRUN_STANDALONE_HEADERS=OFF" -P "${CHECK_SCRIPT}"
+    OUTPUT_VARIABLE OUT_BM ERROR_VARIABLE ERR_BM RESULT_VARIABLE RES_BM
+)
+set(COMBINED_BM "${OUT_BM}\n${ERR_BM}")
+if(RES_BM EQUAL 0 OR NOT COMBINED_BM MATCHES "src/bad_math_macro.cpp:1:" OR NOT COMBINED_BM MATCHES "src/bad_math_macro.cpp:3:" OR COMBINED_BM MATCHES "src/bad_math_macro.cpp:4:")
+    message(FATAL_ERROR "Case 7 (math macros) failed:\n${COMBINED_BM}")
+endif()
+
 message(STATUS "All KeelGuidelines self-tests passed.")

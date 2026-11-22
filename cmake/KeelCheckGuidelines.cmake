@@ -337,6 +337,9 @@ set(FORBIDDEN_RAW_INT_REGEX
 set(FORBIDDEN_RAW_FLOAT_REGEX
     "(^|[^A-Za-z0-9_])(float|double)([^A-Za-z0-9_]|$)"
 )
+set(FORBIDDEN_MATH_MACRO_REGEX
+    "(^|[^A-Za-z0-9_])(_USE_MATH_DEFINES|M_PI|M_PI_2|M_PI_4|M_1_PI|M_2_PI|M_SQRT2|M_SQRT1_2|M_E|M_LN2|M_LN10)([^A-Za-z0-9_]|$)"
+)
 
 # Per-file incremental mtime/size cache (enabled when STAMP_FILE is provided and not running standalone headers)
 set(USE_FILE_CACHE FALSE)
@@ -485,6 +488,13 @@ function(keel_collect_file_violations REL_FILE IS_HEADER CHECK_RAW_INTS CHECK_RA
             endif()
         endif()
 
+        if(_LINE MATCHES "${FORBIDDEN_MATH_MACRO_REGEX}")
+            string(REGEX MATCH "(_USE_MATH_DEFINES|M_PI|M_PI_2|M_PI_4|M_1_PI|M_2_PI|M_SQRT2|M_SQRT1_2|M_E|M_LN2|M_LN10)" _MMATH "${_LINE}")
+            list(APPEND _FILE_VIOLS
+                "${REL_FILE}:${_LNO}: forbidden non-standard math macro '${_MMATH}'. Include <keel/math.h> and use keel::kPi / keel::kTau / keel::kHalfPi / keel::kE / keel::kSqrt2."
+            )
+        endif()
+
         if(IS_HEADER AND _LINE MATCHES "(^|[^A-Za-z0-9_])using[ \t]+namespace[ \t]+")
             list(APPEND _FILE_VIOLS
                 "${REL_FILE}:${_LNO}: 'using namespace' is forbidden in headers."
@@ -626,6 +636,12 @@ foreach(FILE_PATH IN LISTS KG_FILES)
             set(ACTIVE_STD_REGEX "${FORBIDDEN_STD_REGEX_CPP}")
         endif()
         if(CLEAN_CODE MATCHES "${ACTIVE_STD_REGEX}")
+            set(FILE_HAS_VIOLATION TRUE)
+        endif()
+    endif()
+
+    if(NOT FILE_HAS_VIOLATION)
+        if(CLEAN_CODE MATCHES "${FORBIDDEN_MATH_MACRO_REGEX}")
             set(FILE_HAS_VIOLATION TRUE)
         endif()
     endif()
