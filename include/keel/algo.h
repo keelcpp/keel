@@ -1,6 +1,7 @@
 #pragma once
 
 #include "keel/core.h"
+#include "keel/memory.h"
 #include "keel/ref.h"
 
 namespace keel {
@@ -363,6 +364,99 @@ template <typename T, typename Pred>
         if (pred(slice[i])) ++n;
     }
     return n;
+}
+
+// ============================================================================
+// Type-Safe Bulk Memory Operations (replaces raw std::memcpy / memmove / memset)
+// ============================================================================
+
+template <typename T>
+constexpr void copy_n(T* dst, const T* src, usize count) noexcept(IsTriviallyCopyable<T>) {
+    if (count == 0) return;
+    if constexpr (IsTriviallyCopyable<T>) {
+        if (!__builtin_is_constant_evaluated()) {
+            mem_copy(dst, src, count * sizeof(T));
+            return;
+        }
+    }
+    for (usize i = 0; i < count; ++i) {
+        dst[i] = src[i];
+    }
+}
+
+template <typename T>
+constexpr void copy(MutArrayRef<T> dst, ArrayRef<T> src) noexcept(IsTriviallyCopyable<T>) {
+    KEEL_BOUNDS_ASSERT(dst.size() >= src.size());
+    keel::copy_n(dst.data(), src.data(), src.size());
+}
+
+template <typename DstR, typename SrcR>
+    requires requires(DstR& d, const SrcR& s) {
+        d.data();
+        d.size();
+        s.data();
+        s.size();
+    }
+constexpr void copy(DstR& dst, const SrcR& src) {
+    KEEL_BOUNDS_ASSERT(as<usize>(dst.size()) >= as<usize>(src.size()));
+    keel::copy_n(dst.data(), src.data(), as<usize>(src.size()));
+}
+
+template <typename T>
+constexpr void move_n(T* dst, const T* src, usize count) noexcept(IsTriviallyCopyable<T>) {
+    if (count == 0 || dst == src) return;
+    if constexpr (IsTriviallyCopyable<T>) {
+        if (!__builtin_is_constant_evaluated()) {
+            mem_move(dst, src, count * sizeof(T));
+            return;
+        }
+    }
+    if (dst < src) {
+        for (usize i = 0; i < count; ++i) {
+            dst[i] = keel::move(const_cast<T&>(src[i]));
+        }
+    } else {
+        for (usize i = count; i > 0; --i) {
+            dst[i - 1] = keel::move(const_cast<T&>(src[i - 1]));
+        }
+    }
+}
+
+template <typename T>
+constexpr void zero_n(T* dst, usize count) noexcept(IsTriviallyCopyable<T>) {
+    if (count == 0) return;
+    if constexpr (IsTriviallyCopyable<T>) {
+        if (!__builtin_is_constant_evaluated()) {
+            mem_zero(dst, count * sizeof(T));
+            return;
+        }
+    }
+    for (usize i = 0; i < count; ++i) {
+        dst[i] = T{};
+    }
+}
+
+template <typename T>
+constexpr void zero(MutArrayRef<T> dst) noexcept(IsTriviallyCopyable<T>) {
+    keel::zero_n(dst.data(), dst.size());
+}
+
+template <typename R>
+    requires requires(R& r) {
+        r.data();
+        r.size();
+    }
+constexpr void zero(R& range) {
+    keel::zero_n(range.data(), as<usize>(range.size()));
+}
+
+template <typename T>
+[[nodiscard]] constexpr bool equal_n(const T* a, const T* b, usize count) noexcept {
+    if (count == 0 || a == b) return true;
+    for (usize i = 0; i < count; ++i) {
+        if (!(a[i] == b[i])) return false;
+    }
+    return true;
 }
 
 } // namespace keel

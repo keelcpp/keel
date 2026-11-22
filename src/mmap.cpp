@@ -49,7 +49,7 @@ Result<MappedFile> MappedFile::open(StringRef path, MapMode mode) noexcept {
         return err;
     }
     const u64 fsize = static_cast<u64>(li.QuadPart);
-    if (fsize > static_cast<u64>(~usize{0})) {
+    if (fsize > as<u64>(Limits<usize>::kMax)) {
         CloseHandle(fh);
         return Error{ErrorCode::Overflow, 0};
     }
@@ -220,7 +220,7 @@ Result<MappedFile> MappedFile::open(StringRef path, MapMode mode) noexcept {
         (void)::close(fd);
         return Error{ErrorCode::InvalidArgument, EINVAL};
     }
-    if (st.st_size < 0 || static_cast<u64>(st.st_size) > static_cast<u64>(~usize{0})) {
+    if (st.st_size < 0 || static_cast<u64>(st.st_size) > as<u64>(Limits<usize>::kMax)) {
         (void)::close(fd);
         return Error{ErrorCode::Overflow, 0};
     }

@@ -107,6 +107,16 @@ namespace keel {
 
 [[nodiscard]] constexpr bool is_power_of_two(u64 x) noexcept { return x != 0 && (x & (x - 1)) == 0; }
 
+// Returns a bitmask with the lowest `n` bits set (UB-free for n == 0 and n >= Limits<T>::kBits).
+template <typename T = u64>
+    requires(IsUnsigned<T> && IsIntegral<T> && !IsSame<RemoveCv<T>, bool>)
+[[nodiscard]] constexpr RemoveCv<T> low_bits_mask(u32 n) noexcept {
+    using CleanT = RemoveCv<T>;
+    if (n == 0u) return static_cast<CleanT>(0);
+    if (n >= as<u32>(Limits<CleanT>::kBits)) return Limits<CleanT>::kMax;
+    return static_cast<CleanT>((static_cast<CleanT>(1) << n) - static_cast<CleanT>(1));
+}
+
 [[nodiscard]] constexpr u64 bit_ceil(u64 x) noexcept {
     if (x <= 1) return 1;
     if (x > (u64{1} << 63)) return 0;

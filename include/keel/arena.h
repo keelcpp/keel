@@ -81,7 +81,7 @@ public:
     template <typename T> [[nodiscard]] T* try_alloc_array(usize count, usize align = alignof(T)) noexcept {
         const usize actual_align = max(align, alignof(T));
         if (count == 0) return nullptr;
-        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+        if (count > Limits<usize>::kMax / sizeof(T)) [[unlikely]] {
             return nullptr;
         }
         return static_cast<T*>(try_alloc(count * sizeof(T), actual_align));
@@ -89,8 +89,8 @@ public:
 
     template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
-        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
-            handle_oom(~usize{0}, alignof(T));
+        if (count > Limits<usize>::kMax / sizeof(T)) [[unlikely]] {
+            handle_oom(Limits<usize>::kMax, alignof(T));
         }
         return static_cast<T*>(alloc(count * sizeof(T), alignof(T)));
     }
@@ -100,8 +100,8 @@ public:
     [[nodiscard]] MutArrayRef<T> alloc_slice(usize count, usize align = alignof(T)) {
         const usize actual_align = max(align, alignof(T));
         if (count == 0) return MutArrayRef<T>();
-        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
-            handle_oom(~usize{0}, actual_align);
+        if (count > Limits<usize>::kMax / sizeof(T)) [[unlikely]] {
+            handle_oom(Limits<usize>::kMax, actual_align);
         }
         return MutArrayRef<T>(static_cast<T*>(alloc(count * sizeof(T), actual_align)), count);
     }
@@ -468,8 +468,8 @@ public:
         KEEL_ASSERT(m_arena != nullptr);
         KEEL_ASSERT(new_cap <= 0xFFFFFFFFu);
         if (!m_arena) return;
-        if (new_cap > 0xFFFFFFFFu || new_cap > (~usize{0}) / sizeof(T)) [[unlikely]] {
-            handle_oom(~usize{0}, alignof(T));
+        if (new_cap > 0xFFFFFFFFu || new_cap > Limits<usize>::kMax / sizeof(T)) [[unlikely]] {
+            handle_oom(Limits<usize>::kMax, alignof(T));
         }
 
         const usize old_bytes = sizeof(T) * as<usize>(m_cap);
@@ -497,7 +497,7 @@ public:
     void resize(usize new_size) {
         KEEL_ASSERT(new_size <= 0xFFFFFFFFu);
         if (new_size > 0xFFFFFFFFu) [[unlikely]] {
-            handle_oom(~usize{0}, alignof(T));
+            handle_oom(Limits<usize>::kMax, alignof(T));
         }
         const u32 target = as<u32>(new_size);
         if (target < m_size) {
@@ -637,7 +637,7 @@ private:
     template <typename... Args> T& emplace_back_slow(Args&&... args) {
         KEEL_ASSERT(m_arena != nullptr);
         if (m_cap > 0x7FFFFFFFu) [[unlikely]] {
-            handle_oom(~usize{0}, alignof(T));
+            handle_oom(Limits<usize>::kMax, alignof(T));
         }
         const u32 next_cap = (m_cap == 0) ? 16u : (m_cap * 2u);
         const usize old_bytes = sizeof(T) * as<usize>(m_cap);

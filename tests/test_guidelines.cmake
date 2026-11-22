@@ -327,4 +327,52 @@ if(RES_BM EQUAL 0 OR NOT COMBINED_BM MATCHES "src/bad_math_macro.cpp:1:" OR NOT 
     message(FATAL_ERROR "Case 7 (math macros) failed:\n${COMBINED_BM}")
 endif()
 
+# ---------------------------------------------------------------------------
+# Case 8: Strict keel-only math / memcpy / limits / ~u64{0} / INFINITY / NAN
+# ---------------------------------------------------------------------------
+file(WRITE "${WORK_DIR}/src/bad_strict_keel.cpp"
+"#include <cmath>
+#include <keel/math.h>
+#include <keel/memory.h>
+void f(keel::f64* dst, const keel::f64* src) {
+    keel::f64 a = std::floor(src[0]);
+    std::memcpy(dst, src, sizeof(keel::f64));
+    keel::u64 m1 = std::numeric_limits<keel::u64>::max();
+    keel::u64 m2 = ~keel::u64{0};
+    keel::f64 inf = INFINITY;
+    keel::f64 ok = keel::floor(src[0]) + keel::kInf;
+    keel::u64 okm = keel::Limits<keel::u64>::kMax;
+    (void)a; (void)m1; (void)m2; (void)inf; (void)ok; (void)okm;
+}
+")
+file(WRITE "${WORK_DIR}/cfg_bad_strict.cmake"
+"set(KG_TARGET \"test_bad_strict\")
+set(KG_SCOPE \"ALL\")
+set(KG_BAN_STL ON)
+set(KG_BAN_RAW_INTS \"ALL\")
+set(KG_BAN_RAW_FLOATS \"ALL\")
+set(KG_ALLOW_STDEXCEPT ON)
+set(KG_ALLOW_STDEXCEPT_IN_HEADERS OFF)
+set(KG_SOURCE_ROOT \"${WORK_DIR}\")
+set(KG_BINARY_DIR \"${WORK_DIR}/bin\")
+set(KG_ALLOWED_ANGLE_PREFIXES \"keel/;myproj/\")
+set(KG_FILES \"${WORK_DIR}/src/bad_strict_keel.cpp\")
+")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DCONFIG_FILE=${WORK_DIR}/cfg_bad_strict.cmake" "-DRUN_STANDALONE_HEADERS=OFF" -P "${CHECK_SCRIPT}"
+    OUTPUT_VARIABLE OUT_BS ERROR_VARIABLE ERR_BS RESULT_VARIABLE RES_BS
+)
+set(COMBINED_BS "${OUT_BS}\n${ERR_BS}")
+if(RES_BS EQUAL 0
+    OR NOT COMBINED_BS MATCHES "src/bad_strict_keel.cpp:1:"
+    OR NOT COMBINED_BS MATCHES "src/bad_strict_keel.cpp:5:"
+    OR NOT COMBINED_BS MATCHES "src/bad_strict_keel.cpp:6:"
+    OR NOT COMBINED_BS MATCHES "src/bad_strict_keel.cpp:7:"
+    OR NOT COMBINED_BS MATCHES "src/bad_strict_keel.cpp:8:"
+    OR NOT COMBINED_BS MATCHES "src/bad_strict_keel.cpp:9:"
+    OR COMBINED_BS MATCHES "src/bad_strict_keel.cpp:10:"
+    OR COMBINED_BS MATCHES "src/bad_strict_keel.cpp:11:")
+    message(FATAL_ERROR "Case 8 (strict keel rules) failed:\n${COMBINED_BS}")
+endif()
+
 message(STATUS "All KeelGuidelines self-tests passed.")

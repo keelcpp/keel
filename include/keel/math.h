@@ -106,40 +106,13 @@ template <typename T>
 }
 
 // ============================================================================
-// 2. Numeric Limits (replaces <limits> and C macros NAN / HUGE_VAL / INT_MAX)
+// 2. IEEE-754 Special Value Shorthands (Limits<T> lives in "keel/core.h")
 // ============================================================================
 
-template <typename T> struct Limits;
-
-template <typename T>
-    requires(IsIntegral<T> && !IsSame<RemoveCv<T>, bool>)
-struct Limits<T> {
-    using CleanT = RemoveCv<T>;
-    static constexpr usize kBits = sizeof(CleanT) * 8;
-    static constexpr CleanT kMin =
-        IsSigned<CleanT> ? static_cast<CleanT>(as<u64>(1) << (kBits - 1)) : static_cast<CleanT>(0);
-    static constexpr CleanT kLowest = kMin;
-    static constexpr CleanT kMax =
-        IsSigned<CleanT> ? static_cast<CleanT>((~u64{0}) >> (65 - kBits)) : static_cast<CleanT>((~u64{0}) >> (64 - kBits));
-};
-
-template <> struct Limits<f32> {
-    static constexpr f32 kMax = __builtin_bit_cast(f32, 0x7F7FFFFFu);
-    static constexpr f32 kLowest = -kMax;
-    static constexpr f32 kMinPositive = __builtin_bit_cast(f32, 0x00800000u);
-    static constexpr f32 kEpsilon = __builtin_bit_cast(f32, 0x34000000u); // 2^-23
-    [[nodiscard]] static constexpr f32 infinity() noexcept { return __builtin_huge_valf(); }
-    [[nodiscard]] static constexpr f32 quiet_nan() noexcept { return __builtin_nanf(""); }
-};
-
-template <> struct Limits<f64> {
-    static constexpr f64 kMax = __builtin_bit_cast(f64, 0x7FEFFFFFFFFFFFFFULL);
-    static constexpr f64 kLowest = -kMax;
-    static constexpr f64 kMinPositive = __builtin_bit_cast(f64, 0x0010000000000000ULL);
-    static constexpr f64 kEpsilon = __builtin_bit_cast(f64, 0x3CB0000000000000ULL); // 2^-52
-    [[nodiscard]] static constexpr f64 infinity() noexcept { return __builtin_huge_val(); }
-    [[nodiscard]] static constexpr f64 quiet_nan() noexcept { return __builtin_nan(""); }
-};
+inline constexpr f64 kNaN = Limits<f64>::quiet_nan();
+inline constexpr f32 kNaNF = Limits<f32>::quiet_nan();
+inline constexpr f64 kInf = Limits<f64>::infinity();
+inline constexpr f32 kInfF = Limits<f32>::infinity();
 
 // ============================================================================
 // 3. Sign, Magnitude & IEEE-754 Classification
@@ -167,6 +140,24 @@ template <> struct Limits<f64> {
 
 [[nodiscard]] constexpr bool is_finite(f64 x) noexcept {
     return (__builtin_bit_cast(u64, x) & 0x7FF0000000000000ULL) != 0x7FF0000000000000ULL;
+}
+
+template <typename T>
+    requires IsIntegral<T>
+[[nodiscard]] constexpr bool is_nan(T) noexcept {
+    return false;
+}
+
+template <typename T>
+    requires IsIntegral<T>
+[[nodiscard]] constexpr bool is_inf(T) noexcept {
+    return false;
+}
+
+template <typename T>
+    requires IsIntegral<T>
+[[nodiscard]] constexpr bool is_finite(T) noexcept {
+    return true;
 }
 
 [[nodiscard]] constexpr bool signbit(f32 x) noexcept {
@@ -557,6 +548,23 @@ template <typename T>
 [[nodiscard]] inline f32 atanh(f32 x) noexcept { return __builtin_atanhf(x); }
 [[nodiscard]] inline f64 atanh(f64 x) noexcept { return __builtin_atanh(x); }
 
+[[nodiscard]] inline f32 erf(f32 x) noexcept { return __builtin_erff(x); }
+[[nodiscard]] inline f64 erf(f64 x) noexcept { return __builtin_erf(x); }
+[[nodiscard]] inline f32 erfc(f32 x) noexcept { return __builtin_erfcf(x); }
+[[nodiscard]] inline f64 erfc(f64 x) noexcept { return __builtin_erfc(x); }
+[[nodiscard]] inline f32 tgamma(f32 x) noexcept { return __builtin_tgammaf(x); }
+[[nodiscard]] inline f64 tgamma(f64 x) noexcept { return __builtin_tgamma(x); }
+[[nodiscard]] inline f32 lgamma(f32 x) noexcept { return __builtin_lgammaf(x); }
+[[nodiscard]] inline f64 lgamma(f64 x) noexcept { return __builtin_lgamma(x); }
+[[nodiscard]] inline f32 nextafter(f32 from, f32 to) noexcept { return __builtin_nextafterf(from, to); }
+[[nodiscard]] inline f64 nextafter(f64 from, f64 to) noexcept { return __builtin_nextafter(from, to); }
+[[nodiscard]] inline f32 nearbyint(f32 x) noexcept { return __builtin_nearbyintf(x); }
+[[nodiscard]] inline f64 nearbyint(f64 x) noexcept { return __builtin_nearbyint(x); }
+[[nodiscard]] inline f32 rint(f32 x) noexcept { return __builtin_rintf(x); }
+[[nodiscard]] inline f64 rint(f64 x) noexcept { return __builtin_rint(x); }
+[[nodiscard]] inline f32 fdim(f32 x, f32 y) noexcept { return __builtin_fdimf(x, y); }
+[[nodiscard]] inline f64 fdim(f64 x, f64 y) noexcept { return __builtin_fdim(x, y); }
+
 [[nodiscard]] inline f32 ldexp(f32 x, i32 exp_val) noexcept { return __builtin_ldexpf(x, as<int>(exp_val)); }
 [[nodiscard]] inline f64 ldexp(f64 x, i32 exp_val) noexcept { return __builtin_ldexp(x, as<int>(exp_val)); }
 
@@ -650,6 +658,23 @@ template <typename T>
 [[nodiscard]] f64 acosh(f64 x) noexcept;
 [[nodiscard]] f32 atanh(f32 x) noexcept;
 [[nodiscard]] f64 atanh(f64 x) noexcept;
+
+[[nodiscard]] f32 erf(f32 x) noexcept;
+[[nodiscard]] f64 erf(f64 x) noexcept;
+[[nodiscard]] f32 erfc(f32 x) noexcept;
+[[nodiscard]] f64 erfc(f64 x) noexcept;
+[[nodiscard]] f32 tgamma(f32 x) noexcept;
+[[nodiscard]] f64 tgamma(f64 x) noexcept;
+[[nodiscard]] f32 lgamma(f32 x) noexcept;
+[[nodiscard]] f64 lgamma(f64 x) noexcept;
+[[nodiscard]] f32 nextafter(f32 from, f32 to) noexcept;
+[[nodiscard]] f64 nextafter(f64 from, f64 to) noexcept;
+[[nodiscard]] f32 nearbyint(f32 x) noexcept;
+[[nodiscard]] f64 nearbyint(f64 x) noexcept;
+[[nodiscard]] f32 rint(f32 x) noexcept;
+[[nodiscard]] f64 rint(f64 x) noexcept;
+[[nodiscard]] f32 fdim(f32 x, f32 y) noexcept;
+[[nodiscard]] f64 fdim(f64 x, f64 y) noexcept;
 
 [[nodiscard]] f32 ldexp(f32 x, i32 exp_val) noexcept;
 [[nodiscard]] f64 ldexp(f64 x, i32 exp_val) noexcept;

@@ -192,7 +192,7 @@ public:
     void reserve(usize min_items) {
         if (min_items == 0) return;
         const u64 min_u64 = as<u64>(min_items);
-        const u64 raw_cap = (min_u64 > (~u64{0} - 6u) / 8u) ? (u64{1} << 62) : ((min_u64 * 8u + 6u) / 7u);
+        const u64 raw_cap = (min_u64 > (Limits<u64>::kMax - 6u) / 8u) ? (u64{1} << 62) : ((min_u64 * 8u + 6u) / 7u);
         const usize needed_cap = as<usize>(bit_ceil(raw_cap));
         if (needed_cap > m_cap) {
             rehash(keel::max<usize>(needed_cap, 8));

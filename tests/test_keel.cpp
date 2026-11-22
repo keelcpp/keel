@@ -3003,6 +3003,47 @@ void test_string_icase_math_and_algo() {
         keel::for_each(txt, [](char& c) { c = to_ascii_lower(c); });
         TEST_CHECK(txt == "abc");
     }
+
+    // bit_cast, low_bits_mask, bulk copy/move/zero/equal, extended math (erf/erfc/tgamma/lgamma/nextafter/nearbyint/rint/fdim)
+    {
+        static_assert(keel::bit_cast<u32>(1.0f) == 0x3F800000u);
+        static_assert(keel::bit_cast<f32>(0x3F800000u) == 1.0f);
+        static_assert(keel::low_bits_mask<u64>(0) == 0ULL);
+        static_assert(keel::low_bits_mask<u64>(8) == 0xFFULL);
+        static_assert(keel::low_bits_mask<u64>(64) == Limits<u64>::kMax);
+        static_assert(keel::low_bits_mask<u64>(99) == Limits<u64>::kMax);
+        static_assert(keel::low_bits_mask<u32>(32) == Limits<u32>::kMax);
+        static_assert(keel::is_nan(keel::kNaN) && keel::is_nan(keel::kNaNF));
+        static_assert(keel::is_inf(keel::kInf) && keel::is_inf(keel::kInfF));
+        static_assert(!keel::is_nan(i32{42}) && !keel::is_inf(i32{42}) && keel::is_finite(i32{42}));
+
+        Array<f64> src;
+        src.resize(4);
+        src[0] = 1.5; src[1] = 2.5; src[2] = 3.5; src[3] = 4.5;
+        Array<f64> dst;
+        dst.resize(4);
+        keel::copy(dst, src);
+        TEST_CHECK(keel::equal_n(dst.data(), src.data(), 4));
+        keel::move_n(dst.data() + 1, dst.data(), 3);
+        TEST_CHECK(dst[0] == 1.5 && dst[1] == 1.5 && dst[2] == 2.5 && dst[3] == 3.5);
+        keel::zero(dst);
+        TEST_CHECK(dst[0] == 0.0 && dst[3] == 0.0);
+
+        // Guard bytes == 0 with nullptr (must not UB)
+        keel::copy_n<f64>(nullptr, nullptr, 0);
+        keel::move_n<f64>(nullptr, nullptr, 0);
+        keel::zero_n<f64>(nullptr, 0);
+        TEST_CHECK(keel::equal_n<f64>(nullptr, nullptr, 0));
+
+        TEST_CHECK(keel::abs(keel::erf(0.0)) < 1e-15);
+        TEST_CHECK(keel::abs(keel::erfc(0.0) - 1.0) < 1e-15);
+        TEST_CHECK(keel::abs(keel::tgamma(5.0) - 24.0) < 1e-12);
+        TEST_CHECK(keel::abs(keel::lgamma(5.0) - keel::log(24.0)) < 1e-12);
+        TEST_CHECK(keel::nextafter(1.0, 2.0) > 1.0);
+        TEST_CHECK(keel::nearbyint(2.4) == 2.0);
+        TEST_CHECK(keel::rint(2.6) == 3.0);
+        TEST_CHECK(keel::fdim(5.0, 2.0) == 3.0 && keel::fdim(2.0, 5.0) == 0.0);
+    }
 }
 
 } // namespace

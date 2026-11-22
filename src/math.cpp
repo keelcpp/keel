@@ -67,6 +67,23 @@ f64 acosh(f64 x) noexcept { return std::acosh(x); }
 f32 atanh(f32 x) noexcept { return std::atanh(x); }
 f64 atanh(f64 x) noexcept { return std::atanh(x); }
 
+f32 erf(f32 x) noexcept { return std::erf(x); }
+f64 erf(f64 x) noexcept { return std::erf(x); }
+f32 erfc(f32 x) noexcept { return std::erfc(x); }
+f64 erfc(f64 x) noexcept { return std::erfc(x); }
+f32 tgamma(f32 x) noexcept { return std::tgamma(x); }
+f64 tgamma(f64 x) noexcept { return std::tgamma(x); }
+f32 lgamma(f32 x) noexcept { return std::lgamma(x); }
+f64 lgamma(f64 x) noexcept { return std::lgamma(x); }
+f32 nextafter(f32 from, f32 to) noexcept { return std::nextafter(from, to); }
+f64 nextafter(f64 from, f64 to) noexcept { return std::nextafter(from, to); }
+f32 nearbyint(f32 x) noexcept { return std::nearbyint(x); }
+f64 nearbyint(f64 x) noexcept { return std::nearbyint(x); }
+f32 rint(f32 x) noexcept { return std::rint(x); }
+f64 rint(f64 x) noexcept { return std::rint(x); }
+f32 fdim(f32 x, f32 y) noexcept { return std::fdim(x, y); }
+f64 fdim(f64 x, f64 y) noexcept { return std::fdim(x, y); }
+
 f32 ldexp(f32 x, i32 exp_val) noexcept { return std::ldexp(x, as<int>(exp_val)); }
 f64 ldexp(f64 x, i32 exp_val) noexcept { return std::ldexp(x, as<int>(exp_val)); }
 

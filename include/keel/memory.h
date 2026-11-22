@@ -72,7 +72,7 @@ struct Allocator {
     template <typename T> [[nodiscard]] T* try_alloc_array(usize count, usize align = alignof(T)) noexcept {
         const usize actual_align = max(align, alignof(T));
         if (count == 0) return nullptr;
-        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
+        if (count > Limits<usize>::kMax / sizeof(T)) [[unlikely]] {
             return nullptr;
         }
         return static_cast<T*>(try_alloc_bytes(count * sizeof(T), actual_align));
@@ -80,8 +80,8 @@ struct Allocator {
 
     template <typename T> [[nodiscard]] T* alloc_array(usize count) {
         if (count == 0) return nullptr;
-        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
-            handle_oom(~usize{0}, alignof(T));
+        if (count > Limits<usize>::kMax / sizeof(T)) [[unlikely]] {
+            handle_oom(Limits<usize>::kMax, alignof(T));
         }
         return static_cast<T*>(alloc_bytes(count * sizeof(T), alignof(T)));
     }
@@ -99,8 +99,8 @@ struct Allocator {
     template <typename T> [[nodiscard]] T* alloc_aligned_array(usize count, usize align = kSimdAlign) {
         const usize actual_align = max(align, alignof(T));
         if (count == 0) return nullptr;
-        if (count > (~usize{0}) / sizeof(T)) [[unlikely]] {
-            handle_oom(~usize{0}, actual_align);
+        if (count > Limits<usize>::kMax / sizeof(T)) [[unlikely]] {
+            handle_oom(Limits<usize>::kMax, actual_align);
         }
         return static_cast<T*>(alloc_bytes(count * sizeof(T), actual_align));
     }
@@ -130,12 +130,37 @@ void set_default_allocator(Allocator* alloc) noexcept;
 // Hints the OS heap allocator to release unused free memory pages back to the system.
 void memory_trim() noexcept;
 
-// Raw memory primitives without <cstring> in public headers
+// Raw memory primitives without <cstring> in public headers.
+// On GCC/Clang these inline directly to compiler builtins (zero call overhead for small copies)
+// while guarding bytes == 0 against C/C++ UB on null pointers.
+#if defined(__GNUC__) || defined(__clang__)
+inline void mem_copy(void* dst, const void* src, usize bytes) noexcept {
+    if (bytes > 0) {
+        __builtin_memcpy(dst, src, bytes);
+    }
+}
+inline void mem_move(void* dst, const void* src, usize bytes) noexcept {
+    if (bytes > 0) {
+        __builtin_memmove(dst, src, bytes);
+    }
+}
+inline void mem_set(void* dst, u8 val, usize bytes) noexcept {
+    if (bytes > 0) {
+        __builtin_memset(dst, as<i32>(val), bytes);
+    }
+}
+inline void mem_zero(void* dst, usize bytes) noexcept { mem_set(dst, 0, bytes); }
+[[nodiscard]] inline i32 mem_cmp(const void* a, const void* b, usize bytes) noexcept {
+    if (bytes == 0) return 0;
+    return as<i32>(__builtin_memcmp(a, b, bytes));
+}
+#else
 void mem_copy(void* dst, const void* src, usize bytes) noexcept;
 void mem_move(void* dst, const void* src, usize bytes) noexcept;
 void mem_set(void* dst, u8 val, usize bytes) noexcept;
 inline void mem_zero(void* dst, usize bytes) noexcept { mem_set(dst, 0, bytes); }
 [[nodiscard]] i32 mem_cmp(const void* a, const void* b, usize bytes) noexcept;
+#endif
 [[nodiscard]] inline bool mem_eq(const void* a, const void* b, usize bytes) noexcept {
     return bytes == 0 || mem_cmp(a, b, bytes) == 0;
 }

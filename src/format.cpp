@@ -1,7 +1,6 @@
 #include "keel/format.h"
 #include "keel/io.h"
-
-#include <cmath>
+#include "keel/math.h"
 
 namespace keel {
 
@@ -17,7 +16,7 @@ i64 arg_as_i64(const FormatArg& arg) noexcept {
         return as<i64>(arg.u_val);
     case FormatArg::Kind::Float:
     case FormatArg::Kind::Double:
-        return as<i64>(std::round(arg.f_val));
+        return round_i64(arg.f_val);
     default:
         return 0;
     }
@@ -33,7 +32,7 @@ u64 arg_as_u64(const FormatArg& arg) noexcept {
         return as<u64>(arg.i_val);
     case FormatArg::Kind::Float:
     case FormatArg::Kind::Double:
-        return as<u64>(as<i64>(std::round(arg.f_val)));
+        return as<u64>(round_i64(arg.f_val));
     default:
         return 0;
     }

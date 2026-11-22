@@ -45,8 +45,8 @@ using usize = std::size_t;
 static_assert(sizeof(isize) == sizeof(void*), "isize must match pointer size");
 static_assert(sizeof(usize) == sizeof(void*), "usize must match pointer size");
 
-inline constexpr usize kInvalidIndex = ~usize{0};
-inline constexpr usize npos = ~usize{0};
+inline constexpr usize kInvalidIndex = static_cast<usize>(0xFFFFFFFFFFFFFFFFULL);
+inline constexpr usize npos = kInvalidIndex;
 
 namespace detail {
 [[noreturn]] void assert_fail(const char* expr, const char* file, i32 line) noexcept;
@@ -365,9 +365,9 @@ template <typename T>
 [[nodiscard]] constexpr keel::RemoveCv<T> int_max_val() noexcept {
     using CleanT = keel::RemoveCv<T>;
     if constexpr (IsSigned<CleanT>) {
-        return static_cast<CleanT>((~u64{0}) >> (65 - sizeof(CleanT) * 8));
+        return static_cast<CleanT>(0xFFFFFFFFFFFFFFFFULL >> (65 - sizeof(CleanT) * 8));
     } else {
-        return static_cast<CleanT>((~u64{0}) >> (64 - sizeof(CleanT) * 8));
+        return static_cast<CleanT>(0xFFFFFFFFFFFFFFFFULL >> (64 - sizeof(CleanT) * 8));
     }
 }
 
@@ -449,6 +449,54 @@ template <typename To, typename From>
 [[nodiscard]] constexpr RemoveCv<To> as(From val) noexcept {
     return static_cast<RemoveCv<To>>(val);
 }
+
+// Type-safe, constexpr bit reinterpretation (replaces <bit> std::bit_cast and type-punning memcpy).
+template <typename To, typename From>
+    requires(sizeof(To) == sizeof(From) && IsTriviallyCopyable<To> && IsTriviallyCopyable<From>)
+[[nodiscard]] constexpr To bit_cast(const From& src) noexcept {
+    return __builtin_bit_cast(To, src);
+}
+
+// ============================================================================
+// Numeric Limits (replaces <limits> and C macros NAN / HUGE_VAL / INT_MAX)
+// ============================================================================
+
+template <typename T> struct Limits;
+
+template <typename T>
+    requires(IsIntegral<T> && !IsSame<RemoveCv<T>, bool>)
+struct Limits<T> {
+    using CleanT = RemoveCv<T>;
+    static constexpr usize kBits = sizeof(CleanT) * 8;
+    static constexpr CleanT kMin =
+        IsSigned<CleanT> ? static_cast<CleanT>(as<u64>(1) << (kBits - 1)) : static_cast<CleanT>(0);
+    static constexpr CleanT kLowest = kMin;
+    static constexpr CleanT kMax =
+        IsSigned<CleanT> ? static_cast<CleanT>(0xFFFFFFFFFFFFFFFFULL >> (65 - kBits))
+                         : static_cast<CleanT>(0xFFFFFFFFFFFFFFFFULL >> (64 - kBits));
+};
+
+template <> struct Limits<f32> {
+    static constexpr f32 kMax = __builtin_bit_cast(f32, 0x7F7FFFFFu);
+    static constexpr f32 kLowest = -kMax;
+    static constexpr f32 kMinPositive = __builtin_bit_cast(f32, 0x00800000u);
+    static constexpr f32 kMin = kMinPositive;
+    static constexpr f32 kDenormMin = __builtin_bit_cast(f32, 0x00000001u);
+    static constexpr f32 kEpsilon = __builtin_bit_cast(f32, 0x34000000u); // 2^-23
+    [[nodiscard]] static constexpr f32 infinity() noexcept { return __builtin_huge_valf(); }
+    [[nodiscard]] static constexpr f32 quiet_nan() noexcept { return __builtin_nanf(""); }
+};
+
+template <> struct Limits<f64> {
+    static constexpr f64 kMax = __builtin_bit_cast(f64, 0x7FEFFFFFFFFFFFFFULL);
+    static constexpr f64 kLowest = -kMax;
+    static constexpr f64 kMinPositive = __builtin_bit_cast(f64, 0x0010000000000000ULL);
+    static constexpr f64 kMin = kMinPositive;
+    static constexpr f64 kDenormMin = __builtin_bit_cast(f64, 0x0000000000000001ULL);
+    static constexpr f64 kEpsilon = __builtin_bit_cast(f64, 0x3CB0000000000000ULL); // 2^-52
+    [[nodiscard]] static constexpr f64 infinity() noexcept { return __builtin_huge_val(); }
+    [[nodiscard]] static constexpr f64 quiet_nan() noexcept { return __builtin_nan(""); }
+};
 
 // Checked narrowing / sign-changing arithmetic conversion (asserts representability via KEEL_ASSERT).
 template <typename To, typename From>

@@ -1,9 +1,7 @@
 #include "keel/number.h"
 #include "keel/bits.h"
+#include "keel/math.h"
 #include "keel/memory.h"
-
-#include <cmath>
-#include <cstring>
 
 namespace keel {
 
@@ -96,23 +94,11 @@ constexpr f64 kExactPow10[] = {
     1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 };
 
-u64 f64_to_bits(f64 v) noexcept {
-    u64 bits = 0;
-    std::memcpy(&bits, &v, sizeof(bits));
-    return bits;
-}
+u64 f64_to_bits(f64 v) noexcept { return bit_cast<u64>(v); }
 
-f64 bits_to_f64(u64 bits) noexcept {
-    f64 v = 0.0;
-    std::memcpy(&v, &bits, sizeof(v));
-    return v;
-}
+f64 bits_to_f64(u64 bits) noexcept { return bit_cast<f64>(bits); }
 
-u32 f32_to_bits(f32 v) noexcept {
-    u32 bits = 0;
-    std::memcpy(&bits, &v, sizeof(bits));
-    return bits;
-}
+u32 f32_to_bits(f32 v) noexcept { return bit_cast<u32>(v); }
 
 f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated) noexcept {
     if (mantissa == 0) {
@@ -132,7 +118,7 @@ f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated
     }
 
     if (exp10 > 309) {
-        return negative ? -HUGE_VAL : HUGE_VAL;
+        return negative ? -kInf : kInf;
     }
     if (exp10 < -345) {
         return negative ? -0.0 : 0.0;
@@ -148,7 +134,7 @@ f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated
     // prod has MSB at bit 63 of prod.hi, representing 1.xxx * 2^prod.exp2
     i32 ieee_exp = prod.exp2 + 1023;
     if (ieee_exp >= 2047) {
-        return negative ? -HUGE_VAL : HUGE_VAL;
+        return negative ? -kInf : kInf;
     }
 
     u64 sig53 = 0;
@@ -182,7 +168,7 @@ f64 mantissa_exp10_to_f64(u64 mantissa, i32 exp10, bool negative, bool truncated
                 sig53 >>= 1;
                 ++ieee_exp;
                 if (ieee_exp >= 2047) {
-                    return negative ? -HUGE_VAL : HUGE_VAL;
+                    return negative ? -kInf : kInf;
                 }
             }
         }
@@ -277,10 +263,10 @@ Result<f64, ParseError> parse_f64(StringRef str) noexcept {
 
     const StringRef rem = str.substr(i);
     if (rem.equals_ignore_ascii_case("inf") || rem.equals_ignore_ascii_case("infinity")) {
-        return negative ? -HUGE_VAL : HUGE_VAL;
+        return negative ? -kInf : kInf;
     }
     if (rem.equals_ignore_ascii_case("nan")) {
-        return as<f64>(NAN);
+        return kNaN;
     }
 
     u64 mantissa = 0;
@@ -343,7 +329,7 @@ Result<f64, ParseError> parse_f64(StringRef str) noexcept {
     }
 
     f64 val = mantissa_exp10_to_f64(mantissa, exp10, negative, truncated);
-    if (std::isinf(val) && mantissa != 0) {
+    if (is_inf(val) && mantissa != 0) {
         return ParseError{ErrorCode::Overflow, str.size()};
     }
     return val;
@@ -353,9 +339,9 @@ Result<f32, ParseError> parse_f32(StringRef str) noexcept {
     auto res = parse_f64(str);
     if (!res.is_ok()) return res.error();
     const f64 d = res.value();
-    if (std::isnan(d)) return as<f32>(NAN);
+    if (is_nan(d)) return kNaNF;
     const f32 f = as<f32>(d);
-    if (std::isinf(f) && !std::isinf(d)) {
+    if (is_inf(f) && !is_inf(d)) {
         return ParseError{ErrorCode::Overflow, str.size()};
     }
     return f;

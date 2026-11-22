@@ -1046,8 +1046,8 @@ Result<ProcessOutput> process_run(ArrayRef<StringRef> argv, const ProcessOptions
     const u64 start_ns = monotonic_ns();
     u64 deadline_ns = 0;
     if (opts.timeout_ms > 0) {
-        const u64 max_add_ms = (~u64{0} - start_ns) / 1000000ULL;
-        deadline_ns = (opts.timeout_ms >= max_add_ms) ? ~u64{0} : (start_ns + opts.timeout_ms * 1000000ULL);
+        const u64 max_add_ms = (Limits<u64>::kMax - start_ns) / 1000000ULL;
+        deadline_ns = (opts.timeout_ms >= max_add_ms) ? Limits<u64>::kMax : (start_ns + opts.timeout_ms * 1000000ULL);
     }
 
     ProcessOutput result{-1, String(a), String(a)};
@@ -1546,8 +1546,8 @@ Result<i32> ChildProcess::wait_for_ms(u64 timeout_ms) noexcept {
     if (m_exited) return m_exit_code;
     if (m_handle == 0) return Error{ErrorCode::InvalidArgument, 0};
     const u64 start = monotonic_ns();
-    const u64 max_add_ms = (~u64{0} - start) / 1000000ULL;
-    const u64 deadline = (timeout_ms >= max_add_ms) ? ~u64{0} : (start + timeout_ms * 1000000ULL);
+    const u64 max_add_ms = (Limits<u64>::kMax - start) / 1000000ULL;
+    const u64 deadline = (timeout_ms >= max_add_ms) ? Limits<u64>::kMax : (start + timeout_ms * 1000000ULL);
     for (;;) {
         int status = 0;
         const pid_t w = ::waitpid(static_cast<pid_t>(m_handle), &status, WNOHANG);

@@ -15,8 +15,8 @@ namespace detail {
 [[nodiscard]] constexpr u64 upow_saturating(u64 base, usize exp) noexcept {
     u64 result = 1;
     for (usize i = 0; i < exp; ++i) {
-        if (base != 0 && result > (~u64{0}) / base) {
-            return ~u64{0};
+        if (base != 0 && result > Limits<u64>::kMax / base) {
+            return Limits<u64>::kMax;
         }
         result *= base;
     }

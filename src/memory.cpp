@@ -26,6 +26,7 @@ void memory_trim() noexcept {
 #endif
 }
 
+#if !defined(__GNUC__) && !defined(__clang__)
 void mem_copy(void* dst, const void* src, usize bytes) noexcept {
     if (bytes > 0) {
         std::memcpy(dst, src, bytes);
@@ -48,6 +49,7 @@ i32 mem_cmp(const void* a, const void* b, usize bytes) noexcept {
     if (bytes == 0) return 0;
     return as<i32>(std::memcmp(a, b, bytes));
 }
+#endif
 
 namespace {
 
@@ -121,7 +123,7 @@ void* sys_realloc(void* ctx, void* ptr, usize old_size, usize new_size, usize al
     if (new_ptr) {
         if (old_size > 0) {
             const usize copy_bytes = min(old_size, new_size);
-            std::memcpy(new_ptr, ptr, copy_bytes);
+            mem_copy(new_ptr, ptr, copy_bytes);
         }
         std::free(ptr);
     }
@@ -151,7 +153,7 @@ constexpr usize kCommitGranularity = 64 * 1024; // Commit in 64 KB chunks
 
 bool checked_align_up(usize val, usize align, usize& out) noexcept {
     const usize mask = align - 1;
-    if (val > (~usize{0}) - mask) [[unlikely]] {
+    if (val > Limits<usize>::kMax - mask) [[unlikely]] {
         return false;
     }
     out = (val + mask) & ~mask;
@@ -302,13 +304,13 @@ void* Arena::alloc_overflow(usize size, usize align) noexcept {
     if (!checked_align_up(sizeof(OverflowBlock), align, data_offset)) [[unlikely]] {
         return nullptr;
     }
-    if (payload_cap > (~usize{0}) - data_offset) [[unlikely]] {
+    if (payload_cap > Limits<usize>::kMax - data_offset) [[unlikely]] {
         return nullptr;
     }
-    if (size > (~usize{0}) - m_overflow_used) [[unlikely]] {
+    if (size > Limits<usize>::kMax - m_overflow_used) [[unlikely]] {
         return nullptr;
     }
-    if (m_offset > (~usize{0}) - (m_overflow_used + size)) [[unlikely]] {
+    if (m_offset > Limits<usize>::kMax - (m_overflow_used + size)) [[unlikely]] {
         return nullptr;
     }
 
@@ -344,12 +346,12 @@ void* Arena::try_alloc(usize size, usize align) noexcept {
     if (!m_has_bump_chunk && m_base != nullptr) {
         usize aligned_addr = 0;
         const usize base_addr = reinterpret_cast<usize>(m_base);
-        if (base_addr <= (~usize{0}) - m_offset &&
+        if (base_addr <= Limits<usize>::kMax - m_offset &&
             checked_align_up(base_addr + m_offset, align, aligned_addr)) {
             const usize aligned_offset = aligned_addr - base_addr;
             if (size <= m_reserved && aligned_offset <= m_reserved - size) {
                 const usize new_offset = aligned_offset + size;
-                if (new_offset <= (~usize{0}) - m_overflow_used) {
+                if (new_offset <= Limits<usize>::kMax - m_overflow_used) {
                     if (new_offset > m_committed) {
                         usize aligned_commit = new_offset;
                         if (!checked_align_up(new_offset, kCommitGranularity, aligned_commit)) {
@@ -379,14 +381,14 @@ void* Arena::try_alloc(usize size, usize align) noexcept {
     } else if (m_has_bump_chunk && m_overflow_head != nullptr && m_overflow_head->is_bump_chunk) {
         usize aligned_addr = 0;
         const usize base_addr = reinterpret_cast<usize>(m_overflow_head->data);
-        if (base_addr <= (~usize{0}) - m_overflow_head->chunk_used &&
+        if (base_addr <= Limits<usize>::kMax - m_overflow_head->chunk_used &&
             checked_align_up(base_addr + m_overflow_head->chunk_used, align, aligned_addr)) {
             const usize aligned_offset = aligned_addr - base_addr;
             if (size <= m_overflow_head->chunk_cap && aligned_offset <= m_overflow_head->chunk_cap - size) {
                 const usize new_chunk_used = aligned_offset + size;
                 const usize delta = new_chunk_used - m_overflow_head->chunk_used;
-                if (delta <= (~usize{0}) - m_overflow_used &&
-                    m_offset <= (~usize{0}) - (m_overflow_used + delta)) {
+                if (delta <= Limits<usize>::kMax - m_overflow_used &&
+                    m_offset <= Limits<usize>::kMax - (m_overflow_used + delta)) {
                     m_overflow_head->chunk_used = new_chunk_used;
                     m_overflow_used += delta;
                     return m_overflow_head->data + aligned_offset;
@@ -423,11 +425,11 @@ bool Arena::try_extend(void* ptr, usize old_size, usize new_size) noexcept {
             return true;
         }
         const usize extra = new_size - old_size;
-        if (extra > (~usize{0}) - m_offset) {
+        if (extra > Limits<usize>::kMax - m_offset) {
             return false;
         }
         const usize new_offset = m_offset + extra;
-        if (new_offset > m_reserved || new_offset > (~usize{0}) - m_overflow_used) {
+        if (new_offset > m_reserved || new_offset > Limits<usize>::kMax - m_overflow_used) {
             return false;
         }
         if (new_offset > m_committed) {
@@ -473,7 +475,7 @@ bool Arena::try_extend(void* ptr, usize old_size, usize new_size) noexcept {
         if (extra > m_overflow_head->chunk_cap - m_overflow_head->chunk_used) {
             return false;
         }
-        if (extra > (~usize{0}) - m_overflow_used || m_offset > (~usize{0}) - (m_overflow_used + extra)) {
+        if (extra > Limits<usize>::kMax - m_overflow_used || m_offset > Limits<usize>::kMax - (m_overflow_used + extra)) {
             return false;
         }
         m_overflow_head->chunk_used += extra;
@@ -497,7 +499,7 @@ void* Arena::try_realloc(void* ptr, usize old_size, usize new_size, usize align)
 
     void* new_ptr = try_alloc(new_size, align);
     if (new_ptr && old_size > 0) {
-        std::memcpy(new_ptr, ptr, min(old_size, new_size));
+        mem_copy(new_ptr, ptr, min(old_size, new_size));
     }
     return new_ptr;
 }

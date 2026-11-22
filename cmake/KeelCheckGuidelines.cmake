@@ -247,7 +247,6 @@ endfunction()
 
 set(ALLOWED_HEADER_STD_INCLUDES
     "cassert"
-    "cmath"
     "cstring"
     "exception"
     "initializer_list"
@@ -267,6 +266,7 @@ set(FORBIDDEN_CPP_STD_INCLUDES
     "bitset"
     "cctype"
     "chrono"
+    "cmath"
     "compare"
     "complex"
     "concepts"
@@ -314,7 +314,7 @@ if(KG_ALLOW_HEADERS)
 endif()
 
 set(FORBIDDEN_STD_TYPES_BASE
-    "string|wstring|u8string|string_view|vector|span|optional|nullopt|array|function|unique_ptr|shared_ptr|weak_ptr|variant|monostate|unordered_map|unordered_set|map|set|source_location|type_index|chrono|complex|pmr|memory_resource|mt19937|mt19937_64|minstd_rand|minstd_rand0|ranlux24|ranlux48|knuth_b|default_random_engine|random_device|seed_seq|shuffle|uniform_int_distribution|uniform_real_distribution|bernoulli_distribution|binomial_distribution|geometric_distribution|negative_binomial_distribution|poisson_distribution|exponential_distribution|gamma_distribution|weibull_distribution|extreme_value_distribution|normal_distribution|lognormal_distribution|chi_squared_distribution|cauchy_distribution|fisher_f_distribution|student_t_distribution|discrete_distribution|piecewise_constant_distribution|piecewise_linear_distribution"
+    "string|wstring|u8string|string_view|vector|span|optional|nullopt|array|function|unique_ptr|shared_ptr|weak_ptr|variant|monostate|unordered_map|unordered_set|map|set|source_location|type_index|chrono|complex|pmr|memory_resource|numeric_limits|bit_cast|memcpy|memmove|memset|memcmp|transform|floor|ceil|round|trunc|lround|llround|nearbyint|rint|fabs|fmin|fmax|fmod|remainder|fma|fdim|sqrt|cbrt|hypot|pow|exp|exp2|expm1|log|log2|log10|log1p|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|erf|erfc|tgamma|lgamma|isnan|isinf|isfinite|signbit|copysign|nextafter|ldexp|frexp|modf|nan|nanf|mt19937|mt19937_64|minstd_rand|minstd_rand0|ranlux24|ranlux48|knuth_b|default_random_engine|random_device|seed_seq|shuffle|uniform_int_distribution|uniform_real_distribution|bernoulli_distribution|binomial_distribution|geometric_distribution|negative_binomial_distribution|poisson_distribution|exponential_distribution|gamma_distribution|weibull_distribution|extreme_value_distribution|normal_distribution|lognormal_distribution|chi_squared_distribution|cauchy_distribution|fisher_f_distribution|student_t_distribution|discrete_distribution|piecewise_constant_distribution|piecewise_linear_distribution"
 )
 set(FORBIDDEN_STD_REGEX_HDR
     "std::(${FORBIDDEN_STD_TYPES_BASE}|runtime_error|logic_error|invalid_argument|out_of_range)([^A-Za-z0-9_]|$)"
@@ -338,7 +338,10 @@ set(FORBIDDEN_RAW_FLOAT_REGEX
     "(^|[^A-Za-z0-9_])(float|double)([^A-Za-z0-9_]|$)"
 )
 set(FORBIDDEN_MATH_MACRO_REGEX
-    "(^|[^A-Za-z0-9_])(_USE_MATH_DEFINES|M_PI|M_PI_2|M_PI_4|M_1_PI|M_2_PI|M_SQRT2|M_SQRT1_2|M_E|M_LN2|M_LN10)([^A-Za-z0-9_]|$)"
+    "(^|[^A-Za-z0-9_])(_USE_MATH_DEFINES|M_PI|M_PI_2|M_PI_4|M_1_PI|M_2_PI|M_SQRT2|M_SQRT1_2|M_E|M_LN2|M_LN10|HUGE_VAL|HUGE_VALF|INFINITY|NAN)([^A-Za-z0-9_]|$)"
+)
+set(FORBIDDEN_TILDE_ZERO_REGEX
+    "~[ \t]*(keel::)?(u8|u16|u32|u64|usize)[ \t]*[{(][ \t]*0[uUlL]*[ \t]*[})]"
 )
 
 # Per-file incremental mtime/size cache (enabled when STAMP_FILE is provided and not running standalone headers)
@@ -489,9 +492,16 @@ function(keel_collect_file_violations REL_FILE IS_HEADER CHECK_RAW_INTS CHECK_RA
         endif()
 
         if(_LINE MATCHES "${FORBIDDEN_MATH_MACRO_REGEX}")
-            string(REGEX MATCH "(_USE_MATH_DEFINES|M_PI|M_PI_2|M_PI_4|M_1_PI|M_2_PI|M_SQRT2|M_SQRT1_2|M_E|M_LN2|M_LN10)" _MMATH "${_LINE}")
+            string(REGEX MATCH "(_USE_MATH_DEFINES|M_PI|M_PI_2|M_PI_4|M_1_PI|M_2_PI|M_SQRT2|M_SQRT1_2|M_E|M_LN2|M_LN10|HUGE_VAL|HUGE_VALF|INFINITY|NAN)" _MMATH "${_LINE}")
             list(APPEND _FILE_VIOLS
-                "${REL_FILE}:${_LNO}: forbidden non-standard math macro '${_MMATH}'. Include <keel/math.h> and use keel::kPi / keel::kTau / keel::kHalfPi / keel::kE / keel::kSqrt2."
+                "${REL_FILE}:${_LNO}: forbidden non-standard math macro '${_MMATH}'. Include <keel/math.h> and use keel::kPi / keel::kTau / keel::kHalfPi / keel::kE / keel::kSqrt2 / keel::kInf / keel::kNaN."
+            )
+        endif()
+
+        if(_LINE MATCHES "${FORBIDDEN_TILDE_ZERO_REGEX}")
+            string(REGEX MATCH "${FORBIDDEN_TILDE_ZERO_REGEX}" _MTZ "${_LINE}")
+            list(APPEND _FILE_VIOLS
+                "${REL_FILE}:${_LNO}: forbidden bit-trick '${_MTZ}'. Use keel::Limits<T>::kMax, keel::kInvalidIndex, keel::low_bits_mask<T>(n), or keel::checked_mul/checked_add."
             )
         endif()
 
@@ -641,7 +651,7 @@ foreach(FILE_PATH IN LISTS KG_FILES)
     endif()
 
     if(NOT FILE_HAS_VIOLATION)
-        if(CLEAN_CODE MATCHES "${FORBIDDEN_MATH_MACRO_REGEX}")
+        if(CLEAN_CODE MATCHES "${FORBIDDEN_MATH_MACRO_REGEX}" OR CLEAN_CODE MATCHES "${FORBIDDEN_TILDE_ZERO_REGEX}")
             set(FILE_HAS_VIOLATION TRUE)
         endif()
     endif()

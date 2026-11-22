@@ -235,14 +235,14 @@ public:
         if (pred()) return true;
         if (timeout_ms == 0) return false;
         const u64 start = monotonic_ns();
-        const u64 max_add_ms = (~u64{0} - start) / 1000000ULL;
+        const u64 max_add_ms = (Limits<u64>::kMax - start) / 1000000ULL;
         const u64 deadline_ns =
-            (timeout_ms >= max_add_ms) ? ~u64{0} : (start + timeout_ms * 1000000ULL);
+            (timeout_ms >= max_add_ms) ? Limits<u64>::kMax : (start + timeout_ms * 1000000ULL);
         while (!pred()) {
             const u64 now = monotonic_ns();
             if (now >= deadline_ns) return pred();
             const u64 diff = deadline_ns - now;
-            const u64 rem_ms = (diff > ~u64{0} - 999999ULL) ? (diff / 1000000ULL) : ((diff + 999999ULL) / 1000000ULL);
+            const u64 rem_ms = (diff > Limits<u64>::kMax - 999999ULL) ? (diff / 1000000ULL) : ((diff + 999999ULL) / 1000000ULL);
             (void)wait_for_ms(m, rem_ms);
         }
         return true;
