@@ -3245,6 +3245,35 @@ void test_extended_algorithms() {
         TEST_CHECK(keel::lcm(0, 18) == 0);
         TEST_CHECK(keel::gcd(usize{100}, usize{75}) == 25);
     }
+
+    // MutStringRef buffer formatters (number.h + format.h)
+    {
+        char cbuf[64];
+        TEST_CHECK(keel::format_i64_to(cbuf, -42) == "-42");
+        TEST_CHECK(keel::format_i64_to(cbuf, 255, 16, true) == "FF");
+        TEST_CHECK(keel::format_u64_to(cbuf, 255u, 16, false) == "ff");
+        TEST_CHECK(keel::format_f64_to(cbuf, 3.5) == "3.5");
+        TEST_CHECK(keel::format_f32_to(cbuf, 1.25f) == "1.25");
+        TEST_CHECK(keel::format_f64_fixed_to(cbuf, 3.14159, 2) == "3.14");
+        TEST_CHECK(keel::format_f64_general_to(cbuf, 1234.5, 5) == "1234.5");
+        TEST_CHECK(keel::format_f64_scientific_to(cbuf, 100.0, 2, true) == "1.00E+02");
+
+        // Works with StaticArray<char, N>, Array<char>, and MutStringRef slices
+        keel::StaticArray<char, 32> sbuf{};
+        TEST_CHECK(keel::format_i64_to(sbuf, 123456) == "123456");
+        TEST_CHECK(keel::format_buf(sbuf, "v={}", 7) == "v=7");
+
+        keel::Array<char> abuf(32, '\0');
+        TEST_CHECK(keel::format_buf(abuf, "{}={}", "k", 9) == "k=9");
+
+        const keel::FormatArg vargs[] = {keel::FormatArg(42)};
+        TEST_CHECK(keel::vformat_buf(keel::MutStringRef(cbuf), "n={}", keel::ArrayRef<keel::FormatArg>(vargs, 1)) ==
+                   "n=42");
+
+        // Explicit (char*, usize) overload remains unambiguous
+        const usize n = keel::format_buf(cbuf, sizeof(cbuf), "raw={}", 5);
+        TEST_CHECK(keel::StringRef(cbuf, n) == "raw=5");
+    }
 }
 
 } // namespace

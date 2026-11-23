@@ -1385,11 +1385,11 @@ Result<String> fs_create_temp_dir(StringRef prefix, Allocator* alloc) {
         String leaf(scratch.allocator());
         leaf.reserve(pfx.size() + 48);
         leaf.append(pfx);
-        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), pid, 16, false)));
+        leaf.append(format_u64_to(hex_buf, pid, 16, false));
         leaf.push_back('_');
-        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), ns, 16, false)));
+        leaf.append(format_u64_to(hex_buf, ns, 16, false));
         leaf.push_back('_');
-        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), seq, 16, false)));
+        leaf.append(format_u64_to(hex_buf, seq, 16, false));
         String cand = path_join(tmp_root.as_ref(), leaf.as_ref(), scratch.allocator());
         const Error err = fs_create_dir(cand.as_ref());
         if (err.is_ok()) {
@@ -1425,11 +1425,11 @@ Result<TempFile> fs_create_temp_file(StringRef prefix, Allocator* alloc) {
         String leaf(scratch.allocator());
         leaf.reserve(pfx.size() + 48u);
         leaf.append(pfx);
-        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), pid, 16, false)));
+        leaf.append(format_u64_to(hex_buf, pid, 16, false));
         leaf.push_back('_');
-        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), ns, 16, false)));
+        leaf.append(format_u64_to(hex_buf, ns, 16, false));
         leaf.push_back('_');
-        leaf.append(StringRef(hex_buf, format_u64(hex_buf, sizeof(hex_buf), seq, 16, false)));
+        leaf.append(format_u64_to(hex_buf, seq, 16, false));
         String cand = path_join(tmp_root.as_ref(), leaf.as_ref(), scratch.allocator());
 
 #if defined(_WIN32)

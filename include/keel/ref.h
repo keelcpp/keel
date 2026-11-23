@@ -444,4 +444,6 @@ private:
     usize m_size = 0;
 };
 
+using MutStringRef = MutArrayRef<char>;
+
 } // namespace keel

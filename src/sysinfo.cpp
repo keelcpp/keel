@@ -101,11 +101,11 @@ String sys_os_version(Allocator* alloc) {
             if (rtl_get(&info) == 0) {
                 String out(alloc);
                 char buf[32]{};
-                out.append(StringRef(buf, format_u64(buf, sizeof(buf), info.dwMajorVersion)));
+                out.append(format_u64_to(buf, info.dwMajorVersion));
                 out.push_back('.');
-                out.append(StringRef(buf, format_u64(buf, sizeof(buf), info.dwMinorVersion)));
+                out.append(format_u64_to(buf, info.dwMinorVersion));
                 out.push_back('.');
-                out.append(StringRef(buf, format_u64(buf, sizeof(buf), info.dwBuildNumber)));
+                out.append(format_u64_to(buf, info.dwBuildNumber));
                 return out;
             }
         }

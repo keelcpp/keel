@@ -31,4 +31,39 @@ usize format_f64_general(char* buf, usize cap, f64 value, i32 precision = 6, boo
 // Scientific (`%.Ne` / `{:e}`) formatting of `value` into `buf` with `precision` digits after the decimal point.
 usize format_f64_scientific(char* buf, usize cap, f64 value, i32 precision = 6, bool uppercase = false) noexcept;
 
+// Safe MutStringRef (`MutArrayRef<char>`) buffer overloads returning the written StringRef slice.
+// Accepts `char[N]`, `StaticArray<char, N>`, `Array<char>`, or `MutStringRef(ptr, cap)` without
+// risking `sizeof(ptr)` mistakes or `(buf, cap, val)` vs `(buf, val, base)` overload ambiguity.
+[[nodiscard]] inline StringRef format_i64_to(MutStringRef buf, i64 value, i32 base = 10,
+                                             bool uppercase = false) noexcept {
+    return StringRef(buf.data(), format_i64(buf.data(), buf.size(), value, base, uppercase));
+}
+
+[[nodiscard]] inline StringRef format_u64_to(MutStringRef buf, u64 value, i32 base = 10,
+                                             bool uppercase = false) noexcept {
+    return StringRef(buf.data(), format_u64(buf.data(), buf.size(), value, base, uppercase));
+}
+
+[[nodiscard]] inline StringRef format_f64_to(MutStringRef buf, f64 value) noexcept {
+    return StringRef(buf.data(), format_f64(buf.data(), buf.size(), value));
+}
+
+[[nodiscard]] inline StringRef format_f32_to(MutStringRef buf, f32 value) noexcept {
+    return StringRef(buf.data(), format_f32(buf.data(), buf.size(), value));
+}
+
+[[nodiscard]] inline StringRef format_f64_fixed_to(MutStringRef buf, f64 value, i32 precision) noexcept {
+    return StringRef(buf.data(), format_f64_fixed(buf.data(), buf.size(), value, precision));
+}
+
+[[nodiscard]] inline StringRef format_f64_general_to(MutStringRef buf, f64 value, i32 precision = 6,
+                                                     bool uppercase = false) noexcept {
+    return StringRef(buf.data(), format_f64_general(buf.data(), buf.size(), value, precision, uppercase));
+}
+
+[[nodiscard]] inline StringRef format_f64_scientific_to(MutStringRef buf, f64 value, i32 precision = 6,
+                                                        bool uppercase = false) noexcept {
+    return StringRef(buf.data(), format_f64_scientific(buf.data(), buf.size(), value, precision, uppercase));
+}
+
 } // namespace keel

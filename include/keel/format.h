@@ -76,6 +76,10 @@ struct FormatArg {
 // Low-level type-erased printf/brace formatter (`%d`, `%u`, `%x`, `%X`, `%f`, `%.2f`, `%g`, `%s`, `%S`, `%c`, `%p`, `{}`)
 void vformat_into(String& out, StringRef fmt, ArrayRef<FormatArg> args);
 usize vformat_buf(char* buf, usize cap, StringRef fmt, ArrayRef<FormatArg> args) noexcept;
+[[nodiscard]] inline StringRef vformat_buf(MutStringRef buf, StringRef fmt, ArrayRef<FormatArg> args) noexcept {
+    const usize len = vformat_buf(buf.data(), buf.size(), fmt, args);
+    return StringRef(buf.data(), len);
+}
 StringRef vformat_arena(Arena& arena, StringRef fmt, ArrayRef<FormatArg> args);
 
 template <typename... Args> void format_into(String& out, StringRef fmt, const Args&... args) {
@@ -109,10 +113,10 @@ template <typename... Args> usize format_buf(char* buf, usize cap, StringRef fmt
     }
 }
 
-template <usize N, typename... Args>
-[[nodiscard]] inline StringRef format_buf(char (&buf)[N], StringRef fmt, const Args&... args) noexcept {
-    const usize len = format_buf(buf, N, fmt, args...);
-    return StringRef(buf, len);
+template <typename... Args>
+[[nodiscard]] inline StringRef format_buf(MutStringRef buf, StringRef fmt, const Args&... args) noexcept {
+    const usize len = format_buf(buf.data(), buf.size(), fmt, args...);
+    return StringRef(buf.data(), len);
 }
 
 template <usize N, typename... Args>
