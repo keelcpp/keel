@@ -375,4 +375,59 @@ if(RES_BS EQUAL 0
     message(FATAL_ERROR "Case 8 (strict keel rules) failed:\n${COMBINED_BS}")
 endif()
 
+# ---------------------------------------------------------------------------
+# Case 9: Concurrency types must use keel::Atomic / keel::Thread / keel::Mutex
+# ---------------------------------------------------------------------------
+file(WRITE "${WORK_DIR}/src/bad_concurrency.cpp"
+"#include <atomic>
+#include <thread>
+#include <mutex>
+#include <keel/atomic.h>
+#include <keel/sync.h>
+#include <keel/thread.h>
+void g() {
+    std::atomic<keel::i32> a{0};
+    std::mutex m;
+    std::lock_guard<std::mutex> lk(m);
+    std::thread t;
+    keel::Atomic<keel::i32> ka{0};
+    keel::Mutex km;
+    keel::LockGuard<keel::Mutex> klk(km);
+    keel::Thread kt;
+    (void)a; (void)lk; (void)t; (void)ka; (void)klk; (void)kt;
+}
+")
+file(WRITE "${WORK_DIR}/cfg_bad_conc.cmake"
+"set(KG_TARGET \"test_bad_conc\")
+set(KG_SCOPE \"ALL\")
+set(KG_BAN_STL ON)
+set(KG_BAN_RAW_INTS \"ALL\")
+set(KG_BAN_RAW_FLOATS \"ALL\")
+set(KG_ALLOW_STDEXCEPT ON)
+set(KG_ALLOW_STDEXCEPT_IN_HEADERS OFF)
+set(KG_SOURCE_ROOT \"${WORK_DIR}\")
+set(KG_BINARY_DIR \"${WORK_DIR}/bin\")
+set(KG_ALLOWED_ANGLE_PREFIXES \"keel/;myproj/\")
+set(KG_FILES \"${WORK_DIR}/src/bad_concurrency.cpp\")
+")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DCONFIG_FILE=${WORK_DIR}/cfg_bad_conc.cmake" "-DRUN_STANDALONE_HEADERS=OFF" -P "${CHECK_SCRIPT}"
+    OUTPUT_VARIABLE OUT_BC ERROR_VARIABLE ERR_BC RESULT_VARIABLE RES_BC
+)
+set(COMBINED_BC "${OUT_BC}\n${ERR_BC}")
+if(RES_BC EQUAL 0
+    OR NOT COMBINED_BC MATCHES "src/bad_concurrency.cpp:1:"
+    OR NOT COMBINED_BC MATCHES "src/bad_concurrency.cpp:2:"
+    OR NOT COMBINED_BC MATCHES "src/bad_concurrency.cpp:3:"
+    OR NOT COMBINED_BC MATCHES "src/bad_concurrency.cpp:8:"
+    OR NOT COMBINED_BC MATCHES "src/bad_concurrency.cpp:9:"
+    OR NOT COMBINED_BC MATCHES "src/bad_concurrency.cpp:10:"
+    OR NOT COMBINED_BC MATCHES "src/bad_concurrency.cpp:11:"
+    OR COMBINED_BC MATCHES "src/bad_concurrency.cpp:12:"
+    OR COMBINED_BC MATCHES "src/bad_concurrency.cpp:13:"
+    OR COMBINED_BC MATCHES "src/bad_concurrency.cpp:14:"
+    OR COMBINED_BC MATCHES "src/bad_concurrency.cpp:15:")
+    message(FATAL_ERROR "Case 9 (keel concurrency rules) failed:\n${COMBINED_BC}")
+endif()
+
 message(STATUS "All KeelGuidelines self-tests passed.")
