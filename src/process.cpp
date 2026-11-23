@@ -5,13 +5,12 @@
 #include "keel/fs.h"
 #include "keel/hash.h"
 #include "keel/number.h"
+#include "keel/os_signal.h"
 #include "keel/small_array.h"
 #include "keel/time.h"
 #include "keel/utf8.h"
 
 namespace keel::detail {
-
-inline Atomic<u32> g_process_interrupt_flag{0};
 
 #if !defined(__EMSCRIPTEN__)
 [[nodiscard]] static SmallString<96> build_process_lock_key(StringRef app_id) noexcept {
@@ -40,11 +39,19 @@ inline Atomic<u32> g_process_interrupt_flag{0};
 namespace keel {
 
 bool process_interrupt_requested() noexcept {
-    return detail::g_process_interrupt_flag.load(MemoryOrder::Acquire) != 0;
+    return os_signal_pending(kOsSignalShutdown);
 }
 
 void process_reset_interrupt() noexcept {
-    detail::g_process_interrupt_flag.store(0, MemoryOrder::Release);
+    os_signal_clear(kOsSignalShutdown);
+}
+
+void process_install_interrupt_handler() noexcept {
+    static Atomic<u32> s_installed{0};
+    if (s_installed.exchange(1, MemoryOrder::AcqRel) == 0) {
+        static OsSignalGuard s_guard = OsSignalGuard::subscribe(kOsSignalShutdown);
+        (void)s_guard;
+    }
 }
 
 } // namespace keel
@@ -99,7 +106,6 @@ Result<i32> ChildProcess::wait_for_ms(u64) noexcept { return Error{ErrorCode::No
 Error ChildProcess::kill() noexcept { return Error{ErrorCode::NotSupported, 0}; }
 
 Result<Array<String>> process_args(Allocator* alloc) { return Array<String>(alloc); }
-void process_install_interrupt_handler() noexcept {}
 
 } // namespace keel
 
@@ -817,23 +823,6 @@ Result<Array<String>> process_args(Allocator* alloc) {
         push_wide_arg(arg);
     }
     return out;
-}
-
-namespace detail::win_sig_impl {
-static BOOL WINAPI console_ctrl_handler(DWORD ctrl_type) noexcept {
-    if (ctrl_type == CTRL_C_EVENT || ctrl_type == CTRL_BREAK_EVENT || ctrl_type == CTRL_CLOSE_EVENT) {
-        g_process_interrupt_flag.store(1, MemoryOrder::Release);
-        return TRUE;
-    }
-    return FALSE;
-}
-} // namespace detail::win_sig_impl
-
-void process_install_interrupt_handler() noexcept {
-    static Atomic<u32> s_installed{0};
-    if (s_installed.exchange(1, MemoryOrder::AcqRel) == 0) {
-        (void)SetConsoleCtrlHandler(&detail::win_sig_impl::console_ctrl_handler, TRUE);
-    }
 }
 
 } // namespace keel
@@ -1623,24 +1612,6 @@ Result<Array<String>> process_args(Allocator* alloc) {
 #else
     return out;
 #endif
-}
-
-namespace detail::posix_sig_impl {
-static void on_signal(int) noexcept {
-    g_process_interrupt_flag.store(1, MemoryOrder::Release);
-}
-} // namespace detail::posix_sig_impl
-
-void process_install_interrupt_handler() noexcept {
-    static Atomic<u32> s_installed{0};
-    if (s_installed.exchange(1, MemoryOrder::AcqRel) == 0) {
-        struct sigaction sa{};
-        sa.sa_handler = &detail::posix_sig_impl::on_signal;
-        sigemptyset(&sa.sa_mask);
-        sa.sa_flags = 0;
-        (void)::sigaction(SIGINT, &sa, nullptr);
-        (void)::sigaction(SIGTERM, &sa, nullptr);
-    }
 }
 
 } // namespace keel

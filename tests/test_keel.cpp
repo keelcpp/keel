@@ -3276,9 +3276,150 @@ void test_extended_algorithms() {
     }
 }
 
+void test_os_signal(StringRef self_exe) {
+    // Signal names & bitmasks
+    TEST_CHECK(os_signal_name(OsSignal::Interrupt) == "SIGINT");
+    TEST_CHECK(os_signal_name(OsSignal::Terminate) == "SIGTERM");
+    TEST_CHECK(os_signal_name(OsSignal::Pipe) == "SIGPIPE");
+    TEST_CHECK(os_crash_signal_name(OsCrashSignal::Segv) == "SIGSEGV");
+    TEST_CHECK(os_crash_signal_name(OsCrashSignal::Bus) == "SIGBUS");
+    TEST_CHECK(os_crash_signal_name(OsCrashSignal::Abort) == "SIGABRT");
+
+    // SIGPIPE ignore succeeds
+    TEST_CHECK(os_signal_ignore(OsSignal::Pipe).is_ok());
+
+    // RAII OsSignalGuard + callback + pending/take/count
+    {
+        struct CbState {
+            Atomic<u32> calls{0};
+            Atomic<u32> last_sig{99};
+        } st;
+
+        auto cb = [](OsSignal sig, void* ud) noexcept {
+            auto* s = static_cast<CbState*>(ud);
+            s->last_sig.store(as<u32>(sig), MemoryOrder::Release);
+            s->calls.fetch_add(1u, MemoryOrder::AcqRel);
+        };
+
+        os_signal_clear(os_signal_bit(OsSignal::User1));
+        const u64 before = os_signal_count(OsSignal::User1);
+        auto guard = OsSignalGuard::subscribe(OsSignal::User1, cb, &st);
+        TEST_CHECK(guard.is_active());
+
+        // Move semantics
+        OsSignalGuard moved_guard = keel::move(guard);
+        TEST_CHECK(!guard.is_active());
+        TEST_CHECK(moved_guard.is_active());
+
+        TEST_CHECK(os_signal_raise(OsSignal::User1).is_ok());
+        TEST_CHECK(st.calls.load(MemoryOrder::Acquire) == 1u);
+        TEST_CHECK(st.last_sig.load(MemoryOrder::Acquire) == as<u32>(OsSignal::User1));
+        TEST_CHECK(os_signal_count(OsSignal::User1) == before + 1u);
+        TEST_CHECK(os_signal_pending(os_signal_bit(OsSignal::User1)));
+
+        auto taken = os_signal_take(os_signal_bit(OsSignal::User1));
+        TEST_CHECK(taken.has_value() && *taken == OsSignal::User1);
+        TEST_CHECK(!os_signal_pending(os_signal_bit(OsSignal::User1)));
+
+        moved_guard.reset();
+        TEST_CHECK(!moved_guard.is_active());
+    }
+
+    // Blocking wait timeout & wake-up from background thread
+    {
+        os_signal_clear(os_signal_bit(OsSignal::User2));
+        auto guard = OsSignalGuard::subscribe(OsSignal::User2);
+        TEST_CHECK(guard.is_active());
+
+        auto timed_out = os_signal_wait_for_ms(os_signal_bit(OsSignal::User2), 15u);
+        TEST_CHECK(!timed_out.has_value());
+
+        Thread raiser = Thread::spawn([]() {
+            sleep_ms(15u);
+            (void)os_signal_raise(OsSignal::User2);
+        }).value();
+
+        auto woken = os_signal_wait_for_ms(os_signal_bit(OsSignal::User2), 2000u);
+        raiser.join();
+        TEST_CHECK(woken.has_value() && *woken == OsSignal::User2);
+    }
+
+    // Legacy process_install_interrupt_handler / process_interrupt_requested integration
+    {
+        process_install_interrupt_handler();
+        process_reset_interrupt();
+        TEST_CHECK(!process_interrupt_requested());
+        TEST_CHECK(os_signal_raise(OsSignal::Interrupt).is_ok());
+        TEST_CHECK(process_interrupt_requested());
+        process_reset_interrupt();
+        TEST_CHECK(!process_interrupt_requested());
+    }
+
+    // Crash handler install/uninstall lifecycle
+    {
+        TEST_CHECK(!os_crash_handler_installed());
+        TEST_CHECK(os_crash_install_handler().is_ok());
+        TEST_CHECK(os_crash_handler_installed());
+        os_crash_uninstall_handler();
+        TEST_CHECK(!os_crash_handler_installed());
+    }
+
+    // Real crash-signal tests in isolated child processes (SIGABRT & SIGSEGV)
+#if !defined(__EMSCRIPTEN__)
+    if (!self_exe.empty()) {
+        // 1. SIGABRT child test
+        {
+            const StringRef argv[] = {self_exe, "--crash-test-abort"};
+            auto res = process_run(ArrayRef<StringRef>(argv, 2));
+            TEST_CHECK(res.is_ok());
+            if (res.is_ok()) {
+                TEST_CHECK(!res.value().ok());
+                TEST_CHECK(res.value().stderr_text.as_ref().contains("CUSTOM_CRASH_CB:SIGABRT"));
+                TEST_CHECK(res.value().stderr_text.as_ref().contains("[keel] FATAL SIGNAL: SIGABRT"));
+            }
+        }
+        // 2. SIGSEGV child test
+        {
+            const StringRef argv[] = {self_exe, "--crash-test-segv"};
+            auto res = process_run(ArrayRef<StringRef>(argv, 2));
+            TEST_CHECK(res.is_ok());
+            if (res.is_ok()) {
+                TEST_CHECK(!res.value().ok());
+                TEST_CHECK(res.value().stderr_text.as_ref().contains("CUSTOM_CRASH_CB:SIGSEGV"));
+                TEST_CHECK(res.value().stderr_text.as_ref().contains("[keel] FATAL SIGNAL: SIGSEGV"));
+            }
+        }
+    }
+#else
+    (void)self_exe;
+#endif
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc >= 2) {
+        const StringRef arg(argv[1]);
+        if (arg == "--crash-test-abort" || arg == "--crash-test-segv") {
+            OsCrashOptions opts{};
+            opts.print_default_report = true;
+            opts.print_backtrace = true;
+            opts.callback = [](const OsCrashInfo& info, void*) noexcept {
+                os_signal_write_stderr("CUSTOM_CRASH_CB:");
+                os_signal_write_stderr(os_crash_signal_name(info.signal));
+                os_signal_write_stderr("\n");
+            };
+            (void)os_crash_install_handler(opts);
+            if (arg == "--crash-test-abort") {
+                std::abort();
+            } else {
+                volatile i32* bad = nullptr;
+                *bad = 42;
+            }
+            return 0;
+        }
+    }
+    const StringRef self_exe = (argc >= 1 && argv[0]) ? StringRef(argv[0]) : StringRef{};
     test_core_and_bits();
     test_arena_and_memory();
     test_vocabulary();
@@ -3305,6 +3446,7 @@ int main() {
     test_string_icase_math_and_algo();
     test_pair_and_tuple();
     test_extended_algorithms();
+    test_os_signal(self_exe);
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

@@ -441,9 +441,11 @@ file(WRITE "${WORK_DIR}/src/bad_stl_algo_util.cpp"
 #include <type_traits>
 #include <deque>
 #include <charconv>
+#include <csignal>
 #include <keel/core.h>
 #include <keel/algo.h>
 #include <keel/tuple.h>
+#include <keel/os_signal.h>
 void h() {
     auto a = std::min(1, 2);
     auto b = std::move(a);
@@ -454,6 +456,7 @@ void h() {
     std::iota(arr, arr + 2, 0);
     constexpr bool same = std::is_same_v<keel::i32, keel::i32>;
     std::deque<keel::i32> dq;
+    (void)std::raise(0);
     auto ka = keel::min(keel::i32{1}, keel::i32{2});
     auto kb = keel::move(ka);
     keel::Pair<keel::i32, keel::i32> kp{1, 2};
@@ -461,6 +464,7 @@ void h() {
     keel::sort(arr, arr + 2);
     keel::iota(arr, arr + 2, keel::i32{0});
     constexpr bool ksame = keel::IsSame<keel::i32, keel::i32>;
+    (void)keel::os_signal_raise(keel::OsSignal::User1);
     (void)b; (void)p; (void)t; (void)same; (void)dq;
     (void)kb; (void)kp; (void)kt; (void)ksame;
 }
@@ -491,21 +495,24 @@ if(RES_BA EQUAL 0
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:5:"
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:6:"
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:7:"
-    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:12:"
-    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:13:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:8:"
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:14:"
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:15:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:16:"
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:17:"
-    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:18:"
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:19:"
     OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:20:"
-    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:21:"
-    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:22:"
-    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:23:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:21:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:22:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:23:"
     OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:24:"
     OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:25:"
     OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:26:"
-    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:27:")
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:27:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:28:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:29:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:30:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:31:")
     message(FATAL_ERROR "Case 10 (keel algo/util/tuple/traits rules) failed:\n${COMBINED_BA}")
 endif()
 

@@ -28,6 +28,7 @@
 #include "keel/number.h"
 #include "keel/optional.h"
 #include "keel/os_random.h"
+#include "keel/os_signal.h"
 #include "keel/pool.h"
 #include "keel/process.h"
 #include "keel/ref.h"

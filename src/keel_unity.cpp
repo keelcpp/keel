@@ -15,6 +15,7 @@
 #include "process.cpp"
 #include "dynlib.cpp"
 #include "os_random.cpp"
+#include "os_signal.cpp"
 #include "sync.cpp"
 #include "thread.cpp"
 #include "thread_pool.cpp"

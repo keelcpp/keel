@@ -28,6 +28,7 @@ else()
         src/process.cpp
         src/dynlib.cpp
         src/os_random.cpp
+        src/os_signal.cpp
         src/sync.cpp
         src/thread.cpp
         src/thread_pool.cpp
