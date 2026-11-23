@@ -3046,6 +3046,77 @@ void test_string_icase_math_and_algo() {
     }
 }
 
+void test_pair_and_tuple() {
+    // Pair: aggregate init, CTAD, make_pair, structured binding, comparisons, get
+    {
+        keel::Pair<i32, f64> p{42, 3.5};
+        TEST_CHECK(p.first == 42 && p.second == 3.5);
+        auto [a, b] = p;
+        TEST_CHECK(a == 42 && b == 3.5);
+        TEST_CHECK(keel::get<0>(p) == 42 && keel::get<1>(p) == 3.5);
+
+        auto p2 = keel::make_pair(10, keel::String("hi"));
+        TEST_CHECK(p2.first == 10 && p2.second == "hi");
+        auto moved_str = keel::get<1>(keel::move(p2));
+        TEST_CHECK(moved_str == "hi");
+
+        keel::Pair<i32, i32> lo{1, 2};
+        keel::Pair<i32, i32> hi{1, 3};
+        TEST_CHECK(lo == lo && lo != hi && lo < hi && lo <= hi && hi > lo && hi >= lo);
+
+        // emplace_back into keel::Array
+        keel::Array<keel::Pair<i32, keel::String>> arr;
+        arr.emplace_back(7, keel::String("seven"));
+        arr.push_back(keel::make_pair(8, keel::String("eight")));
+        TEST_CHECK(arr.size() == 2 && arr[0].first == 7 && arr[0].second == "seven");
+        TEST_CHECK(arr[1].first == 8 && arr[1].second == "eight");
+    }
+
+    // Tuple: aggregate init, structured bindings, make_tuple, get, tie, ignore, comparisons
+    {
+        auto fn3 = []() -> keel::Tuple<i32, keel::String, f64> {
+            return keel::make_tuple(1, keel::String("abc"), 2.5);
+        };
+        auto [x, s, y] = fn3();
+        TEST_CHECK(x == 1 && s == "abc" && y == 2.5);
+
+        auto t3 = fn3();
+        TEST_CHECK(keel::TupleSize<decltype(t3)> == 3);
+        TEST_CHECK(keel::get<0>(t3) == 1 && keel::get<1>(t3) == "abc" && keel::get<2>(t3) == 2.5);
+        keel::String moved = keel::get<1>(keel::move(t3));
+        TEST_CHECK(moved == "abc");
+
+        i32 tx = 0;
+        keel::String ts;
+        f64 ty = 0.0;
+        keel::tie(tx, ts, ty) = fn3();
+        TEST_CHECK(tx == 1 && ts == "abc" && ty == 2.5);
+
+        f64 ty2 = 0.0;
+        keel::tie(keel::ignore, keel::ignore, ty2) = keel::make_tuple(9, keel::String("z"), 9.25);
+        TEST_CHECK(ty2 == 9.25);
+
+        // tie from Pair
+        i32 pa = 0;
+        f64 pb = 0.0;
+        keel::tie(pa, pb) = keel::make_pair(5, 6.5);
+        TEST_CHECK(pa == 5 && pb == 6.5);
+
+        // lexicographical comparisons via tie
+        i32 v1 = 1, v2 = 2, v3 = 3;
+        i32 w1 = 1, w2 = 2, w3 = 4;
+        TEST_CHECK(keel::tie(v1, v2, v3) < keel::tie(w1, w2, w3));
+        TEST_CHECK(keel::tie(w1, w2, w3) > keel::tie(v1, v2, v3));
+        TEST_CHECK(keel::tie(v1, v2, v3) == keel::make_tuple(1, 2, 3));
+
+        // 10-element tuple (arity check)
+        auto t10 = keel::make_tuple(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+        auto [e0, e1, e2, e3, e4, e5, e6, e7, e8, e9] = t10;
+        TEST_CHECK(e0 == 0 && e5 == 5 && e9 == 9);
+        TEST_CHECK(keel::get<9>(t10) == 9);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -3073,6 +3144,7 @@ int main() {
     test_tier1_platform_primitives();
     test_tier2_platform_primitives();
     test_string_icase_math_and_algo();
+    test_pair_and_tuple();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

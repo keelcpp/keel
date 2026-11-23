@@ -344,6 +344,67 @@ template <typename T> [[nodiscard]] constexpr const T& clamp(const T& v, const T
 }
 
 // ============================================================================
+// Pair (aggregate; supports C++17/20 structured bindings without <tuple>)
+// ============================================================================
+
+template <typename First, typename Second> struct Pair {
+    using first_type = First;
+    using second_type = Second;
+
+    First first;
+    Second second;
+
+    template <typename U1, typename U2> constexpr Pair& operator=(const Pair<U1, U2>& other) {
+        first = other.first;
+        second = other.second;
+        return *this;
+    }
+
+    template <typename U1, typename U2> constexpr Pair& operator=(Pair<U1, U2>&& other) {
+        first = keel::forward<U1>(other.first);
+        second = keel::forward<U2>(other.second);
+        return *this;
+    }
+};
+
+template <typename First, typename Second> Pair(First, Second) -> Pair<First, Second>;
+
+template <typename A, typename B>
+[[nodiscard]] constexpr Pair<Decay<A>, Decay<B>> make_pair(A&& a, B&& b) {
+    return Pair<Decay<A>, Decay<B>>{keel::forward<A>(a), keel::forward<B>(b)};
+}
+
+template <typename A1, typename B1, typename A2, typename B2>
+[[nodiscard]] constexpr bool operator==(const Pair<A1, B1>& lhs, const Pair<A2, B2>& rhs) {
+    return lhs.first == rhs.first && lhs.second == rhs.second;
+}
+
+template <typename A1, typename B1, typename A2, typename B2>
+[[nodiscard]] constexpr bool operator!=(const Pair<A1, B1>& lhs, const Pair<A2, B2>& rhs) {
+    return !(lhs == rhs);
+}
+
+template <typename A1, typename B1, typename A2, typename B2>
+[[nodiscard]] constexpr bool operator<(const Pair<A1, B1>& lhs, const Pair<A2, B2>& rhs) {
+    return lhs.first < rhs.first || (!(rhs.first < lhs.first) && lhs.second < rhs.second);
+}
+
+template <typename A1, typename B1, typename A2, typename B2>
+[[nodiscard]] constexpr bool operator<=(const Pair<A1, B1>& lhs, const Pair<A2, B2>& rhs) {
+    return !(rhs < lhs);
+}
+
+template <typename A1, typename B1, typename A2, typename B2>
+[[nodiscard]] constexpr bool operator>(const Pair<A1, B1>& lhs, const Pair<A2, B2>& rhs) {
+    return rhs < lhs;
+}
+
+template <typename A1, typename B1, typename A2, typename B2>
+[[nodiscard]] constexpr bool operator>=(const Pair<A1, B1>& lhs, const Pair<A2, B2>& rhs) {
+    return !(lhs < rhs);
+}
+
+// ============================================================================
 // Explicit Arithmetic Conversions: as<To>, narrow<To>, saturate<To>
 // ============================================================================
 

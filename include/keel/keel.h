@@ -43,4 +43,5 @@
 #include "keel/thread.h"
 #include "keel/thread_pool.h"
 #include "keel/time.h"
+#include "keel/tuple.h"
 #include "keel/utf8.h"
