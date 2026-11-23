@@ -267,7 +267,9 @@ set(FORBIDDEN_CPP_STD_INCLUDES
     "barrier"
     "bitset"
     "cctype"
+    "charconv"
     "chrono"
+    "climits"
     "cmath"
     "compare"
     "complex"
@@ -284,6 +286,7 @@ set(FORBIDDEN_CPP_STD_INCLUDES
     "functional"
     "future"
     "iostream"
+    "iterator"
     "latch"
     "limits"
     "list"
@@ -292,6 +295,7 @@ set(FORBIDDEN_CPP_STD_INCLUDES
     "memory_resource"
     "mutex"
     "numbers"
+    "numeric"
     "optional"
     "queue"
     "random"
@@ -324,7 +328,7 @@ if(KG_ALLOW_HEADERS)
 endif()
 
 set(FORBIDDEN_STD_TYPES_BASE
-    "string|wstring|u8string|string_view|vector|span|optional|nullopt|array|function|unique_ptr|shared_ptr|weak_ptr|variant|monostate|unordered_map|unordered_set|map|set|source_location|type_index|chrono|complex|pmr|memory_resource|numeric_limits|bit_cast|memcpy|memmove|memset|memcmp|transform|floor|ceil|round|trunc|lround|llround|nearbyint|rint|fabs|fmin|fmax|fmod|remainder|fma|fdim|sqrt|cbrt|hypot|pow|exp|exp2|expm1|log|log2|log10|log1p|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|erf|erfc|tgamma|lgamma|isnan|isinf|isfinite|signbit|copysign|nextafter|ldexp|frexp|modf|nan|nanf|mt19937|mt19937_64|minstd_rand|minstd_rand0|ranlux24|ranlux48|knuth_b|default_random_engine|random_device|seed_seq|shuffle|uniform_int_distribution|uniform_real_distribution|bernoulli_distribution|binomial_distribution|geometric_distribution|negative_binomial_distribution|poisson_distribution|exponential_distribution|gamma_distribution|weibull_distribution|extreme_value_distribution|normal_distribution|lognormal_distribution|chi_squared_distribution|cauchy_distribution|fisher_f_distribution|student_t_distribution|discrete_distribution|piecewise_constant_distribution|piecewise_linear_distribution|atomic|atomic_flag|atomic_ref|memory_order|memory_order_relaxed|memory_order_consume|memory_order_acquire|memory_order_release|memory_order_acq_rel|memory_order_seq_cst|thread|jthread|this_thread|mutex|recursive_mutex|timed_mutex|recursive_timed_mutex|shared_mutex|shared_timed_mutex|lock_guard|unique_lock|shared_lock|scoped_lock|condition_variable|condition_variable_any|once_flag|call_once|future|promise|packaged_task|async|latch|barrier|counting_semaphore|binary_semaphore"
+    "string|wstring|u8string|string_view|vector|deque|span|optional|nullopt|array|function|unique_ptr|shared_ptr|weak_ptr|variant|monostate|unordered_map|unordered_set|map|set|source_location|type_index|chrono|complex|pmr|memory_resource|numeric_limits|bit_cast|memcpy|memmove|memset|memcmp|transform|floor|ceil|round|trunc|lround|llround|nearbyint|rint|fabs|fmin|fmax|fmod|remainder|fma|fdim|sqrt|cbrt|hypot|pow|exp|exp2|expm1|log|log2|log10|log1p|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|erf|erfc|tgamma|lgamma|isnan|isinf|isfinite|signbit|copysign|nextafter|ldexp|frexp|modf|nan|nanf|mt19937|mt19937_64|minstd_rand|minstd_rand0|ranlux24|ranlux48|knuth_b|default_random_engine|random_device|seed_seq|shuffle|uniform_int_distribution|uniform_real_distribution|bernoulli_distribution|binomial_distribution|geometric_distribution|negative_binomial_distribution|poisson_distribution|exponential_distribution|gamma_distribution|weibull_distribution|extreme_value_distribution|normal_distribution|lognormal_distribution|chi_squared_distribution|cauchy_distribution|fisher_f_distribution|student_t_distribution|discrete_distribution|piecewise_constant_distribution|piecewise_linear_distribution|atomic|atomic_flag|atomic_ref|memory_order|memory_order_relaxed|memory_order_consume|memory_order_acquire|memory_order_release|memory_order_acq_rel|memory_order_seq_cst|thread|jthread|this_thread|mutex|recursive_mutex|timed_mutex|recursive_timed_mutex|shared_mutex|shared_timed_mutex|lock_guard|unique_lock|shared_lock|scoped_lock|condition_variable|condition_variable_any|once_flag|call_once|future|promise|packaged_task|async|latch|barrier|counting_semaphore|binary_semaphore|move|forward|swap|exchange|pair|make_pair|tuple|make_tuple|tie|forward_as_tuple|tuple_size|tuple_size_v|tuple_element|tuple_element_t|min|max|clamp|sort|stable_sort|nth_element|partial_sort|lower_bound|upper_bound|binary_search|reverse|rotate|fill|fill_n|iota|copy|copy_n|equal|find|find_if|count|count_if|min_element|max_element|minmax|minmax_element|unique|remove|remove_if|replace|replace_if|next_permutation|prev_permutation|push_heap|pop_heap|make_heap|sort_heap|accumulate|gcd|lcm|all_of|any_of|none_of|for_each|to_chars|from_chars|is_same|is_same_v|is_integral|is_integral_v|is_floating_point|is_floating_point_v|is_arithmetic|is_arithmetic_v|is_unsigned|is_unsigned_v|is_signed|is_signed_v|is_enum|is_enum_v|is_pointer|is_pointer_v|is_reference|is_reference_v|is_const|is_const_v|is_base_of|is_base_of_v|is_trivially_copyable|is_trivially_copyable_v|is_trivially_destructible|is_trivially_destructible_v|is_constructible|is_constructible_v|is_convertible|is_convertible_v|remove_cv|remove_cv_t|remove_const|remove_const_t|remove_reference|remove_reference_t|remove_cvref|remove_cvref_t|remove_pointer|remove_pointer_t|decay|decay_t|conditional|conditional_t|underlying_type|underlying_type_t|enable_if|enable_if_t|true_type|false_type"
 )
 set(FORBIDDEN_STD_REGEX_HDR
     "std::(${FORBIDDEN_STD_TYPES_BASE}|runtime_error|logic_error|invalid_argument|out_of_range)([^A-Za-z0-9_]|$)"

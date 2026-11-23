@@ -430,4 +430,83 @@ if(RES_BC EQUAL 0
     message(FATAL_ERROR "Case 9 (keel concurrency rules) failed:\n${COMBINED_BC}")
 endif()
 
+# ---------------------------------------------------------------------------
+# Case 10: Algorithms, utilities, tuple/pair, traits, deque, charconv must use keel::*
+# ---------------------------------------------------------------------------
+file(WRITE "${WORK_DIR}/src/bad_stl_algo_util.cpp"
+"#include <algorithm>
+#include <numeric>
+#include <tuple>
+#include <utility>
+#include <type_traits>
+#include <deque>
+#include <charconv>
+#include <keel/core.h>
+#include <keel/algo.h>
+#include <keel/tuple.h>
+void h() {
+    auto a = std::min(1, 2);
+    auto b = std::move(a);
+    std::pair<keel::i32, keel::i32> p{1, 2};
+    std::tuple<keel::i32, keel::i32> t{1, 2};
+    keel::i32 arr[2] = {2, 1};
+    std::sort(arr, arr + 2);
+    std::iota(arr, arr + 2, 0);
+    constexpr bool same = std::is_same_v<keel::i32, keel::i32>;
+    std::deque<keel::i32> dq;
+    auto ka = keel::min(keel::i32{1}, keel::i32{2});
+    auto kb = keel::move(ka);
+    keel::Pair<keel::i32, keel::i32> kp{1, 2};
+    keel::Tuple<keel::i32, keel::i32> kt{1, 2};
+    keel::sort(arr, arr + 2);
+    keel::iota(arr, arr + 2, keel::i32{0});
+    constexpr bool ksame = keel::IsSame<keel::i32, keel::i32>;
+    (void)b; (void)p; (void)t; (void)same; (void)dq;
+    (void)kb; (void)kp; (void)kt; (void)ksame;
+}
+")
+file(WRITE "${WORK_DIR}/cfg_bad_algo.cmake"
+"set(KG_TARGET \"test_bad_algo\")
+set(KG_SCOPE \"ALL\")
+set(KG_BAN_STL ON)
+set(KG_BAN_RAW_INTS \"ALL\")
+set(KG_BAN_RAW_FLOATS \"ALL\")
+set(KG_ALLOW_STDEXCEPT ON)
+set(KG_ALLOW_STDEXCEPT_IN_HEADERS OFF)
+set(KG_SOURCE_ROOT \"${WORK_DIR}\")
+set(KG_BINARY_DIR \"${WORK_DIR}/bin\")
+set(KG_ALLOWED_ANGLE_PREFIXES \"keel/;myproj/\")
+set(KG_FILES \"${WORK_DIR}/src/bad_stl_algo_util.cpp\")
+")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DCONFIG_FILE=${WORK_DIR}/cfg_bad_algo.cmake" "-DRUN_STANDALONE_HEADERS=OFF" -P "${CHECK_SCRIPT}"
+    OUTPUT_VARIABLE OUT_BA ERROR_VARIABLE ERR_BA RESULT_VARIABLE RES_BA
+)
+set(COMBINED_BA "${OUT_BA}\n${ERR_BA}")
+if(RES_BA EQUAL 0
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:1:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:2:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:3:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:4:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:5:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:6:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:7:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:12:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:13:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:14:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:15:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:17:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:18:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:19:"
+    OR NOT COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:20:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:21:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:22:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:23:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:24:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:25:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:26:"
+    OR COMBINED_BA MATCHES "src/bad_stl_algo_util.cpp:27:")
+    message(FATAL_ERROR "Case 10 (keel algo/util/tuple/traits rules) failed:\n${COMBINED_BA}")
+endif()
+
 message(STATUS "All KeelGuidelines self-tests passed.")
