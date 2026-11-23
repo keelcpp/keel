@@ -13,6 +13,13 @@ struct DefaultLess {
     }
 };
 
+struct DefaultEqual {
+    template <typename A, typename B>
+    [[nodiscard]] constexpr bool operator()(const A& a, const B& b) const noexcept {
+        return a == b;
+    }
+};
+
 namespace detail {
 
 template <typename T, typename LessFn>
@@ -457,6 +464,584 @@ template <typename T>
         if (!(a[i] == b[i])) return false;
     }
     return true;
+}
+
+// ============================================================================
+// Contiguous Pointer-Range Overloads & Extended Algorithms
+// (replaces <algorithm> and <numeric>)
+// ============================================================================
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void sort(T* first, T* last, LessFn less = LessFn{}) noexcept {
+    if (first >= last) return;
+    keel::sort(first, as<usize>(last - first), keel::move(less));
+}
+
+template <typename T> constexpr void reverse(T* first, T* last) noexcept {
+    if (first >= last) return;
+    keel::reverse(MutArrayRef<T>(first, as<usize>(last - first)));
+}
+
+template <typename R>
+    requires requires(R& r) {
+        r.data();
+        r.size();
+    }
+constexpr void reverse(R& range) noexcept {
+    keel::reverse(range.data(), range.data() + as<usize>(range.size()));
+}
+
+template <typename T> constexpr T* rotate(T* first, T* middle, T* last) noexcept {
+    if (first == middle) return last;
+    if (middle == last) return first;
+    keel::reverse(first, middle);
+    keel::reverse(middle, last);
+    keel::reverse(first, last);
+    return first + (last - middle);
+}
+
+template <typename T, typename V> constexpr void fill(T* first, T* last, const V& value) {
+    for (T* it = first; it < last; ++it) {
+        *it = value;
+    }
+}
+
+template <typename T, typename V> constexpr T* fill_n(T* dst, usize count, const V& value) {
+    for (usize i = 0; i < count; ++i) {
+        dst[i] = value;
+    }
+    return dst + count;
+}
+
+template <typename T, typename V> constexpr void iota(T* first, T* last, V start) {
+    for (T* it = first; it < last; ++it) {
+        *it = static_cast<T>(start);
+        ++start;
+    }
+}
+
+template <typename SrcPtr, typename DstPtr>
+    requires(IsPointer<SrcPtr> && IsPointer<DstPtr>)
+constexpr DstPtr copy(SrcPtr first, SrcPtr last, DstPtr dst) {
+    if (first >= last) return dst;
+    const usize count = as<usize>(last - first);
+    using SrcVal = RemoveCv<RemovePointer<SrcPtr>>;
+    using DstVal = RemoveCv<RemovePointer<DstPtr>>;
+    if constexpr (IsSame<SrcVal, DstVal> && IsTriviallyCopyable<DstVal>) {
+        if (!__builtin_is_constant_evaluated()) {
+            mem_copy(dst, first, count * sizeof(DstVal));
+            return dst + count;
+        }
+    }
+    for (usize i = 0; i < count; ++i) {
+        dst[i] = first[i];
+    }
+    return dst + count;
+}
+
+template <typename SrcPtr1, typename SrcPtr2>
+    requires(IsPointer<SrcPtr1> && IsPointer<SrcPtr2>)
+[[nodiscard]] constexpr bool equal(SrcPtr1 first1, SrcPtr1 last1, SrcPtr2 first2) {
+    for (; first1 < last1; ++first1, ++first2) {
+        if (!(*first1 == *first2)) return false;
+    }
+    return true;
+}
+
+template <typename T, typename V, typename LessFn = DefaultLess>
+[[nodiscard]] constexpr T* lower_bound(T* first, T* last, const V& value, LessFn less = LessFn{}) {
+    if (first >= last) return last;
+    const usize n = as<usize>(last - first);
+    usize lo = 0;
+    usize hi = n;
+    while (lo < hi) {
+        const usize mid = lo + ((hi - lo) >> 1);
+        if (less(first[mid], value)) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return first + lo;
+}
+
+template <typename T, typename V, typename LessFn = DefaultLess>
+[[nodiscard]] constexpr T* upper_bound(T* first, T* last, const V& value, LessFn less = LessFn{}) {
+    if (first >= last) return last;
+    const usize n = as<usize>(last - first);
+    usize lo = 0;
+    usize hi = n;
+    while (lo < hi) {
+        const usize mid = lo + ((hi - lo) >> 1);
+        if (!less(value, first[mid])) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return first + lo;
+}
+
+template <typename T, typename V, typename LessFn = DefaultLess>
+[[nodiscard]] constexpr bool binary_search(const T* first, const T* last, const V& value, LessFn less = LessFn{}) {
+    const T* it = keel::lower_bound(first, last, value, less);
+    return it != last && !less(value, *it);
+}
+
+template <typename T, typename V> [[nodiscard]] constexpr T* find(T* first, T* last, const V& value) {
+    for (T* it = first; it < last; ++it) {
+        if (*it == value) return it;
+    }
+    return last;
+}
+
+template <typename T, typename Pred> [[nodiscard]] constexpr T* find_if(T* first, T* last, Pred&& pred) {
+    for (T* it = first; it < last; ++it) {
+        if (pred(*it)) return it;
+    }
+    return last;
+}
+
+template <typename T, typename V> [[nodiscard]] constexpr usize count(const T* first, const T* last, const V& value) {
+    usize n = 0;
+    for (const T* it = first; it < last; ++it) {
+        if (*it == value) ++n;
+    }
+    return n;
+}
+
+template <typename T, typename Pred>
+[[nodiscard]] constexpr usize count_if(const T* first, const T* last, Pred&& pred) {
+    usize n = 0;
+    for (const T* it = first; it < last; ++it) {
+        if (pred(*it)) ++n;
+    }
+    return n;
+}
+
+template <typename T, typename LessFn = DefaultLess>
+[[nodiscard]] constexpr T* min_element(T* first, T* last, LessFn less = LessFn{}) {
+    if (first >= last) return last;
+    T* best = first;
+    for (T* it = first + 1; it < last; ++it) {
+        if (less(*it, *best)) best = it;
+    }
+    return best;
+}
+
+template <typename T, typename LessFn = DefaultLess>
+[[nodiscard]] constexpr T* max_element(T* first, T* last, LessFn less = LessFn{}) {
+    if (first >= last) return last;
+    T* best = first;
+    for (T* it = first + 1; it < last; ++it) {
+        if (less(*best, *it)) best = it;
+    }
+    return best;
+}
+
+template <typename T, typename EqFn = DefaultEqual>
+[[nodiscard]] constexpr T* unique(T* first, T* last, EqFn eq = EqFn{}) {
+    if (first >= last) return last;
+    T* dst = first;
+    for (T* it = first + 1; it < last; ++it) {
+        if (!eq(*dst, *it)) {
+            ++dst;
+            if (dst != it) *dst = keel::move(*it);
+        }
+    }
+    return dst + 1;
+}
+
+template <typename T, typename V> [[nodiscard]] constexpr T* remove(T* first, T* last, const V& value) {
+    T* dst = first;
+    for (T* it = first; it < last; ++it) {
+        if (!(*it == value)) {
+            if (dst != it) *dst = keel::move(*it);
+            ++dst;
+        }
+    }
+    return dst;
+}
+
+template <typename T, typename Pred> [[nodiscard]] constexpr T* remove_if(T* first, T* last, Pred&& pred) {
+    T* dst = first;
+    for (T* it = first; it < last; ++it) {
+        if (!pred(*it)) {
+            if (dst != it) *dst = keel::move(*it);
+            ++dst;
+        }
+    }
+    return dst;
+}
+
+template <typename T, typename V1, typename V2>
+constexpr void replace(T* first, T* last, const V1& old_val, const V2& new_val) {
+    for (T* it = first; it < last; ++it) {
+        if (*it == old_val) *it = new_val;
+    }
+}
+
+// ============================================================================
+// Heap Operations & Partial Sort / Nth Element
+// ============================================================================
+
+namespace detail {
+
+template <typename T, typename LessFn>
+constexpr void sift_down(T* first, usize count, usize root, LessFn& less) {
+    T val = keel::move(first[root]);
+    while (true) {
+        usize child = (root << 1) + 1;
+        if (child >= count) break;
+        if (child + 1 < count && less(first[child], first[child + 1])) {
+            ++child;
+        }
+        if (!less(val, first[child])) break;
+        first[root] = keel::move(first[child]);
+        root = child;
+    }
+    first[root] = keel::move(val);
+}
+
+} // namespace detail
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void push_heap(T* first, T* last, LessFn less = LessFn{}) {
+    if (last - first <= 1) return;
+    usize idx = as<usize>(last - first) - 1;
+    T val = keel::move(first[idx]);
+    while (idx > 0) {
+        const usize parent = (idx - 1) >> 1;
+        if (!less(first[parent], val)) break;
+        first[idx] = keel::move(first[parent]);
+        idx = parent;
+    }
+    first[idx] = keel::move(val);
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void pop_heap(T* first, T* last, LessFn less = LessFn{}) {
+    const isize diff = last - first;
+    if (diff <= 1) return;
+    const usize count = as<usize>(diff) - 1;
+    keel::swap(first[0], first[count]);
+    detail::sift_down(first, count, 0, less);
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void make_heap(T* first, T* last, LessFn less = LessFn{}) {
+    const isize diff = last - first;
+    if (diff <= 1) return;
+    const usize count = as<usize>(diff);
+    for (usize i = count / 2; i > 0; --i) {
+        detail::sift_down(first, count, i - 1, less);
+    }
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void sort_heap(T* first, T* last, LessFn less = LessFn{}) {
+    while (last - first > 1) {
+        keel::pop_heap(first, last, less);
+        --last;
+    }
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void partial_sort(T* first, T* middle, T* last, LessFn less = LessFn{}) {
+    if (first >= middle || middle > last) return;
+    const usize k = as<usize>(middle - first);
+    keel::make_heap(first, middle, less);
+    for (T* it = middle; it < last; ++it) {
+        if (less(*it, *first)) {
+            keel::swap(*it, *first);
+            detail::sift_down(first, k, 0, less);
+        }
+    }
+    keel::sort_heap(first, middle, less);
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void nth_element(T* first, T* nth, T* last, LessFn less = LessFn{}) {
+    if (first >= last || nth < first || nth >= last) return;
+    T* lo = first;
+    T* hi = last - 1;
+    while (hi - lo >= 16) {
+        T* mid = lo + ((hi - lo) >> 1);
+        if (less(*mid, *lo)) keel::swap(*mid, *lo);
+        if (less(*hi, *lo)) keel::swap(*hi, *lo);
+        if (less(*hi, *mid)) keel::swap(*hi, *mid);
+
+        T* pivot = mid;
+        T* i = lo;
+        T* j = hi;
+        while (true) {
+            while (less(*i, *pivot)) ++i;
+            while (less(*pivot, *j)) --j;
+            if (i >= j) break;
+            keel::swap(*i, *j);
+            if (pivot == i) {
+                pivot = j;
+            } else if (pivot == j) {
+                pivot = i;
+            }
+            ++i;
+            --j;
+        }
+
+        if (nth <= j) {
+            hi = j;
+        } else if (nth >= i) {
+            lo = i;
+        } else {
+            return;
+        }
+    }
+    if (hi > lo) {
+        detail::insertion_sort_range(lo, as<usize>(hi - lo + 1), less);
+    }
+}
+
+// ============================================================================
+// Stable Sort (O(n log n) top-down merge sort with single scratch buffer and
+// O(n log^2 n) in-place rotation fallback for constexpr / OOM)
+// ============================================================================
+
+namespace detail {
+
+template <typename T, typename LessFn>
+constexpr void inplace_merge_range(T* first, T* mid, T* last, LessFn& less) {
+    if (first == mid || mid == last) return;
+    if (!less(*mid, *(mid - 1))) return;
+    const usize left_len = as<usize>(mid - first);
+    const usize right_len = as<usize>(last - mid);
+    if (left_len + right_len <= 16) {
+        insertion_sort_range(first, left_len + right_len, less);
+        return;
+    }
+    T* first_cut = first;
+    T* second_cut = mid;
+    if (left_len >= right_len) {
+        first_cut = first + (left_len >> 1);
+        second_cut = keel::lower_bound(mid, last, *first_cut, less);
+    } else {
+        second_cut = mid + (right_len >> 1);
+        first_cut = keel::upper_bound(first, mid, *second_cut, less);
+    }
+    T* new_mid = keel::rotate(first_cut, mid, second_cut);
+    inplace_merge_range(first, first_cut, new_mid, less);
+    inplace_merge_range(new_mid, second_cut, last, less);
+}
+
+template <typename T, typename LessFn>
+void buffered_merge_range(T* first, T* mid, T* last, T* buf, LessFn& less) {
+    if (!less(*mid, *(mid - 1))) return;
+    const usize left_len = as<usize>(mid - first);
+    struct DestroyGuard {
+        T* ptr;
+        usize constructed = 0;
+        ~DestroyGuard() {
+            if constexpr (!IsTriviallyDestructible<T>) {
+                for (usize k = constructed; k > 0; --k) {
+                    ptr[k - 1].~T();
+                }
+            }
+        }
+    } guard{buf, 0};
+
+    for (usize i = 0; i < left_len; ++i) {
+        ::new (static_cast<void*>(buf + i)) T(keel::move(first[i]));
+        guard.constructed = i + 1;
+    }
+
+    T* l = buf;
+    T* l_end = buf + left_len;
+    T* r = mid;
+    T* out = first;
+    while (l < l_end && r < last) {
+        if (less(*r, *l)) {
+            *out = keel::move(*r);
+            ++r;
+        } else {
+            *out = keel::move(*l);
+            ++l;
+        }
+        ++out;
+    }
+    while (l < l_end) {
+        *out = keel::move(*l);
+        ++l;
+        ++out;
+    }
+}
+
+template <typename T, typename LessFn>
+constexpr void stable_sort_impl(T* first, T* last, T* buf, LessFn& less) {
+    const usize count = as<usize>(last - first);
+    if (count <= 16) {
+        if (count > 1) insertion_sort_range(first, count, less);
+        return;
+    }
+    T* mid = first + (count >> 1);
+    stable_sort_impl(first, mid, buf, less);
+    stable_sort_impl(mid, last, buf, less);
+    if (!__builtin_is_constant_evaluated() && buf != nullptr) {
+        buffered_merge_range(first, mid, last, buf, less);
+    } else {
+        inplace_merge_range(first, mid, last, less);
+    }
+}
+
+} // namespace detail
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void stable_sort(T* data, usize count, LessFn less = LessFn{}) {
+    if (count <= 1) return;
+    if (count <= 16) {
+        detail::insertion_sort_range(data, count, less);
+        return;
+    }
+    if (!__builtin_is_constant_evaluated()) {
+        const usize half = count >> 1;
+        Allocator* alloc = default_allocator();
+        T* buf = alloc ? alloc->try_alloc_array<T>(half) : nullptr;
+        struct FreeGuard {
+            Allocator* a;
+            T* p;
+            usize n;
+            ~FreeGuard() {
+                if (a && p) a->free_array<T>(p, n);
+            }
+        } free_guard{alloc, buf, half};
+        detail::stable_sort_impl(data, data + count, buf, less);
+    } else {
+        detail::stable_sort_impl(data, data + count, static_cast<T*>(nullptr), less);
+    }
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void stable_sort(T* first, T* last, LessFn less = LessFn{}) {
+    if (first >= last) return;
+    keel::stable_sort(first, as<usize>(last - first), keel::move(less));
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr void stable_sort(MutArrayRef<T> slice, LessFn less = LessFn{}) {
+    keel::stable_sort(slice.data(), slice.size(), keel::move(less));
+}
+
+template <typename R, typename LessFn = DefaultLess>
+    requires requires(R& r) {
+        r.data();
+        r.size();
+    }
+constexpr void stable_sort(R& range, LessFn less = LessFn{}) {
+    keel::stable_sort(range.data(), as<usize>(range.size()), keel::move(less));
+}
+
+// ============================================================================
+// Permutations
+// ============================================================================
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr bool next_permutation(T* first, T* last, LessFn less = LessFn{}) {
+    if (last - first <= 1) return false;
+    T* i = last - 1;
+    while (true) {
+        T* ii = i;
+        --i;
+        if (less(*i, *ii)) {
+            T* j = last;
+            while (!less(*i, *(--j))) {
+            }
+            keel::swap(*i, *j);
+            keel::reverse(ii, last);
+            return true;
+        }
+        if (i == first) {
+            keel::reverse(first, last);
+            return false;
+        }
+    }
+}
+
+template <typename T, typename LessFn = DefaultLess>
+constexpr bool prev_permutation(T* first, T* last, LessFn less = LessFn{}) {
+    if (last - first <= 1) return false;
+    T* i = last - 1;
+    while (true) {
+        T* ii = i;
+        --i;
+        if (less(*ii, *i)) {
+            T* j = last;
+            while (!less(*(--j), *i)) {
+            }
+            keel::swap(*i, *j);
+            keel::reverse(ii, last);
+            return true;
+        }
+        if (i == first) {
+            keel::reverse(first, last);
+            return false;
+        }
+    }
+}
+
+// ============================================================================
+// Numeric Primitives (replaces <numeric>: accumulate, gcd, lcm)
+// ============================================================================
+
+template <typename T, typename Acc>
+[[nodiscard]] constexpr Acc accumulate(const T* first, const T* last, Acc init) {
+    for (const T* it = first; it < last; ++it) {
+        init = keel::move(init) + *it;
+    }
+    return init;
+}
+
+template <typename T, typename Acc, typename BinaryOp>
+[[nodiscard]] constexpr Acc accumulate(const T* first, const T* last, Acc init, BinaryOp&& op) {
+    for (const T* it = first; it < last; ++it) {
+        init = op(keel::move(init), *it);
+    }
+    return init;
+}
+
+namespace detail {
+
+template <typename T> [[nodiscard]] constexpr u64 abs_to_u64(T v) noexcept {
+    if constexpr (IsSigned<T>) {
+        return v < 0 ? (u64{0} - static_cast<u64>(v)) : static_cast<u64>(v);
+    } else {
+        return static_cast<u64>(v);
+    }
+}
+
+[[nodiscard]] constexpr u64 gcd_u64(u64 a, u64 b) noexcept {
+    while (b != 0) {
+        const u64 t = a % b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+
+} // namespace detail
+
+template <typename A, typename B>
+    requires(IsIntegral<A> && IsIntegral<B> && !IsSame<RemoveCv<A>, bool> && !IsSame<RemoveCv<B>, bool>)
+[[nodiscard]] constexpr RemoveCv<decltype(A{} + B{})> gcd(A a, B b) noexcept {
+    using Common = RemoveCv<decltype(A{} + B{})>;
+    return static_cast<Common>(detail::gcd_u64(detail::abs_to_u64(a), detail::abs_to_u64(b)));
+}
+
+template <typename A, typename B>
+    requires(IsIntegral<A> && IsIntegral<B> && !IsSame<RemoveCv<A>, bool> && !IsSame<RemoveCv<B>, bool>)
+[[nodiscard]] constexpr RemoveCv<decltype(A{} + B{})> lcm(A a, B b) noexcept {
+    using Common = RemoveCv<decltype(A{} + B{})>;
+    const u64 ua = detail::abs_to_u64(a);
+    const u64 ub = detail::abs_to_u64(b);
+    if (ua == 0 || ub == 0) return Common{0};
+    return static_cast<Common>((ua / detail::gcd_u64(ua, ub)) * ub);
 }
 
 } // namespace keel

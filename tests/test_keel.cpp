@@ -3117,6 +3117,136 @@ void test_pair_and_tuple() {
     }
 }
 
+void test_extended_algorithms() {
+    // initializer_list min/max
+    TEST_CHECK(keel::min({5, 2, 9, -3, 4}) == -3);
+    TEST_CHECK(keel::max({5, 2, 9, -3, 4}) == 9);
+
+    // stable_sort: verify stability on 100 elements with duplicate keys + move-only/string payload
+    {
+        struct Item {
+            i32 key;
+            i32 orig_idx;
+            keel::String tag;
+        };
+        keel::Array<Item> items;
+        for (i32 i = 0; i < 100; ++i) {
+            items.push_back(Item{(i * 7) % 10, i, keel::String("x")});
+        }
+        keel::stable_sort(items.begin(), items.end(),
+                          [](const Item& a, const Item& b) { return a.key < b.key; });
+        for (usize i = 1; i < items.size(); ++i) {
+            TEST_CHECK(items[i - 1].key <= items[i].key);
+            if (items[i - 1].key == items[i].key) {
+                TEST_CHECK(items[i - 1].orig_idx < items[i].orig_idx);
+            }
+        }
+    }
+
+    // constexpr stable_sort (exercises in-place rotation merge fallback)
+    {
+        constexpr auto sorted_ok = []() {
+            i32 a[24] = {9, 1, 8, 2, 7, 3, 6, 4, 5, 0, 9, 1, 8, 2, 7, 3, 6, 4, 5, 0, 3, 3, 2, 1};
+            keel::stable_sort(a, a + 24);
+            for (usize i = 1; i < 24; ++i) {
+                if (a[i - 1] > a[i]) return false;
+            }
+            return a[0] == 0 && a[23] == 9;
+        }();
+        static_assert(sorted_ok);
+        TEST_CHECK(sorted_ok);
+    }
+
+    // nth_element & partial_sort
+    {
+        keel::Array<i32> a;
+        for (i32 i = 0; i < 64; ++i) a.push_back((i * 37 + 13) % 64);
+        keel::nth_element(a.begin(), a.begin() + 25, a.end());
+        TEST_CHECK(a[25] == 25);
+        for (usize i = 0; i < 25; ++i) TEST_CHECK(a[i] <= 25);
+        for (usize i = 26; i < 64; ++i) TEST_CHECK(a[i] >= 25);
+
+        keel::Array<i32> b;
+        for (i32 i = 0; i < 64; ++i) b.push_back((i * 37 + 13) % 64);
+        keel::partial_sort(b.begin(), b.begin() + 10, b.end());
+        for (i32 i = 0; i < 10; ++i) TEST_CHECK(b[as<usize>(i)] == i);
+    }
+
+    // heap operations
+    {
+        keel::Array<i32> h;
+        for (i32 v : {4, 1, 9, 3, 7, 2, 8}) {
+            h.push_back(v);
+            keel::push_heap(h.begin(), h.end());
+        }
+        TEST_CHECK(h[0] == 9);
+        keel::pop_heap(h.begin(), h.end());
+        TEST_CHECK(h.back() == 9);
+        h.pop_back();
+        TEST_CHECK(h[0] == 8);
+    }
+
+    // pointer-range copy, fill, fill_n, iota, reverse, unique, remove_if, replace, min/max_element, find, count, equal
+    {
+        keel::Array<i32> v(6, 0);
+        keel::iota(v.begin(), v.end(), 1);
+        TEST_CHECK(keel::accumulate(v.begin(), v.end(), 0) == 21);
+        keel::reverse(v.begin(), v.end());
+        TEST_CHECK(v[0] == 6 && v[5] == 1);
+        TEST_CHECK(*keel::min_element(v.begin(), v.end()) == 1);
+        TEST_CHECK(*keel::max_element(v.begin(), v.end()) == 6);
+        TEST_CHECK(keel::find(v.begin(), v.end(), 4) == v.begin() + 2);
+        TEST_CHECK(keel::count(v.begin(), v.end(), 4) == 1);
+
+        keel::Array<i32> dst(6, 0);
+        keel::copy(v.begin(), v.end(), dst.begin());
+        TEST_CHECK(keel::equal(v.begin(), v.end(), dst.begin()));
+
+        keel::fill_n(dst.begin(), 3, 9);
+        TEST_CHECK(dst[0] == 9 && dst[2] == 9 && dst[3] == 3);
+        keel::replace(dst.begin(), dst.end(), 9, 7);
+        TEST_CHECK(keel::count(dst.begin(), dst.end(), 7) == 3);
+
+        auto* uend = keel::unique(dst.begin(), dst.end());
+        TEST_CHECK(uend - dst.begin() == 4 && dst[0] == 7 && dst[1] == 3);
+
+        auto* rend = keel::remove_if(dst.begin(), uend, [](i32 x) { return x % 2 == 0; });
+        TEST_CHECK(rend - dst.begin() == 3);
+    }
+
+    // next_permutation / prev_permutation
+    {
+        i32 p[3] = {1, 2, 3};
+        i32 perms = 0;
+        do { ++perms; } while (keel::next_permutation(p, p + 3));
+        TEST_CHECK(perms == 6 && p[0] == 1 && p[2] == 3);
+
+        i32 q[3] = {3, 2, 1};
+        i32 rperms = 0;
+        do { ++rperms; } while (keel::prev_permutation(q, q + 3));
+        TEST_CHECK(rperms == 6 && q[0] == 3 && q[2] == 1);
+    }
+
+    // lower_bound / upper_bound pointer-range
+    {
+        const i32 s[5] = {1, 2, 2, 4, 5};
+        TEST_CHECK(keel::lower_bound(s, s + 5, 2) == s + 1);
+        TEST_CHECK(keel::upper_bound(s, s + 5, 2) == s + 3);
+        TEST_CHECK(keel::binary_search(s, s + 5, 4));
+        TEST_CHECK(!keel::binary_search(s, s + 5, 3));
+    }
+
+    // gcd / lcm
+    {
+        TEST_CHECK(keel::gcd(48, 18) == 6);
+        TEST_CHECK(keel::gcd(-48, 18) == 6);
+        TEST_CHECK(keel::gcd(0, 7) == 7);
+        TEST_CHECK(keel::lcm(12, 18) == 36);
+        TEST_CHECK(keel::lcm(0, 18) == 0);
+        TEST_CHECK(keel::gcd(usize{100}, usize{75}) == 25);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -3145,6 +3275,7 @@ int main() {
     test_tier2_platform_primitives();
     test_string_icase_math_and_algo();
     test_pair_and_tuple();
+    test_extended_algorithms();
 
     std::printf("keel tests finished: %d passed, %d failed\n", g_tests_passed, g_tests_failed);
     return (g_tests_failed == 0) ? 0 : 1;

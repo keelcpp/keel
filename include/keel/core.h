@@ -335,8 +335,26 @@ template <typename T> [[nodiscard]] constexpr const T& min(const T& a, const T& 
     return (b < a) ? b : a;
 }
 
+template <typename T> [[nodiscard]] constexpr T min(std::initializer_list<T> ilist) noexcept {
+    KEEL_ASSERT(ilist.size() > 0);
+    const T* best = ilist.begin();
+    for (const T* it = ilist.begin() + 1; it != ilist.end(); ++it) {
+        if (*it < *best) best = it;
+    }
+    return *best;
+}
+
 template <typename T> [[nodiscard]] constexpr const T& max(const T& a, const T& b) noexcept {
     return (a < b) ? b : a;
+}
+
+template <typename T> [[nodiscard]] constexpr T max(std::initializer_list<T> ilist) noexcept {
+    KEEL_ASSERT(ilist.size() > 0);
+    const T* best = ilist.begin();
+    for (const T* it = ilist.begin() + 1; it != ilist.end(); ++it) {
+        if (*best < *it) best = it;
+    }
+    return *best;
 }
 
 template <typename T> [[nodiscard]] constexpr const T& clamp(const T& v, const T& lo, const T& hi) noexcept {
