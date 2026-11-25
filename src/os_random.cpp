@@ -67,11 +67,11 @@ struct Win32RngProcs {
     Win32RngProcs() noexcept {
         // Resolve once and keep the OS module pinned for process lifetime to avoid per-call LoadLibrary/FreeLibrary.
         if (HMODULE bcrypt = LoadLibraryW(L"bcrypt.dll")) {
-            bcrypt_gen = reinterpret_cast<PfnBCryptGenRandom>(GetProcAddress(bcrypt, "BCryptGenRandom"));
+            bcrypt_gen = reinterpret_cast<PfnBCryptGenRandom>(reinterpret_cast<void*>(GetProcAddress(bcrypt, "BCryptGenRandom")));
         }
         if (!bcrypt_gen) {
             if (HMODULE advapi = LoadLibraryW(L"advapi32.dll")) {
-                rtl_gen = reinterpret_cast<PfnRtlGenRandom>(GetProcAddress(advapi, "SystemFunction036"));
+                rtl_gen = reinterpret_cast<PfnRtlGenRandom>(reinterpret_cast<void*>(GetProcAddress(advapi, "SystemFunction036")));
             }
         }
     }

@@ -109,7 +109,7 @@ void thread_set_name(StringRef name) noexcept {
     using PfnSetThreadDescription = HRESULT(WINAPI*)(HANDLE, PCWSTR);
     static const PfnSetThreadDescription s_set_desc = []() noexcept -> PfnSetThreadDescription {
         HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
-        return k32 ? reinterpret_cast<PfnSetThreadDescription>(GetProcAddress(k32, "SetThreadDescription")) : nullptr;
+        return k32 ? reinterpret_cast<PfnSetThreadDescription>(reinterpret_cast<void*>(GetProcAddress(k32, "SetThreadDescription"))) : nullptr;
     }();
     if (s_set_desc) {
         SmallArray<wchar_t, 64> wname;

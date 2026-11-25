@@ -94,7 +94,7 @@ String sys_os_version(Allocator* alloc) {
     using PfnRtlGetVersion = LONG(WINAPI*)(RtlOsVersionInfoW*);
 
     if (HMODULE ntdll = GetModuleHandleW(L"ntdll.dll")) {
-        auto rtl_get = reinterpret_cast<PfnRtlGetVersion>(GetProcAddress(ntdll, "RtlGetVersion"));
+        auto rtl_get = reinterpret_cast<PfnRtlGetVersion>(reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlGetVersion")));
         if (rtl_get) {
             RtlOsVersionInfoW info{};
             info.dwOSVersionInfoSize = sizeof(info);
