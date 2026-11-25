@@ -130,6 +130,16 @@ void process_reset_interrupt() noexcept;
 // Returns remaining stack space in bytes for the calling thread, or kNullOpt if unavailable on the platform.
 [[nodiscard]] Optional<usize> thread_stack_remaining_bytes() noexcept;
 
+// Process memory usage snapshot in bytes (0 for fields unavailable on the platform).
+struct ProcessMemoryInfo {
+    u64 rss_bytes{0};      // Total resident physical RAM (WorkingSet / VmRSS / resident_size)
+    u64 private_bytes{0};  // Private resident RAM (Win Task Manager / macOS Activity Monitor / Linux RES-SHR)
+    u64 commit_bytes{0};   // Committed private virtual memory (Win PrivateUsage / Linux data+stack / macOS internal)
+};
+
+// Returns a snapshot of the current process's memory usage in bytes.
+[[nodiscard]] ProcessMemoryInfo process_memory_info() noexcept;
+
 // Returns the current process resident set size (physical RAM in bytes), or 0 if unavailable.
 [[nodiscard]] u64 process_rss_bytes() noexcept;
 

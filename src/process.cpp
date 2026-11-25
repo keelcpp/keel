@@ -54,6 +54,10 @@ void process_install_interrupt_handler() noexcept {
     }
 }
 
+u64 process_rss_bytes() noexcept {
+    return process_memory_info().rss_bytes;
+}
+
 } // namespace keel
 
 #if defined(__EMSCRIPTEN__)
@@ -79,12 +83,11 @@ Optional<usize> thread_stack_remaining_bytes() noexcept {
     return as<usize>(emscripten_stack_get_free());
 }
 
-u64 process_rss_bytes() noexcept {
+ProcessMemoryInfo process_memory_info() noexcept {
+    const u64 linearBytes = as<u64>(__builtin_wasm_memory_size(0)) * 65536ULL;
     const struct mallinfo mi = mallinfo();
-    if (mi.uordblks > 0) {
-        return as<u64>(as<u32>(mi.uordblks));
-    }
-    return as<u64>(__builtin_wasm_memory_size(0)) * 65536ULL;
+    const u64 used = (mi.uordblks > 0) ? as<u64>(as<u32>(mi.uordblks)) : linearBytes;
+    return ProcessMemoryInfo{used, used, linearBytes};
 }
 
 u64 process_cpu_time_ns() noexcept { return 0; }
@@ -578,13 +581,54 @@ Optional<usize> thread_stack_remaining_bytes() noexcept {
     return (cur > low_limit) ? as<usize>(cur - low_limit) : usize{0};
 }
 
-u64 process_rss_bytes() noexcept {
+ProcessMemoryInfo process_memory_info() noexcept {
+    // ABI-exact layout of Windows 10/11 PROCESS_MEMORY_COUNTERS_EX2 (avoids SDK version gating).
+    struct WinProcessMemoryCountersEx2 {
+        DWORD   cb;
+        DWORD   PageFaultCount;
+        SIZE_T  PeakWorkingSetSize;
+        SIZE_T  WorkingSetSize;
+        SIZE_T  QuotaPeakPagedPoolUsage;
+        SIZE_T  QuotaPagedPoolUsage;
+        SIZE_T  QuotaPeakNonPagedPoolUsage;
+        SIZE_T  QuotaNonPagedPoolUsage;
+        SIZE_T  PagefileUsage;
+        SIZE_T  PeakPagefileUsage;
+        SIZE_T  PrivateUsage;
+        SIZE_T  PrivateWorkingSetSize;
+        ULONG64 SharedCommitUsage;
+    };
+    static_assert(sizeof(WinProcessMemoryCountersEx2) ==
+                  sizeof(PROCESS_MEMORY_COUNTERS_EX) + sizeof(SIZE_T) + sizeof(ULONG64));
+
+    const HANDLE self = GetCurrentProcess();
+    WinProcessMemoryCountersEx2 ex2{};
+    ex2.cb = sizeof(ex2);
+    if (GetProcessMemoryInfo(self, reinterpret_cast<PPROCESS_MEMORY_COUNTERS>(&ex2), sizeof(ex2))) {
+        return ProcessMemoryInfo{
+            as<u64>(ex2.WorkingSetSize),
+            as<u64>(ex2.PrivateWorkingSetSize),
+            as<u64>(ex2.PrivateUsage)
+        };
+    }
+
+    PROCESS_MEMORY_COUNTERS_EX ex{};
+    ex.cb = sizeof(ex);
+    if (GetProcessMemoryInfo(self, reinterpret_cast<PPROCESS_MEMORY_COUNTERS>(&ex), sizeof(ex))) {
+        return ProcessMemoryInfo{
+            as<u64>(ex.WorkingSetSize),
+            as<u64>(ex.PrivateUsage),
+            as<u64>(ex.PrivateUsage)
+        };
+    }
+
     PROCESS_MEMORY_COUNTERS pmc{};
     pmc.cb = sizeof(pmc);
-    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-        return as<u64>(pmc.WorkingSetSize);
+    if (GetProcessMemoryInfo(self, &pmc, sizeof(pmc))) {
+        const u64 ws = as<u64>(pmc.WorkingSetSize);
+        return ProcessMemoryInfo{ws, ws, as<u64>(pmc.PagefileUsage)};
     }
-    return 0;
+    return ProcessMemoryInfo{};
 }
 
 u64 process_cpu_time_ns() noexcept {
@@ -1237,42 +1281,71 @@ Optional<String> process_which(StringRef program, Allocator* alloc) {
 
 u64 process_id() noexcept { return as<u64>(::getpid()); }
 
-u64 process_rss_bytes() noexcept {
+ProcessMemoryInfo process_memory_info() noexcept {
 #if defined(__APPLE__)
+    task_vm_info_data_t vm{};
+    mach_msg_type_number_t vm_count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO,
+                  reinterpret_cast<task_info_t>(&vm), &vm_count) == KERN_SUCCESS) {
+        return ProcessMemoryInfo{
+            as<u64>(vm.resident_size),
+            as<u64>(vm.phys_footprint),
+            as<u64>(vm.internal)
+        };
+    }
     mach_task_basic_info_data_t info{};
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
     if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
                   reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
-        return as<u64>(info.resident_size);
+        const u64 rss = as<u64>(info.resident_size);
+        return ProcessMemoryInfo{rss, rss, as<u64>(info.virtual_size)};
     }
-    return 0;
+    return ProcessMemoryInfo{};
 #elif defined(__linux__)
     const int fd = ::open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
+    if (fd < 0) return ProcessMemoryInfo{};
     char buf[256];
     ssize_t n = 0;
     do {
         n = ::read(fd, buf, sizeof(buf));
     } while (n < 0 && errno == EINTR);
     ::close(fd);
-    if (n <= 0) return 0;
+    if (n <= 0) return ProcessMemoryInfo{};
 
+    const long page_size = ::sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return ProcessMemoryInfo{};
+    const u64 ps = as<u64>(page_size);
+
+    // /proc/self/statm: size resident shared text lib data dt (in pages)
     const StringRef view(buf, as<usize>(n));
     usize pos = 0;
-    while (pos < view.size() && view[pos] == ' ') ++pos;
-    while (pos < view.size() && view[pos] >= '0' && view[pos] <= '9') ++pos;
-    while (pos < view.size() && view[pos] == ' ') ++pos;
-    const usize rss_start = pos;
-    while (pos < view.size() && view[pos] >= '0' && view[pos] <= '9') ++pos;
-    if (pos <= rss_start) return 0;
+    auto next_field = [&]() noexcept -> Optional<u64> {
+        while (pos < view.size() && (view[pos] == ' ' || view[pos] == '\t')) ++pos;
+        const usize start = pos;
+        while (pos < view.size() && view[pos] >= '0' && view[pos] <= '9') ++pos;
+        if (pos <= start) return kNullOpt;
+        const auto parsed = parse_u64(view.substr(start, pos - start));
+        return parsed.is_ok() ? Optional<u64>(*parsed) : kNullOpt;
+    };
 
-    const auto rss_pages = parse_u64(view.substr(rss_start, pos - rss_start));
-    if (rss_pages.is_err()) return 0;
-    const long page_size = ::sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) return 0;
-    return (*rss_pages) * as<u64>(page_size);
+    const auto f_size     = next_field();
+    const auto f_resident = next_field();
+    const auto f_shared   = next_field();
+    const auto f_text     = next_field();
+    const auto f_lib      = next_field();
+    const auto f_data     = next_field();
+    (void)f_size;
+    (void)f_text;
+    (void)f_lib;
+    if (!f_resident.has_value()) return ProcessMemoryInfo{};
+
+    const u64 rss_pages = *f_resident;
+    const u64 shared_pages = f_shared.value_or(0u);
+    const u64 priv_pages = (rss_pages > shared_pages) ? (rss_pages - shared_pages) : 0u;
+    const u64 data_pages = f_data.value_or(priv_pages);
+    return ProcessMemoryInfo{rss_pages * ps, priv_pages * ps, data_pages * ps};
 #else
-    return 0;
+    return ProcessMemoryInfo{};
 #endif
 }
 

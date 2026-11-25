@@ -2001,12 +2001,17 @@ void test_env_process_and_dynlib() {
 #endif
     }
 
-    // 4. process_rss_bytes()
+    // 4. process_memory_info() & process_rss_bytes()
     {
+        const ProcessMemoryInfo mem = process_memory_info();
         const u64 rss = process_rss_bytes();
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+        TEST_CHECK(mem.rss_bytes > 0 && mem.rss_bytes < (1ULL << 44));
+        TEST_CHECK(mem.private_bytes > 0 && mem.private_bytes <= mem.rss_bytes + (64ULL << 20));
+        TEST_CHECK(mem.commit_bytes > 0 && mem.commit_bytes < (1ULL << 44));
         TEST_CHECK(rss > 0 && rss < (1ULL << 44));
 #else
+        (void)mem;
         (void)rss;
 #endif
     }
