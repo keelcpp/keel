@@ -217,6 +217,7 @@ void path_normalize_into(String& out, StringRef path) {
     StringRef prefix{};
     usize i = 0;
     bool rooted = false;
+    bool unc = false;
 
     if (path.size() >= 2 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
         path[1] == ':') {
@@ -226,6 +227,12 @@ void path_normalize_into(String& out, StringRef path) {
             rooted = true;
             ++i;
         }
+    } else if (path.size() >= 3 && detail::is_sep(path[0]) && detail::is_sep(path[1]) &&
+               !detail::is_sep(path[2])) {
+        // UNC root ("//server/share" or "\\server\share"); three or more leading slashes collapse to "/".
+        unc = true;
+        rooted = true;
+        i = 2;
     } else if (detail::is_sep(path[0])) {
         rooted = true;
         i = 1;
@@ -254,7 +261,9 @@ void path_normalize_into(String& out, StringRef path) {
     if (!prefix.empty()) {
         out.append(prefix);
     }
-    if (rooted) {
+    if (unc) {
+        out.append("//");
+    } else if (rooted) {
         out.push_back('/');
     }
     for (usize k = 0; k < parts.size(); ++k) {

@@ -468,6 +468,11 @@ void test_fs_and_io() {
     TEST_CHECK(path_join("a/b/", "/c/d") == "/c/d");
     TEST_CHECK(path_join("a/b", "c/d") == "a/b/c/d");
     TEST_CHECK(path_normalize("a/b/../c/./d//e") == "a/c/d/e");
+    TEST_CHECK(path_normalize("C:/work/sub/../helpers/fn.m") == "C:/work/helpers/fn.m");
+    TEST_CHECK(path_normalize("C:\\a\\..") == "C:/");
+    TEST_CHECK(path_normalize("\\\\server\\share\\a\\..\\b") == "//server/share/b");
+    TEST_CHECK(path_normalize("//server/share/./x") == "//server/share/x");
+    TEST_CHECK(path_normalize("///a/b/../c") == "/a/c");
 
     auto tmp_res = fs_temp_dir();
     TEST_CHECK(tmp_res.is_ok());
