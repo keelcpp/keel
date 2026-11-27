@@ -168,8 +168,14 @@ template <typename V, usize M> struct DecayImpl<const V[M], false> {
 template <typename T> using Decay = typename detail::DecayImpl<RemoveReference<T>>::Type;
 
 template <typename T> inline constexpr bool IsTriviallyCopyable = __is_trivially_copyable(T);
-#if defined(__clang__) || defined(_MSC_VER) || (defined(__GNUC__) && __GNUC__ >= 11)
+#if defined(__clang__) || defined(_MSC_VER)
 template <typename T> inline constexpr bool IsTriviallyDestructible = __is_trivially_destructible(T);
+#elif defined(__has_builtin)
+#if __has_builtin(__is_trivially_destructible)
+template <typename T> inline constexpr bool IsTriviallyDestructible = __is_trivially_destructible(T);
+#else
+template <typename T> inline constexpr bool IsTriviallyDestructible = __has_trivial_destructor(T);
+#endif
 #else
 template <typename T> inline constexpr bool IsTriviallyDestructible = __has_trivial_destructor(T);
 #endif
@@ -245,6 +251,18 @@ template <typename From, typename To>
 inline constexpr bool IsConvertible =
     detail::ImplicitlyConvertibleImpl<From, To> || (IsSame<RemoveCv<From>, void> && IsSame<RemoveCv<To>, void>);
 
+#if defined(_MSC_VER)
+#define KEEL_DETAIL_BUILTIN_COLUMN() __builtin_COLUMN()
+#elif defined(__has_builtin)
+#if __has_builtin(__builtin_COLUMN)
+#define KEEL_DETAIL_BUILTIN_COLUMN() __builtin_COLUMN()
+#else
+#define KEEL_DETAIL_BUILTIN_COLUMN() 0
+#endif
+#else
+#define KEEL_DETAIL_BUILTIN_COLUMN() 0
+#endif
+
 // Zero-header source location replacement for <source_location> (16 bytes on 64-bit).
 struct SourceLocation {
     const char* m_file = "";
@@ -258,7 +276,7 @@ struct SourceLocation {
     [[nodiscard]] static consteval SourceLocation current(
         const char* file = __builtin_FILE(),
         u32 line = static_cast<u32>(__builtin_LINE()),
-        u32 column = static_cast<u32>(__builtin_COLUMN())) noexcept {
+        u32 column = static_cast<u32>(KEEL_DETAIL_BUILTIN_COLUMN())) noexcept {
         return SourceLocation(file, line, column);
     }
 
@@ -512,9 +530,11 @@ template <typename To, typename From>
 }
 
 #if defined(__SIZEOF_INT128__)
+__extension__ using KeelInt128 = __int128;
+__extension__ using KeelUint128 = unsigned __int128;
 template <typename T>
 inline constexpr bool IsInt128 =
-    IsSame<keel::RemoveCv<T>, __int128> || IsSame<keel::RemoveCv<T>, unsigned __int128>;
+    IsSame<keel::RemoveCv<T>, KeelInt128> || IsSame<keel::RemoveCv<T>, KeelUint128>;
 #else
 template <typename T> inline constexpr bool IsInt128 = false;
 #endif

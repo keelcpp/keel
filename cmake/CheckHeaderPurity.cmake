@@ -3,6 +3,8 @@
 # 2. When compiled standalone with `/showIncludes` (MSVC) or `-H` (Clang/GCC), do not transitively include
 #    any system header outside the exact baseline of `<cstddef> + <cstdint> + <exception> + <initializer_list> + <new>`.
 
+cmake_minimum_required(VERSION 3.20)
+
 if(NOT DEFINED KEEL_INCLUDE_DIR)
     message(FATAL_ERROR "KEEL_INCLUDE_DIR must be passed to CheckHeaderPurity.cmake")
 endif()

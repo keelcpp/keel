@@ -244,7 +244,7 @@ template <typename T> constexpr void iota(MutArrayRef<T> slice, T start = T{0}) 
     }
 }
 
-template <typename R, typename T = RemoveCvRef<decltype(*declval<R&>().data())>>
+template <typename R, typename T = RemoveCvRef<decltype(*detail::declval<R&>().data())>>
     requires requires(R& r) {
         r.data();
         r.size();
@@ -891,6 +891,22 @@ constexpr void stable_sort_impl(T* first, T* last, T* buf, LessFn& less) {
     }
 }
 
+template <typename T, typename LessFn>
+inline void stable_sort_runtime(T* data, usize count, LessFn& less) {
+    const usize half = count >> 1;
+    Allocator* alloc = default_allocator();
+    T* buf = alloc ? alloc->try_alloc_array<T>(half) : nullptr;
+    struct FreeGuard {
+        Allocator* a;
+        T* p;
+        usize n;
+        ~FreeGuard() {
+            if (a && p) a->free_array<T>(p, n);
+        }
+    } free_guard{alloc, buf, half};
+    stable_sort_impl(data, data + count, buf, less);
+}
+
 } // namespace detail
 
 template <typename T, typename LessFn = DefaultLess>
@@ -901,18 +917,7 @@ constexpr void stable_sort(T* data, usize count, LessFn less = LessFn{}) {
         return;
     }
     if (!__builtin_is_constant_evaluated()) {
-        const usize half = count >> 1;
-        Allocator* alloc = default_allocator();
-        T* buf = alloc ? alloc->try_alloc_array<T>(half) : nullptr;
-        struct FreeGuard {
-            Allocator* a;
-            T* p;
-            usize n;
-            ~FreeGuard() {
-                if (a && p) a->free_array<T>(p, n);
-            }
-        } free_guard{alloc, buf, half};
-        detail::stable_sort_impl(data, data + count, buf, less);
+        detail::stable_sort_runtime(data, count, less);
     } else {
         detail::stable_sort_impl(data, data + count, static_cast<T*>(nullptr), less);
     }
